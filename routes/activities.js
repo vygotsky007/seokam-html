@@ -92,6 +92,78 @@ router.get('/activities/:id', async (req, res) => {
   return res.json({ ok: true, activity, questions });
 });
 
+// GET /api/activities/:id/version → { version } 만 가볍게 (학생 페이지 폴링용)
+router.get('/activities/:id/version', async (req, res) => {
+  const { id } = req.params;
+  const { data, error } = await supabase
+    .from('activities')
+    .select('version')
+    .eq('id', id)
+    .single();
+
+  if (error || !data) {
+    return res.status(404).json({ ok: false, error: '활동을 찾을 수 없습니다.' });
+  }
+  return res.json({ ok: true, version: data.version });
+});
+
+// PUT /api/activities/:id → title·html_body·questions 수정 + version +1
+// questions 는 기존 삭제 후 재삽입.
+router.put('/activities/:id', async (req, res) => {
+  const { id } = req.params;
+  const { title, html_body, questions } = req.body || {};
+
+  if (!title || !html_body) {
+    return res.status(400).json({ ok: false, error: 'title 과 html_body 가 필요합니다.' });
+  }
+
+  // 현재 version 조회 후 +1 (컬럼이 있다고 가정)
+  const { data: cur, error: curErr } = await supabase
+    .from('activities')
+    .select('version')
+    .eq('id', id)
+    .single();
+
+  if (curErr || !cur) {
+    return res.status(404).json({ ok: false, error: '활동을 찾을 수 없습니다.' });
+  }
+  const nextVersion = (Number(cur.version) || 1) + 1;
+
+  const { error: upErr } = await supabase
+    .from('activities')
+    .update({ title, html_body, version: nextVersion })
+    .eq('id', id);
+
+  if (upErr) {
+    console.error('[activities] 수정 실패:', upErr.message);
+    return res.status(500).json({ ok: false, error: upErr.message });
+  }
+
+  // 문항: 기존 삭제 후 재삽입
+  const { error: delErr } = await supabase.from('questions').delete().eq('activity_id', id);
+  if (delErr) {
+    console.error('[activities] 기존 문항 삭제 실패:', delErr.message);
+    return res.status(500).json({ ok: false, error: delErr.message });
+  }
+
+  const list = Array.isArray(questions) ? questions : [];
+  if (list.length) {
+    const rows = list.map((q, i) => ({
+      activity_id: id,
+      num: Number(q.num) || i + 1,
+      type: q.type || 'short',
+      answer: q.type === 'essay' ? null : (q.answer ?? null),
+    }));
+    const { error: insErr } = await supabase.from('questions').insert(rows);
+    if (insErr) {
+      console.error('[activities] 문항 재삽입 실패:', insErr.message);
+      return res.status(500).json({ ok: false, error: insErr.message });
+    }
+  }
+
+  return res.json({ ok: true, version: nextVersion });
+});
+
 // GET /api/present/:id → 발표 모드 데이터
 // 활동 + 문항 + 제출(제출순 익명번호, 문항별 정오 판정 포함) 반환. 발표 화면이 5초마다 폴링.
 router.get('/present/:id', async (req, res) => {

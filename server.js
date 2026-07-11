@@ -30,7 +30,7 @@ app.get('/go/:id', async (req, res) => {
 
   const { data: activity, error } = await supabase
     .from('activities')
-    .select('id, title, html_body, status')
+    .select('id, title, html_body, status, version')
     .eq('id', id)
     .single();
 
@@ -271,6 +271,7 @@ function renderStudentPage(activity) {
   const title = escapeHtml(activity.title || '활동');
   const body = activity.html_body || '';
   const activityId = activity.id;
+  const version = Number(activity.version) || 1;
 
   return `<!doctype html>
 <html lang="ko">
@@ -295,10 +296,13 @@ function renderStudentPage(activity) {
   #result li.no { color: #c53030; }
   #result li.skip { color: #718096; }
   .score { font-size: 22px; font-weight: 800; }
+  #__updateBanner { display: none; position: sticky; top: 0; z-index: 50; background: #fefcbf; color: #744210; border: 1px solid #ecc94b; border-radius: 10px; padding: 12px 14px; margin-bottom: 12px; font-weight: 700; }
+  #__updateBanner button { margin-left: 10px; padding: 6px 14px; font-size: 14px; font-weight: 700; color: #fff; background: #d69e2e; border: 0; border-radius: 8px; cursor: pointer; }
 </style>
 </head>
 <body>
 <div class="wrap">
+  <div id="__updateBanner">🔔 선생님이 문제를 수정했어요. <button id="__reloadBtn" type="button">새로고침</button></div>
   <div class="bar">
     <h1>${title}</h1>
     <input id="__nickname" type="text" placeholder="닉네임(이름)을 입력하세요" autocomplete="off" />
@@ -318,6 +322,7 @@ ${body}
 <script>
 (function () {
   var ACTIVITY_ID = ${JSON.stringify(activityId)};
+  var MY_VERSION = ${version};
   var btn = document.getElementById('__submitBtn');
   var nickEl = document.getElementById('__nickname');
   var resultEl = document.getElementById('result');
@@ -351,14 +356,28 @@ ${body}
     var nickname = (nickEl.value || '').trim();
     if (!nickname) { alert('닉네임(이름)을 입력해 주세요.'); nickEl.focus(); return; }
 
-    var answers = collectAnswers();
+    // 교사 HTML 이 스스로 채점해 window.__quizResult 를 담아뒀으면 자가채점 방식으로 전송
+    var qr = window.__quizResult;
+    var payload;
+    if (qr && typeof qr === 'object' && (qr.total != null || Array.isArray(qr.detail))) {
+      payload = {
+        activityId: ACTIVITY_ID, nickname: nickname,
+        self_scored: true,
+        score: Number(qr.score) || 0,
+        total: Number(qr.total) || (Array.isArray(qr.detail) ? qr.detail.length : 0),
+        detail: Array.isArray(qr.detail) ? qr.detail : [],
+      };
+    } else {
+      payload = { activityId: ACTIVITY_ID, nickname: nickname, answers: collectAnswers() };
+    }
+
     btn.disabled = true;
     btn.textContent = '제출 중...';
 
     fetch('/api/submit', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ activityId: ACTIVITY_ID, nickname: nickname, answers: answers }),
+      body: JSON.stringify(payload),
     })
       .then(function (r) { return r.json(); })
       .then(function (data) {
@@ -395,6 +414,20 @@ ${body}
     resultEl.style.display = 'block';
     resultEl.scrollIntoView({ behavior: 'smooth' });
   }
+
+  // ---- 실시간 변경 알림: 8초마다 version 폴링, 서버가 더 크면 배너 표시(자동 새로고침 안 함) ----
+  document.getElementById('__reloadBtn').addEventListener('click', function () { location.reload(); });
+  function pollVersion() {
+    fetch('/api/activities/' + ACTIVITY_ID + '/version')
+      .then(function (r) { return r.json(); })
+      .then(function (data) {
+        if (data && data.ok && Number(data.version) > MY_VERSION) {
+          document.getElementById('__updateBanner').style.display = 'block';
+        }
+      })
+      .catch(function () {});
+  }
+  setInterval(pollVersion, 8000);
 })();
 </script>
 </body>
