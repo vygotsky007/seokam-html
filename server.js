@@ -56,6 +56,36 @@ app.get('/present/:id', async (req, res) => {
   res.type('html').send(renderPresentPage(activity));
 });
 
+// 짧은 입장: 4자리 코드 → 해당 활동 /go/:id 로 리다이렉트
+app.get('/join/:code', async (req, res) => {
+  const { code } = req.params;
+  const { data, error } = await supabase
+    .from('activities')
+    .select('id')
+    .eq('join_code', code)
+    .limit(1);
+
+  if (error || !data || !data.length) {
+    return res.status(404).send('<!doctype html><meta charset="utf-8"><body style="font-family:system-ui;text-align:center;padding:60px"><h1>입장 코드를 찾을 수 없어요</h1><p>코드를 다시 확인하세요.</p><a href="/join.html">← 코드 다시 입력</a></body>');
+  }
+  res.redirect('/go/' + data[0].id);
+});
+
+// 결과 대시보드 페이지
+app.get('/dashboard/:id', async (req, res) => {
+  const { id } = req.params;
+  const { data: activity, error } = await supabase
+    .from('activities')
+    .select('id, title')
+    .eq('id', id)
+    .single();
+
+  if (error || !activity) {
+    return res.status(404).send('<h1>활동을 찾을 수 없습니다.</h1>');
+  }
+  res.type('html').send(renderDashboardPage(activity));
+});
+
 function renderPresentPage(activity) {
   const title = escapeHtml(activity.title || '활동');
   const activityId = activity.id;
@@ -537,6 +567,228 @@ ${body}
       .catch(function () {});
   }
   setInterval(pollVersion, 8000);
+})();
+</script>
+</body>
+</html>`;
+}
+
+function renderDashboardPage(activity) {
+  const title = escapeHtml(activity.title || '활동');
+  const activityId = activity.id;
+
+  return `<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>결과 대시보드 — ${title}</title>
+<style>
+  * { box-sizing: border-box; }
+  body { font-family: system-ui, -apple-system, "Segoe UI", sans-serif; margin: 0; background: #f5f6f8; color: #1a1a1a; }
+  .header { background: #fff; border-bottom: 1px solid #e2e8f0; padding: 14px 20px; display: flex; align-items: center; gap: 12px; }
+  .header h1 { font-size: 18px; margin: 0; }
+  .header .live { font-size: 12px; color: #2f855a; margin-left: auto; }
+  .header a { font-size: 13px; color: #2b6cb0; text-decoration: none; }
+  .wrap { max-width: 1080px; margin: 0 auto; padding: 20px 16px 60px; }
+  .cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 12px; margin-bottom: 20px; }
+  .card { background: #fff; border: 1px solid #e2e8f0; border-radius: 12px; padding: 16px; }
+  .card .k { font-size: 13px; color: #718096; }
+  .card .v { font-size: 30px; font-weight: 800; margin-top: 4px; }
+  .section { background: #fff; border: 1px solid #e2e8f0; border-radius: 12px; padding: 18px; margin-bottom: 18px; }
+  .section h2 { font-size: 16px; margin: 0 0 14px; }
+  .qbar { margin-bottom: 12px; }
+  .qbar .top { display: flex; justify-content: space-between; font-size: 14px; margin-bottom: 4px; }
+  .qbar .track { height: 22px; background: #edf2f7; border-radius: 6px; overflow: hidden; }
+  .qbar .fill { height: 100%; background: #48bb78; border-radius: 6px; text-align: right; color: #fff; font-size: 12px; line-height: 22px; padding-right: 6px; }
+  .qbar.worst .fill { background: #e53e3e; }
+  .qbar .essay { color: #718096; font-size: 13px; }
+  .dist { margin: 6px 0 0; padding-left: 0; list-style: none; font-size: 13px; color: #4a5568; }
+  .dist li { display: flex; align-items: center; gap: 8px; margin: 2px 0; }
+  .dist .lab { flex: 0 0 90px; font-weight: 700; }
+  .dist .db { height: 12px; background: #90cdf4; border-radius: 4px; }
+  .dist .db.correct { background: #48bb78; }
+  table.rank { width: 100%; border-collapse: collapse; }
+  table.rank th, table.rank td { border-bottom: 1px solid #edf2f7; padding: 8px 10px; text-align: left; font-size: 14px; }
+  table.rank th { color: #718096; font-weight: 600; }
+  table.rank td.sc { font-weight: 800; }
+  .toolbar { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin-bottom: 14px; }
+  button { padding: 9px 14px; font-size: 14px; font-weight: 700; border: 1px solid #e2e8f0; background: #fff; border-radius: 8px; cursor: pointer; }
+  button.primary { background: #2b6cb0; color: #fff; border-color: #2b6cb0; }
+  button.green { background: #2f855a; color: #fff; border-color: #2f855a; }
+  .essay-block { margin-bottom: 14px; }
+  .essay-block h3 { font-size: 14px; margin: 0 0 6px; }
+  .essay-item { background: #f7fafc; border: 1px solid #edf2f7; border-radius: 8px; padding: 8px 10px; margin-bottom: 6px; font-size: 14px; }
+  .essay-item .who { font-size: 12px; color: #718096; margin-bottom: 2px; }
+  .muted { color: #718096; }
+  @media print { .toolbar, .header .live, .header a { display: none; } body { background: #fff; } }
+</style>
+</head>
+<body>
+  <div class="header">
+    <h1>📊 ${title}</h1>
+    <span class="live" id="live">● 실시간 (5초)</span>
+    <a href="/teacher.html">← 교사 홈</a>
+  </div>
+  <div class="wrap">
+    <div class="toolbar">
+      <button class="green" id="csvBtn">⬇ 엑셀(CSV) 다운로드</button>
+      <button id="pdfBtn">🖨 PDF 리포트(인쇄)</button>
+      <label class="muted" style="margin-left:8px;"><input type="checkbox" id="nameToggle" /> 실명 표시</label>
+    </div>
+
+    <div class="cards" id="cards"></div>
+
+    <div class="section">
+      <h2>문항별 정답률 <span class="muted" style="font-size:12px;">(가장 많이 틀린 문항 빨강)</span></h2>
+      <div id="qbars"></div>
+    </div>
+
+    <div class="section" id="distSection">
+      <h2>객관식 보기별 응답 분포</h2>
+      <div id="dists"></div>
+    </div>
+
+    <div class="section">
+      <h2>학생별 점수 순위</h2>
+      <table class="rank"><thead><tr><th>순위</th><th>학생</th><th>점수</th></tr></thead><tbody id="rankBody"></tbody></table>
+    </div>
+
+    <div class="section" id="essaySection">
+      <h2>서술형 답 모아보기</h2>
+      <div id="essays"></div>
+    </div>
+  </div>
+
+<script>
+(function () {
+  var ACTIVITY_ID = ${JSON.stringify(activityId)};
+  var DATA = null;
+  var showNames = false;
+
+  function nameOf(s) { return showNames ? (s.nickname || '(익명)') : (s.no + '번'); }
+
+  function fetchData() {
+    return fetch('/api/dashboard/' + ACTIVITY_ID)
+      .then(function (r) { return r.json(); })
+      .then(function (d) { if (!d.ok) throw new Error(d.error || '조회 실패'); DATA = d; renderAll(); })
+      .catch(function (e) { console.error(e); });
+  }
+
+  function renderAll() { renderCards(); renderQBars(); renderDists(); renderRank(); renderEssays(); }
+
+  function renderCards() {
+    var s = DATA.summary;
+    var cards = [
+      ['제출 인원', s.submissions + '명'],
+      ['평균 점수', s.avg + (s.questionCount ? ' / ' + s.questionCount : '')],
+      ['최고 점수', s.max],
+      ['최저 점수', s.min],
+      ['문항 수', s.questionCount],
+    ];
+    document.getElementById('cards').innerHTML = cards.map(function (c) {
+      return '<div class="card"><div class="k">' + c[0] + '</div><div class="v">' + c[1] + '</div></div>';
+    }).join('');
+  }
+
+  function renderQBars() {
+    var pq = DATA.perQuestion || [];
+    // 가장 많이 틀린 문항(정답률 최저, 채점 대상만) 찾기
+    var worstRate = 101, worstNum = null;
+    pq.forEach(function (q) { if (q.rate !== null && q.rate < worstRate) { worstRate = q.rate; worstNum = q.num; } });
+
+    document.getElementById('qbars').innerHTML = pq.map(function (q) {
+      if (q.type === 'essay') {
+        return '<div class="qbar"><div class="top"><b>' + q.num + '번</b> <span class="essay">서술형 — 응답 ' + q.answered + '명</span></div></div>';
+      }
+      var rate = q.rate === null ? 0 : q.rate;
+      var worst = (q.num === worstNum && q.rate !== null);
+      return '<div class="qbar' + (worst ? ' worst' : '') + '">' +
+        '<div class="top"><b>' + q.num + '번</b> <span>' + rate + '% (' + q.correct + '/' + q.gradable + ')' + (worst ? ' ⚠ 최다 오답' : '') + '</span></div>' +
+        '<div class="track"><div class="fill" style="width:' + rate + '%">' + rate + '%</div></div></div>';
+    }).join('');
+  }
+
+  function renderDists() {
+    var pq = (DATA.perQuestion || []).filter(function (q) { return q.type === 'choice'; });
+    var sec = document.getElementById('distSection');
+    if (!pq.length) { sec.style.display = 'none'; return; }
+    sec.style.display = 'block';
+    var maxN = 1;
+    pq.forEach(function (q) { Object.keys(q.distribution).forEach(function (k) { maxN = Math.max(maxN, q.distribution[k]); }); });
+    document.getElementById('dists').innerHTML = pq.map(function (q) {
+      var keys = Object.keys(q.distribution).sort();
+      var rows = keys.map(function (k) {
+        var n = q.distribution[k];
+        var isAns = String(k).trim() === String(q.answer).trim();
+        return '<li><span class="lab">' + escapeHtml(k) + (isAns ? ' ✔' : '') + '</span>' +
+          '<span class="db' + (isAns ? ' correct' : '') + '" style="width:' + Math.round(n / maxN * 160) + 'px"></span>' +
+          '<span>' + n + '명</span></li>';
+      }).join('');
+      return '<div style="margin-bottom:14px"><b>' + q.num + '번</b> <span class="muted">(정답 ' + escapeHtml(q.answer || '-') + ')</span><ul class="dist">' + (rows || '<li class="muted">응답 없음</li>') + '</ul></div>';
+    }).join('');
+  }
+
+  function renderRank() {
+    var st = (DATA.students || []).slice().sort(function (a, b) { return b.score - a.score; });
+    document.getElementById('rankBody').innerHTML = st.map(function (s, i) {
+      return '<tr><td>' + (i + 1) + '</td><td>' + escapeHtml(nameOf(s)) + (s.self_scored ? ' <span class="muted">(자가채점)</span>' : '') + '</td><td class="sc">' + s.score + '</td></tr>';
+    }).join('') || '<tr><td colspan="3" class="muted">제출 없음</td></tr>';
+  }
+
+  function renderEssays() {
+    var essays = (DATA.questions || []).filter(function (q) { return q.type === 'essay'; });
+    var sec = document.getElementById('essaySection');
+    if (!essays.length) { sec.style.display = 'none'; return; }
+    sec.style.display = 'block';
+    document.getElementById('essays').innerHTML = essays.map(function (q) {
+      var items = (DATA.students || []).map(function (s) {
+        var cell = s.byNum[q.num];
+        var given = cell && cell.given ? String(cell.given).trim() : '';
+        if (!given) return '';
+        return '<div class="essay-item"><div class="who">' + escapeHtml(nameOf(s)) + '</div>' + escapeHtml(given) + '</div>';
+      }).filter(Boolean).join('');
+      return '<div class="essay-block"><h3>' + q.num + '번</h3>' + (items || '<div class="muted">응답 없음</div>') + '</div>';
+    }).join('');
+  }
+
+  // CSV: 학생 × 문항 표(각 칸 정오/답, 점수)
+  function downloadCsv() {
+    var qs = DATA.questions || [];
+    var head = ['학생'].concat(qs.map(function (q) { return q.num + '번'; })).concat(['점수']);
+    var lines = [head.join(',')];
+    (DATA.students || []).forEach(function (s) {
+      var row = [csv(nameOf(s))];
+      qs.forEach(function (q) {
+        var cell = s.byNum[q.num] || {};
+        var mark = cell.correct === true ? 'O' : cell.correct === false ? 'X' : '-';
+        var given = cell.given != null ? String(cell.given) : '';
+        row.push(csv(given ? (given + '(' + mark + ')') : mark));
+      });
+      row.push(s.score);
+      lines.push(row.join(','));
+    });
+    var blob = new Blob(['﻿' + lines.join('\\n')], { type: 'text/csv;charset=utf-8;' });
+    var a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = 'result_' + ACTIVITY_ID.slice(0, 8) + '.csv';
+    a.click();
+    URL.revokeObjectURL(a.href);
+  }
+  function csv(v) { v = String(v == null ? '' : v); return /[",\\n]/.test(v) ? '"' + v.replace(/"/g, '""') + '"' : v; }
+
+  function escapeHtml(s) {
+    return String(s == null ? '' : s).replace(/[&<>"']/g, function (c) {
+      return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c];
+    });
+  }
+
+  document.getElementById('csvBtn').onclick = downloadCsv;
+  document.getElementById('pdfBtn').onclick = function () { window.print(); };
+  document.getElementById('nameToggle').onchange = function () { showNames = this.checked; renderAll(); };
+
+  fetchData();
+  setInterval(fetchData, 5000);
 })();
 </script>
 </body>

@@ -1,0 +1,41 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>입장 코드 입력</title>
+<style>
+  * { box-sizing: border-box; }
+  body { font-family: system-ui, -apple-system, "Segoe UI", sans-serif; margin: 0; background: #f5f6f8; color: #1a1a1a; display: flex; min-height: 100vh; align-items: center; justify-content: center; }
+  .box { background: #fff; border: 1px solid #e2e8f0; border-radius: 16px; padding: 32px 28px; width: 340px; text-align: center; box-shadow: 0 4px 20px rgba(0,0,0,.06); }
+  h1 { font-size: 20px; margin: 0 0 6px; }
+  p { color: #718096; font-size: 14px; margin: 0 0 20px; }
+  input { width: 100%; padding: 16px; font-size: 32px; text-align: center; letter-spacing: 12px; border: 2px solid #cbd5e1; border-radius: 12px; font-weight: 800; }
+  input:focus { outline: none; border-color: #2b6cb0; }
+  button { width: 100%; margin-top: 14px; padding: 14px; font-size: 17px; font-weight: 700; color: #fff; background: #2f855a; border: 0; border-radius: 12px; cursor: pointer; }
+  .err { color: #c53030; font-size: 13px; margin-top: 10px; min-height: 18px; }
+</style>
+</head>
+<body>
+  <div class="box">
+    <h1>🎫 입장 코드 입력</h1>
+    <p>선생님이 알려준 4자리 숫자를 입력하세요</p>
+    <input id="code" type="tel" inputmode="numeric" maxlength="4" placeholder="0000" autocomplete="off" />
+    <button id="go">입장하기</button>
+    <div class="err" id="err"></div>
+  </div>
+<script>
+  var input = document.getElementById('code');
+  input.focus();
+  input.addEventListener('input', function () { input.value = input.value.replace(/[^0-9]/g, ''); });
+  function enter() {
+    var code = (input.value || '').trim();
+    if (!/^[0-9]{4}$/.test(code)) { document.getElementById('err').textContent = '4자리 숫자를 정확히 입력하세요.'; return; }
+    // /join/:code 로 이동 → 서버가 해당 활동으로 리다이렉트
+    window.location.href = '/join/' + code;
+  }
+  document.getElementById('go').addEventListener('click', enter);
+  input.addEventListener('keydown', function (e) { if (e.key === 'Enter') enter(); });
+</script>
+</body>
+</html>
