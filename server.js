@@ -46,7 +46,7 @@ app.get('/present/:id', async (req, res) => {
   const { id } = req.params;
   const { data: activity, error } = await supabase
     .from('activities')
-    .select('id, title')
+    .select('id, title, html_body')
     .eq('id', id)
     .single();
 
@@ -59,6 +59,7 @@ app.get('/present/:id', async (req, res) => {
 function renderPresentPage(activity) {
   const title = escapeHtml(activity.title || '활동');
   const activityId = activity.id;
+  const body = activity.html_body || '';
 
   return `<!doctype html>
 <html lang="ko">
@@ -71,22 +72,37 @@ function renderPresentPage(activity) {
   body { font-family: system-ui, -apple-system, "Segoe UI", sans-serif; margin: 0; background: #0f172a; color: #e2e8f0; height: 100vh; overflow: hidden; }
   .topbar { display: flex; align-items: center; gap: 12px; padding: 12px 20px; background: #1e293b; border-bottom: 1px solid #334155; }
   .topbar h1 { font-size: 16px; margin: 0; color: #94a3b8; font-weight: 600; }
-  .nav { display: flex; align-items: center; gap: 6px; margin-left: auto; }
+  .nav { display: flex; align-items: center; gap: 6px; margin-left: auto; flex-wrap: wrap; }
   .nav button { min-width: 40px; height: 40px; padding: 0 12px; font-size: 16px; font-weight: 700; border: 1px solid #475569; background: #334155; color: #e2e8f0; border-radius: 8px; cursor: pointer; }
   .nav button.qbtn.active { background: #3b82f6; border-color: #3b82f6; color: #fff; }
   .nav button:disabled { opacity: .4; cursor: default; }
   .live { font-size: 12px; color: #4ade80; margin-left: 8px; white-space: nowrap; }
   .layout { display: flex; height: calc(100vh - 65px); }
-  .left { flex: 1 1 62%; padding: 40px; display: flex; flex-direction: column; justify-content: center; }
-  .right { flex: 0 0 38%; max-width: 480px; border-left: 1px solid #334155; background: #1e293b; display: flex; flex-direction: column; }
-  .qnum { font-size: 20px; color: #60a5fa; font-weight: 700; }
-  .qtype { display: inline-block; font-size: 13px; padding: 2px 10px; border-radius: 999px; background: #334155; color: #cbd5e1; margin-left: 10px; vertical-align: middle; }
-  .answer-box { margin-top: 24px; }
-  .answer-label { font-size: 15px; color: #94a3b8; }
-  .answer-val { font-size: 56px; font-weight: 800; color: #f8fafc; margin-top: 8px; line-height: 1.1; word-break: break-word; }
-  .answer-essay { font-size: 28px; color: #cbd5e1; }
-  .rate { margin-top: 32px; font-size: 18px; color: #cbd5e1; }
-  .rate b { color: #4ade80; font-size: 22px; }
+
+  /* 왼쪽: 문제 크게 + 필기 캔버스 오버레이 */
+  .left { flex: 1 1 68%; min-width: 0; display: flex; flex-direction: column; }
+  .draw-toolbar { display: flex; align-items: center; gap: 8px; padding: 8px 12px; background: #1e293b; border-bottom: 1px solid #334155; flex-wrap: wrap; }
+  .draw-toolbar button { height: 34px; min-width: 34px; padding: 0 10px; border: 1px solid #475569; background: #334155; color: #e2e8f0; border-radius: 6px; cursor: pointer; font-size: 13px; font-weight: 700; }
+  .draw-toolbar .tb-color { width: 34px; padding: 0; }
+  .tb-color.red { background: #ef4444; } .tb-color.blue { background: #3b82f6; } .tb-color.black { background: #111827; }
+  .draw-toolbar button.active { outline: 2px solid #60a5fa; outline-offset: 1px; }
+  .tb-sep { width: 1px; height: 24px; background: #475569; margin: 0 2px; }
+  .tb-label { font-size: 12px; color: #94a3b8; }
+  .problem-wrap { position: relative; flex: 1; overflow: auto; background: #0f172a; }
+  .problem-content { background: #fff; color: #111; padding: 28px; min-height: 100%; font-size: 21px; line-height: 1.6; }
+  .problem-content img { max-width: 100%; height: auto; }
+  #drawCanvas { position: absolute; top: 0; left: 0; z-index: 10; touch-action: none; }
+
+  /* 오른쪽: 정답·정답률·필터·목록 (기존 유지) */
+  .right { flex: 0 0 32%; max-width: 520px; border-left: 1px solid #334155; background: #1e293b; display: flex; flex-direction: column; }
+  .q-answer { padding: 14px 16px; border-bottom: 1px solid #334155; }
+  .q-answer .qnum { font-size: 16px; color: #60a5fa; font-weight: 700; }
+  .q-answer .qtype { display: inline-block; font-size: 12px; padding: 2px 8px; border-radius: 999px; background: #334155; color: #cbd5e1; margin-left: 8px; }
+  .q-answer .lbl { font-size: 13px; color: #94a3b8; margin-top: 10px; }
+  .q-answer .val { font-size: 34px; font-weight: 800; color: #f8fafc; line-height: 1.15; word-break: break-word; }
+  .q-answer .val.essay { font-size: 20px; color: #cbd5e1; }
+  .q-answer .rate { margin-top: 10px; font-size: 15px; color: #cbd5e1; }
+  .q-answer .rate b { color: #4ade80; font-size: 19px; }
   .filters { display: flex; gap: 8px; padding: 14px 16px; border-bottom: 1px solid #334155; }
   .filters button { flex: 1; padding: 10px; font-size: 14px; font-weight: 700; border: 1px solid #475569; background: #334155; color: #e2e8f0; border-radius: 8px; cursor: pointer; }
   .filters button.active { background: #3b82f6; border-color: #3b82f6; color: #fff; }
@@ -110,8 +126,30 @@ function renderPresentPage(activity) {
     <div class="nav" id="nav"></div>
   </div>
   <div class="layout">
-    <div class="left" id="left"></div>
+    <div class="left">
+      <div class="draw-toolbar">
+        <span class="tb-label">필기</span>
+        <button id="tbToggle" class="active" title="필기 켜기/끄기">✏️ ON</button>
+        <span class="tb-sep"></span>
+        <button class="tb-color red active" data-color="#ef4444" title="빨강"></button>
+        <button class="tb-color blue" data-color="#3b82f6" title="파랑"></button>
+        <button class="tb-color black" data-color="#111827" title="검정"></button>
+        <span class="tb-sep"></span>
+        <button class="tb-size active" data-size="3" title="얇게">얇게</button>
+        <button class="tb-size" data-size="9" title="굵게">굵게</button>
+        <span class="tb-sep"></span>
+        <button id="tbEraser" title="지우개">지우개</button>
+        <button id="tbClear" title="전체 지우기">전체 지우기</button>
+      </div>
+      <div class="problem-wrap" id="problemWrap">
+        <div class="problem-content" id="problemContent">
+${body}
+        </div>
+        <canvas id="drawCanvas"></canvas>
+      </div>
+    </div>
     <div class="right">
+      <div class="q-answer" id="qAnswer"></div>
       <div class="filters">
         <button data-f="all" class="active">전체</button>
         <button data-f="correct">맞은 사람</button>
@@ -135,22 +173,22 @@ function renderPresentPage(activity) {
         state.questions = data.questions || [];
         state.students = data.students || [];
         if (state.curIdx >= state.questions.length) state.curIdx = 0;
-        render();
+        render(); // 오른쪽 통계만 갱신(왼쪽 문제·필기는 건드리지 않음)
       })
       .catch(function (err) { console.error(err); });
   }
 
   function curQ() { return state.questions[state.curIdx]; }
+  function isCorrect(stu, num) { var c = stu.byNum && stu.byNum[num]; return c ? c.correct : null; }
 
-  function isCorrect(stu, num) {
-    var c = stu.byNum && stu.byNum[num];
-    return c ? c.correct : null; // true/false/null(서술형)
-  }
+  function render() { renderNav(); renderAnswer(); renderRight(); }
 
-  function render() {
-    renderNav();
-    renderLeft();
-    renderRight();
+  // 문항 이동 시에만 필기 초기화(폴링 render 에서는 초기화하지 않음)
+  function goTo(idx) {
+    if (idx < 0 || idx >= state.questions.length || idx === state.curIdx) return;
+    state.curIdx = idx;
+    clearCanvas();
+    render();
   }
 
   function renderNav() {
@@ -163,41 +201,36 @@ function renderPresentPage(activity) {
     html += '<button id="next" ' + (state.curIdx >= state.questions.length - 1 ? 'disabled' : '') + '>다음 →</button>';
     html += '<span class="live">● 실시간 (5초)</span>';
     nav.innerHTML = html;
-    var prev = document.getElementById('prev'); if (prev) prev.onclick = function () { if (state.curIdx > 0) { state.curIdx--; render(); } };
-    var next = document.getElementById('next'); if (next) next.onclick = function () { if (state.curIdx < state.questions.length - 1) { state.curIdx++; render(); } };
+    var prev = document.getElementById('prev'); if (prev) prev.onclick = function () { goTo(state.curIdx - 1); };
+    var next = document.getElementById('next'); if (next) next.onclick = function () { goTo(state.curIdx + 1); };
     nav.querySelectorAll('.qbtn').forEach(function (b) {
-      b.onclick = function () { state.curIdx = parseInt(b.getAttribute('data-i'), 10); render(); };
+      b.onclick = function () { goTo(parseInt(b.getAttribute('data-i'), 10)); };
     });
   }
 
-  function renderLeft() {
-    var left = document.getElementById('left');
+  // 오른쪽 상단: 현재 문항 정답 + 정답률
+  function renderAnswer() {
+    var el = document.getElementById('qAnswer');
     var q = curQ();
-    if (!q) { left.innerHTML = '<div class="empty">문항이 없습니다.</div>'; return; }
+    if (!q) { el.innerHTML = '<div class="empty">문항이 없습니다.</div>'; return; }
     var typeLabel = q.type === 'choice' ? '객관식' : q.type === 'short' ? '단답' : '서술형';
 
-    // 정답률 (채점 대상만, 서술형 제외)
     var total = 0, correct = 0;
     state.students.forEach(function (s) {
       var c = isCorrect(s, q.num);
-      if (c === null) return; // 서술형/미채점
+      if (c === null) return;
       total++; if (c === true) correct++;
     });
     var rateHtml = q.type === 'essay'
       ? '<div class="rate">서술형 — 정답률 없음 (제출 ' + countAnswered(q.num) + '명)</div>'
       : '<div class="rate">정답률 <b>' + (total ? Math.round(correct / total * 100) : 0) + '%</b> (' + correct + ' / ' + total + ')</div>';
+    var valHtml = q.type === 'essay'
+      ? '<div class="val essay">— (서술형: 정답 없음)</div>'
+      : '<div class="val">' + escapeHtml(q.answer || '(정답 미입력)') + '</div>';
 
-    var ansHtml;
-    if (q.type === 'essay') {
-      ansHtml = '<div class="answer-val answer-essay">— (서술형: 정답 없음)</div>';
-    } else {
-      ansHtml = '<div class="answer-val">' + escapeHtml(q.answer || '(정답 미입력)') + '</div>';
-    }
-
-    left.innerHTML =
+    el.innerHTML =
       '<div><span class="qnum">' + q.num + '번 문항</span><span class="qtype">' + typeLabel + '</span></div>' +
-      '<div class="answer-box"><div class="answer-label">정답</div>' + ansHtml + '</div>' +
-      rateHtml;
+      '<div class="lbl">정답</div>' + valHtml + rateHtml;
   }
 
   function countAnswered(num) {
@@ -259,8 +292,84 @@ function renderPresentPage(activity) {
     });
   }
 
+  // ---- 필기 캔버스 ----
+  var canvas = document.getElementById('drawCanvas');
+  var ctx = canvas.getContext('2d');
+  var wrap = document.getElementById('problemWrap');
+  var content = document.getElementById('problemContent');
+  var pen = { on: true, color: '#ef4444', size: 3, eraser: false };
+  var drawing = false, last = null;
+
+  function fitCanvas() {
+    var w = content.scrollWidth, h = Math.max(content.scrollHeight, wrap.clientHeight);
+    canvas.width = w; canvas.height = h;
+    canvas.style.width = w + 'px'; canvas.style.height = h + 'px';
+    ctx.lineCap = 'round'; ctx.lineJoin = 'round';
+  }
+  function clearCanvas() { ctx.clearRect(0, 0, canvas.width, canvas.height); }
+  function point(e) { return { x: e.offsetX, y: e.offsetY }; }
+  function drawSeg(a, b) {
+    ctx.globalCompositeOperation = pen.eraser ? 'destination-out' : 'source-over';
+    ctx.strokeStyle = pen.color;
+    ctx.lineWidth = pen.eraser ? pen.size * 6 : pen.size;
+    ctx.beginPath(); ctx.moveTo(a.x, a.y); ctx.lineTo(b.x, b.y); ctx.stroke();
+  }
+  canvas.addEventListener('pointerdown', function (e) {
+    if (!pen.on) return;
+    drawing = true; last = point(e);
+    try { canvas.setPointerCapture(e.pointerId); } catch (_) {}
+  });
+  canvas.addEventListener('pointermove', function (e) {
+    if (!drawing || !pen.on) return;
+    var p = point(e); drawSeg(last, p); last = p;
+  });
+  function endStroke() { drawing = false; last = null; }
+  canvas.addEventListener('pointerup', endStroke);
+  canvas.addEventListener('pointercancel', endStroke);
+
+  // 필기 on/off: off 면 캔버스가 클릭·스크롤을 통과시킴
+  function applyPenMode() {
+    canvas.style.pointerEvents = pen.on ? 'auto' : 'none';
+    var t = document.getElementById('tbToggle');
+    t.textContent = pen.on ? '✏️ ON' : '✏️ OFF';
+    t.classList.toggle('active', pen.on);
+  }
+  document.getElementById('tbToggle').onclick = function () { pen.on = !pen.on; applyPenMode(); };
+
+  document.querySelectorAll('.tb-color').forEach(function (b) {
+    b.onclick = function () {
+      pen.color = b.getAttribute('data-color'); pen.eraser = false;
+      document.querySelectorAll('.tb-color').forEach(function (x) { x.classList.remove('active'); });
+      b.classList.add('active');
+      document.getElementById('tbEraser').classList.remove('active');
+    };
+  });
+  document.querySelectorAll('.tb-size').forEach(function (b) {
+    b.onclick = function () {
+      pen.size = parseInt(b.getAttribute('data-size'), 10) || 3;
+      document.querySelectorAll('.tb-size').forEach(function (x) { x.classList.remove('active'); });
+      b.classList.add('active');
+    };
+  });
+  document.getElementById('tbEraser').onclick = function () {
+    pen.eraser = true;
+    this.classList.add('active');
+    document.querySelectorAll('.tb-color').forEach(function (x) { x.classList.remove('active'); });
+  };
+  document.getElementById('tbClear').onclick = function () { clearCanvas(); };
+
+  // 캔버스 크기 맞춤: 로드·이미지 로드·리사이즈 시(리사이즈 시 필기는 초기화됨 — 임시 필기라 허용)
+  fitCanvas();
+  window.addEventListener('load', fitCanvas);
+  window.addEventListener('resize', fitCanvas);
+  content.querySelectorAll('img').forEach(function (img) {
+    if (!img.complete) img.addEventListener('load', fitCanvas);
+  });
+  setTimeout(fitCanvas, 500);
+  applyPenMode();
+
   fetchData();
-  setInterval(fetchData, 5000); // 실시간 갱신
+  setInterval(fetchData, 5000); // 오른쪽 통계 실시간 갱신
 })();
 </script>
 </body>
