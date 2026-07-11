@@ -258,7 +258,7 @@ router.get('/activities/:id/version', async (req, res) => {
 // questions 는 기존 삭제 후 재삽입.
 router.put('/activities/:id', async (req, res) => {
   const { id } = req.params;
-  const { title, html_body, questions } = req.body || {};
+  const { title, html_body, questions, status } = req.body || {};
 
   if (!title || !html_body) {
     return res.status(400).json({ ok: false, error: 'title 과 html_body 가 필요합니다.' });
@@ -276,9 +276,12 @@ router.put('/activities/:id', async (req, res) => {
   }
   const nextVersion = (Number(cur.version) || 1) + 1;
 
+  const patch = { title, html_body, version: nextVersion };
+  if (status === 'draft' || status === 'open') patch.status = status; // 발행/임시저장 전환 허용
+
   const { error: upErr } = await supabase
     .from('activities')
-    .update({ title, html_body, version: nextVersion })
+    .update(patch)
     .eq('id', id);
 
   if (upErr) {

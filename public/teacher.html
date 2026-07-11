@@ -3,122 +3,191 @@
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
-<title>교사 — 활동 등록</title>
-<!-- 브라우저에서 PDF → 페이지 이미지 변환 (서버 부담 0) -->
+<title>새싹 수집 — 교사</title>
+<!-- 브라우저에서 PDF → 페이지 이미지 변환(서버 부담 0) + QR 생성 -->
 <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
 <style>
-  :root { --blue: #2b6cb0; --green: #2f855a; --red: #c53030; --line: #e2e8f0; }
+  :root { --blue: #2b6cb0; --green: #2f855a; --red: #c53030; --gray: #718096; --line: #e5e9f0; --bg: #f4f6f9; --ink: #1a202c; }
   * { box-sizing: border-box; }
-  body { font-family: system-ui, -apple-system, "Segoe UI", sans-serif; margin: 0; background: #f5f6f8; color: #1a1a1a; }
-  .wrap { max-width: 860px; margin: 0 auto; padding: 20px 16px 60px; }
-  h1 { font-size: 22px; }
-  h2 { font-size: 17px; margin-top: 28px; border-bottom: 2px solid var(--line); padding-bottom: 6px; }
-  .card { background: #fff; border-radius: 12px; padding: 16px; margin-bottom: 16px; box-shadow: 0 1px 3px rgba(0,0,0,.06); }
-  label { display: block; font-weight: 600; margin: 12px 0 6px; }
+  body { font-family: system-ui, -apple-system, "Segoe UI", sans-serif; margin: 0; background: var(--bg); color: var(--ink); }
+  .topnav { background: #fff; border-bottom: 1px solid var(--line); padding: 12px 22px; display: flex; align-items: center; gap: 10px; position: sticky; top: 0; z-index: 30; }
+  .topnav .brand { font-size: 17px; font-weight: 800; }
+  .topnav .brand span { color: var(--blue); }
+  .topnav .sp { margin-left: auto; }
+  .topnav a { font-size: 13px; color: var(--gray); text-decoration: none; margin-left: 14px; }
+  .wrap { max-width: 1180px; margin: 0 auto; padding: 20px 18px 70px; }
+  h2 { font-size: 16px; margin: 26px 0 12px; }
+  .card { background: #fff; border: 1px solid var(--line); border-radius: 14px; padding: 18px; margin-bottom: 16px; }
+  label { display: block; font-weight: 600; margin: 12px 0 6px; font-size: 14px; }
   input[type=text], input[type=number], textarea, select {
-    width: 100%; padding: 10px; font-size: 15px; border: 1px solid var(--line); border-radius: 8px; font-family: inherit;
+    width: 100%; padding: 10px 12px; font-size: 15px; border: 1px solid var(--line); border-radius: 8px; font-family: inherit; background: #fff;
   }
-  textarea { min-height: 180px; resize: vertical; }
-  .row { display: flex; gap: 10px; align-items: center; }
+  textarea { min-height: 150px; resize: vertical; font-family: ui-monospace, Menlo, Consolas, monospace; font-size: 13px; }
+  .row { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+  .btn, button { display: inline-flex; align-items: center; justify-content: center; gap: 6px; padding: 10px 15px; font-size: 14px; font-weight: 700; color: #fff; border: 0; border-radius: 9px; cursor: pointer; line-height: 1.2; text-decoration: none; }
+  .btn-blue { background: var(--blue); } .btn-green { background: var(--green); } .btn-gray { background: var(--gray); }
+  .btn-red { background: var(--red); } .btn-outline { background: #fff; color: var(--ink); border: 1px solid var(--line); }
+  .btn-sm { padding: 6px 10px; font-size: 12.5px; border-radius: 7px; }
+  .muted { color: var(--gray); font-size: 13px; }
+
+  /* 단계 표시 */
+  .steps { display: flex; gap: 8px; margin-bottom: 16px; }
+  .step { flex: 1; text-align: center; padding: 10px; border: 1px solid var(--line); border-radius: 10px; font-size: 13px; font-weight: 700; color: var(--gray); background: #fbfcfe; }
+  .step.on { color: #fff; background: var(--blue); border-color: var(--blue); }
+  .step b { display: block; font-size: 11px; opacity: .8; font-weight: 600; }
+
+  /* 좌우 편집기 */
+  .editor { display: flex; gap: 18px; align-items: flex-start; }
+  .ed-left { flex: 1 1 54%; min-width: 0; }
+  .ed-right { flex: 1 1 46%; min-width: 0; position: sticky; top: 66px; }
+  .preview-frame { width: 100%; height: 560px; border: 1px solid var(--line); border-radius: 10px; background: #fff; }
+  .preview-head { display: flex; align-items: center; margin-bottom: 8px; }
+  .preview-head .tag { font-size: 11px; background: #edf2f7; color: var(--gray); padding: 2px 8px; border-radius: 999px; margin-left: 8px; }
+
+  /* 드래그앤드롭 */
+  .dropzone { border: 2px dashed #c7d2e0; border-radius: 10px; padding: 14px; text-align: center; background: #fbfdff; cursor: pointer; transition: .15s; }
+  .dropzone.drag { border-color: var(--blue); background: #eef5ff; }
+  .dropzone input { display: none; }
+  .dropzone .big { font-size: 14px; font-weight: 700; }
+
   .qtable { width: 100%; border-collapse: collapse; margin-top: 8px; }
   .qtable th, .qtable td { border: 1px solid var(--line); padding: 8px; text-align: left; }
-  .qtable th { background: #f7fafc; font-size: 13px; }
-  .qtable td.num { width: 48px; text-align: center; font-weight: 700; }
-  .qtable select { width: 110px; }
-  button, a.btn { display: inline-block; padding: 10px 16px; font-size: 15px; font-weight: 700; color: #fff; border: 0; border-radius: 8px; cursor: pointer; line-height: 1.2; }
-  .actions a.btn { display: inline-flex; align-items: center; }
-  .btn-blue { background: var(--blue); }
-  .btn-green { background: var(--green); }
-  .btn-gray { background: #718096; }
-  .btn-red { background: var(--red); }
-  .btn-sm { padding: 6px 10px; font-size: 13px; }
-  .link-box { margin-top: 14px; padding: 12px; background: #ebf8ff; border: 1px solid #bee3f8; border-radius: 8px; display: none; }
-  .link-box a { color: var(--blue); font-weight: 700; word-break: break-all; }
-  .list-table { width: 100%; border-collapse: collapse; }
-  .list-table th, .list-table td { border-bottom: 1px solid var(--line); padding: 10px 8px; text-align: left; font-size: 14px; }
-  .muted { color: #718096; font-size: 13px; }
-  #results { display: none; }
-  pre { background: #f7fafc; padding: 10px; border-radius: 8px; overflow-x: auto; font-size: 12px; }
-  .actions { display: flex; gap: 6px; }
+  .qtable th { background: #f7fafc; font-size: 12.5px; }
+  .qtable td.num { width: 46px; text-align: center; font-weight: 700; }
+  .qtable select { width: 108px; }
+
+  /* 발행 결과(QR·코드) */
+  .publish-box { display: none; margin-top: 16px; padding: 16px; background: #f0f7ff; border: 1px solid #cfe3fb; border-radius: 12px; }
+  .publish-box.show { display: block; }
+  .pub-grid { display: flex; gap: 20px; align-items: center; flex-wrap: wrap; }
+  .pub-code { font-size: 40px; font-weight: 900; letter-spacing: 6px; color: var(--blue); }
+  .pub-link a { color: var(--blue); font-weight: 700; word-break: break-all; }
+  #qrBox { background: #fff; padding: 8px; border-radius: 8px; border: 1px solid var(--line); }
+
+  /* 목록 */
+  .list-item { display: flex; align-items: center; gap: 12px; padding: 12px; border: 1px solid var(--line); border-radius: 11px; margin-bottom: 8px; background: #fff; }
+  .li-main { flex: 1; min-width: 0; }
+  .li-title { font-weight: 700; }
+  .li-sub { font-size: 12px; color: var(--gray); margin-top: 2px; }
+  .li-code { font-weight: 800; color: var(--blue); }
+  .li-actions { display: flex; gap: 6px; flex-wrap: wrap; justify-content: flex-end; }
+  .badge { font-size: 11px; padding: 2px 8px; border-radius: 999px; font-weight: 700; }
+  .badge.open { background: #e6fffa; color: #2c7a7b; } .badge.draft { background: #fefcbf; color: #975a16; }
+
+  /* 모달(QR) */
+  .modal { display: none; position: fixed; inset: 0; background: rgba(0,0,0,.5); z-index: 100; align-items: center; justify-content: center; }
+  .modal.show { display: flex; }
+  .modal-box { background: #fff; border-radius: 14px; padding: 24px; text-align: center; max-width: 320px; }
+  .modal-box #qrModalCode { font-size: 34px; font-weight: 900; letter-spacing: 6px; color: var(--blue); margin: 10px 0; }
+
+  @media (max-width: 860px) { .editor { flex-direction: column; } .ed-right { position: static; width: 100%; } }
 </style>
 </head>
 <body>
+<div class="topnav">
+  <div class="brand">🌱 새싹 <span>수집</span></div>
+  <div class="sp"></div>
+  <a href="/join.html" target="_blank">학생 입장 페이지</a>
+</div>
+
 <div class="wrap">
-  <h1>📝 교사 — 활동 등록</h1>
-
   <div class="card">
-    <label for="title">활동 제목</label>
-    <input id="title" type="text" placeholder="예) 3단원 쪽지시험" />
-
-    <label for="htmlBody">학생용 HTML (HTML/PDF 올리기 또는 붙여넣기)</label>
-    <div class="row" style="margin-bottom:8px;">
-      <input id="htmlFile" type="file" accept=".html,.htm" />
-      <span class="muted" id="fileHint">.html 파일을 고르면 아래 칸이 자동으로 채워집니다.</span>
-    </div>
-    <div class="row" style="margin-bottom:8px; flex-wrap:wrap;">
-      <input id="pdfFile" type="file" accept=".pdf" />
-      <label style="margin:0;">문항 수</label>
-      <input id="pdfQcount" type="number" min="1" max="100" value="10" style="width:80px;" />
-      <span class="muted" id="pdfHint">PDF를 고르면 브라우저에서 각 페이지를 이미지로 변환하고 답 입력칸(q1..qN)을 붙여 아래 칸을 채웁니다.</span>
-    </div>
-    <textarea id="htmlBody" placeholder="학생에게 보여줄 문제 HTML을 파일(HTML/PDF)로 올리거나 여기에 붙여넣으세요. 답 입력칸의 name 은 q1, q2, ... 규칙을 사용하세요."></textarea>
-
-    <label style="margin-top:14px;">채점 방식</label>
-    <div class="row" style="gap:16px;">
-      <label style="margin:0; font-weight:400;"><input type="radio" name="gradeMode" value="teacher" checked /> 교사 정답표</label>
-      <label style="margin:0; font-weight:400;"><input type="radio" name="gradeMode" value="self" /> HTML 자가채점</label>
-      <span class="muted" id="modeHint">교사 정답표: 아래 문항표에 정답 입력. 자가채점: 문항표 정답 생략(HTML이 스스로 채점).</span>
+    <div class="steps">
+      <div class="step on" id="step1">1. 문제<b>파일·붙여넣기</b></div>
+      <div class="step" id="step2">2. 정답<b>채점 설정</b></div>
+      <div class="step" id="step3">3. 발행<b>QR·코드 배포</b></div>
     </div>
 
-    <div id="qtableWrap">
-      <div class="row" style="margin-top:12px;">
-        <label style="margin:0;">문항 수</label>
-        <input id="qcount" type="number" min="0" max="50" value="3" style="width:90px;" />
-        <button class="btn-gray btn-sm" id="buildRows">문항표 만들기</button>
+    <div class="editor">
+      <!-- 왼쪽: 설정 -->
+      <div class="ed-left">
+        <label for="title">활동 제목</label>
+        <input id="title" type="text" placeholder="예) 3단원 쪽지시험" />
+
+        <label>문제 파일 (HTML 또는 PDF)</label>
+        <div class="dropzone" id="dropzone">
+          <input id="fileInput" type="file" accept=".html,.htm,.pdf" />
+          <div class="big">📄 파일을 여기로 끌어놓거나 클릭해서 선택</div>
+          <div class="muted" id="fileHint">.html 은 그대로 불러오고, .pdf 는 브라우저에서 페이지 이미지로 변환합니다.</div>
+        </div>
+
+        <div class="row" style="margin-top:10px;">
+          <label style="margin:0;">문항 수</label>
+          <input id="qcount" type="number" min="0" max="100" value="3" style="width:90px;" />
+          <button class="btn-gray btn-sm" id="buildRows">문항표 만들기</button>
+          <span class="muted">PDF 답 입력칸(q1..qN)과 문항표에 함께 쓰입니다.</span>
+        </div>
+
+        <label style="margin-top:14px;">붙여넣기 / 직접 편집 (학생용 HTML)</label>
+        <textarea id="htmlBody" placeholder="파일을 올리거나 여기에 문제 HTML을 붙여넣으세요. 답 입력칸 name 은 q1, q2 … 규칙."></textarea>
+
+        <label style="margin-top:14px;">채점 방식</label>
+        <div class="row" style="gap:16px;">
+          <label style="margin:0; font-weight:400;"><input type="radio" name="gradeMode" value="teacher" checked /> 교사 정답표</label>
+          <label style="margin:0; font-weight:400;"><input type="radio" name="gradeMode" value="self" /> HTML 자가채점</label>
+        </div>
+        <div id="qtableWrap">
+          <table class="qtable" id="qtable" style="display:none;">
+            <thead><tr><th class="num">번호</th><th>유형</th><th>정답</th></tr></thead>
+            <tbody id="qbody"></tbody>
+          </table>
+        </div>
+
+        <div class="row" style="margin-top:18px;">
+          <button class="btn-green" id="publishBtn">🚀 발행하기</button>
+          <button class="btn-outline" id="draftBtn">💾 임시 저장</button>
+          <button class="btn-gray" id="cancelEditBtn" style="display:none;">수정 취소</button>
+        </div>
+
+        <div class="publish-box" id="publishBox">
+          <div style="font-weight:800; margin-bottom:10px;" id="pubTitle">✅ 발행 완료! 학생에게 아래로 안내하세요.</div>
+          <div class="pub-grid">
+            <div id="qrBox"></div>
+            <div>
+              <div class="muted">입장 코드</div>
+              <div class="pub-code" id="pubCode">----</div>
+              <div class="muted" style="margin-top:8px;">또는 주소로 입장</div>
+              <div class="pub-link"><a id="pubLink" href="#" target="_blank"></a></div>
+              <div class="muted" style="margin-top:4px;">짧은 입장: <a id="pubJoin" href="#" target="_blank"></a></div>
+            </div>
+          </div>
+        </div>
       </div>
 
-      <table class="qtable" id="qtable" style="display:none;">
-        <thead>
-          <tr><th class="num">번호</th><th>유형</th><th>정답</th></tr>
-        </thead>
-        <tbody id="qbody"></tbody>
-      </table>
-    </div>
-
-    <div style="margin-top:16px;">
-      <button class="btn-green" id="createBtn">활동 만들기</button>
-      <button class="btn-gray" id="cancelEditBtn" style="display:none;">수정 취소</button>
-    </div>
-
-    <div class="link-box" id="linkBox">
-      ✅ 생성 완료! 학생 응시 주소:<br />
-      <a id="goLink" href="#" target="_blank"></a>
-      <div class="muted" id="createdId"></div>
+      <!-- 오른쪽: 실시간 미리보기 -->
+      <div class="ed-right">
+        <div class="preview-head"><b>학생 화면 미리보기</b><span class="tag">실시간</span></div>
+        <iframe id="preview" class="preview-frame" title="미리보기"></iframe>
+      </div>
     </div>
   </div>
 
-  <h2>기존 활동</h2>
-  <div class="card">
-    <table class="list-table">
-      <thead>
-        <tr><th>제목</th><th>상태</th><th>생성일</th><th>동작</th></tr>
-      </thead>
-      <tbody id="listBody">
-        <tr><td colspan="4" class="muted">불러오는 중...</td></tr>
-      </tbody>
-    </table>
-  </div>
+  <h2>진행 중인 활동</h2>
+  <div id="openList"><div class="muted">불러오는 중...</div></div>
 
-  <div class="card" id="results">
-    <h2 style="margin-top:0;border:0;">결과 보기</h2>
-    <div id="resultsBody"></div>
+  <h2>보관함 · 작성 중 (임시저장)</h2>
+  <div id="draftList"><div class="muted">불러오는 중...</div></div>
+</div>
+
+<!-- QR 모달 -->
+<div class="modal" id="qrModal">
+  <div class="modal-box">
+    <div style="font-weight:800;">입장 QR / 코드</div>
+    <div id="qrModalImg" style="display:flex; justify-content:center; margin:12px 0;"></div>
+    <div id="qrModalCode">----</div>
+    <div class="muted" id="qrModalLink" style="word-break:break-all;"></div>
+    <div style="margin-top:14px;"><button class="btn-gray" onclick="document.getElementById('qrModal').classList.remove('show')">닫기</button></div>
   </div>
 </div>
 
 <script>
 var SERVER = window.location.origin;
+if (window.pdfjsLib) {
+  pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
+}
 
-// ---- 문항표 만들기 ----
+// ================= 문항표 =================
 document.getElementById('buildRows').addEventListener('click', buildRows);
 function buildRows() {
   var n = parseInt(document.getElementById('qcount').value, 10) || 0;
@@ -129,15 +198,12 @@ function buildRows() {
     tr.innerHTML =
       '<td class="num">' + i + '</td>' +
       '<td><select class="q-type" data-num="' + i + '">' +
-        '<option value="choice">객관식</option>' +
-        '<option value="short" selected>단답</option>' +
-        '<option value="essay">서술형</option>' +
+        '<option value="choice">객관식</option><option value="short" selected>단답</option><option value="essay">서술형</option>' +
       '</select></td>' +
       '<td><input type="text" class="q-answer" data-num="' + i + '" placeholder="정답 (name=q' + i + ')" /></td>';
     body.appendChild(tr);
   }
   document.getElementById('qtable').style.display = n ? 'table' : 'none';
-  // 유형 바뀌면 서술형 정답칸 비활성
   body.querySelectorAll('.q-type').forEach(function (sel) {
     sel.addEventListener('change', function () { syncAnswerDisabled(sel); });
     syncAnswerDisabled(sel);
@@ -150,70 +216,67 @@ function syncAnswerDisabled(sel) {
   if (sel.value === 'essay') { ans.disabled = true; ans.value = ''; ans.placeholder = '서술형 — 정답 없음'; }
   else { ans.disabled = false; ans.placeholder = '정답 (name=q' + num + ')'; }
 }
-buildRows(); // 초기 3행
+buildRows();
 
-// ---- 파일 올리기 → textarea 자동 채움 ----
-document.getElementById('htmlFile').addEventListener('change', function (e) {
-  var file = e.target.files && e.target.files[0];
-  if (!file) return;
-  var reader = new FileReader();
-  reader.onload = function () {
-    document.getElementById('htmlBody').value = reader.result;
-    document.getElementById('fileHint').textContent = '✅ ' + file.name + ' 불러옴 (' + reader.result.length + '자). 필요하면 수정하세요.';
-  };
-  reader.onerror = function () { alert('파일을 읽지 못했습니다.'); };
-  reader.readAsText(file, 'utf-8');
-});
+// ================= 통합 파일 입력 + 드래그앤드롭 =================
+var dz = document.getElementById('dropzone');
+var fileInput = document.getElementById('fileInput');
+dz.addEventListener('click', function (e) { if (e.target.tagName !== 'INPUT') fileInput.click(); });
+fileInput.addEventListener('change', function (e) { if (e.target.files[0]) handleFile(e.target.files[0]); });
+['dragenter', 'dragover'].forEach(function (ev) { dz.addEventListener(ev, function (e) { e.preventDefault(); dz.classList.add('drag'); }); });
+['dragleave', 'drop'].forEach(function (ev) { dz.addEventListener(ev, function (e) { e.preventDefault(); dz.classList.remove('drag'); }); });
+dz.addEventListener('drop', function (e) { var f = e.dataTransfer.files && e.dataTransfer.files[0]; if (f) handleFile(f); });
 
-// ---- PDF 올리기 → 브라우저(pdf.js)에서 페이지 이미지 + 입력칸 HTML 생성 → textarea 채움 ----
-if (window.pdfjsLib) {
-  pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
+function handleFile(file) {
+  var name = (file.name || '').toLowerCase();
+  var hint = document.getElementById('fileHint');
+  if (name.endsWith('.pdf')) {
+    if (!window.pdfjsLib) { alert('PDF 라이브러리(pdf.js)를 불러오지 못했습니다.'); return; }
+    convertPdf(file, hint);
+  } else if (name.endsWith('.html') || name.endsWith('.htm')) {
+    var reader = new FileReader();
+    reader.onload = function () {
+      document.getElementById('htmlBody').value = reader.result;
+      hint.textContent = '✅ ' + file.name + ' 불러옴 (' + reader.result.length + '자).';
+      updatePreview();
+    };
+    reader.onerror = function () { alert('파일을 읽지 못했습니다.'); };
+    reader.readAsText(file, 'utf-8');
+  } else {
+    alert('.html 또는 .pdf 파일만 지원합니다.');
+  }
 }
-document.getElementById('pdfFile').addEventListener('change', function (e) {
-  var file = e.target.files && e.target.files[0];
-  if (!file) return;
-  if (!window.pdfjsLib) { alert('PDF 라이브러리(pdf.js)를 불러오지 못했습니다. 인터넷 연결을 확인하세요.'); return; }
 
-  var hint = document.getElementById('pdfHint');
-  var n = parseInt(document.getElementById('pdfQcount').value, 10) || 10;
+// ================= PDF → 페이지 이미지 =================
+function convertPdf(file, hint) {
+  var n = parseInt(document.getElementById('qcount').value, 10) || 10;
   hint.textContent = '⏳ ' + file.name + ' 변환 중...';
-
   var fr = new FileReader();
   fr.onload = function () {
     var typed = new Uint8Array(fr.result);
     pdfjsLib.getDocument({ data: typed }).promise
       .then(function (pdf) { return renderAllPages(pdf, hint, file.name); })
       .then(function (imgTags) {
-        var html = buildPdfHtml(imgTags, n);
-        document.getElementById('htmlBody').value = html;
-        hint.textContent = '✅ ' + file.name + ' → ' + imgTags.length + '페이지 이미지 + ' + n + '문항 입력칸 생성. 필요하면 수정하세요.';
+        document.getElementById('htmlBody').value = buildPdfHtml(imgTags, n);
+        hint.textContent = '✅ ' + file.name + ' → ' + imgTags.length + '페이지 이미지 + ' + n + '문항 입력칸 생성.';
+        updatePreview();
       })
-      .catch(function (err) {
-        console.error(err);
-        alert('PDF 변환 실패: ' + err.message);
-        hint.textContent = '❌ 변환 실패: ' + err.message;
-      });
+      .catch(function (err) { console.error(err); alert('PDF 변환 실패: ' + err.message); hint.textContent = '❌ 변환 실패: ' + err.message; });
   };
   fr.onerror = function () { alert('PDF 파일을 읽지 못했습니다.'); };
   fr.readAsArrayBuffer(file);
-});
-
+}
 function renderAllPages(pdf, hint, fname) {
-  var tags = [];
-  var scale = 1.5;
-  var chain = Promise.resolve();
+  var tags = [], scale = 1.5, chain = Promise.resolve();
   for (var p = 1; p <= pdf.numPages; p++) {
     (function (pageNum) {
       chain = chain.then(function () {
         return pdf.getPage(pageNum).then(function (page) {
           var viewport = page.getViewport({ scale: scale });
           var canvas = document.createElement('canvas');
-          canvas.width = Math.ceil(viewport.width);
-          canvas.height = Math.ceil(viewport.height);
-          var ctx = canvas.getContext('2d');
-          return page.render({ canvasContext: ctx, viewport: viewport }).promise.then(function () {
-            var dataUrl = canvas.toDataURL('image/jpeg', 0.85);
-            tags.push('<figure class="pdf-page"><img alt="문제지 ' + pageNum + '페이지" src="' + dataUrl + '" /></figure>');
+          canvas.width = Math.ceil(viewport.width); canvas.height = Math.ceil(viewport.height);
+          return page.render({ canvasContext: canvas.getContext('2d'), viewport: viewport }).promise.then(function () {
+            tags.push('<figure class="pdf-page"><img alt="문제지 ' + pageNum + '페이지" src="' + canvas.toDataURL('image/jpeg', 0.85) + '" /></figure>');
             hint.textContent = '⏳ ' + fname + ' 변환 중... (' + pageNum + '/' + pdf.numPages + '페이지)';
           });
         });
@@ -222,18 +285,13 @@ function renderAllPages(pdf, hint, fname) {
   }
   return chain.then(function () { return tags; });
 }
-
 function buildPdfHtml(imgTags, n) {
   var inputs = [];
   for (var i = 1; i <= n; i++) {
-    inputs.push(
-      '<div class="q-row"><label for="q' + i + '">' + i + '번</label>' +
-      '<input type="text" id="q' + i + '" name="q' + i + '" placeholder="' + i + '번 답" autocomplete="off" /></div>'
-    );
+    inputs.push('<div class="q-row"><label for="q' + i + '">' + i + '번</label><input type="text" id="q' + i + '" name="q' + i + '" placeholder="' + i + '번 답" autocomplete="off" /></div>');
   }
   return '' +
     '<style>\n' +
-    '  /* 교실 PC 좌우 분할: 왼쪽 문제 스크롤, 오른쪽 답 패널 고정 */\n' +
     '  .pdf-doc { display: flex; align-items: flex-start; gap: 20px; max-width: 1200px; margin: 0 auto; }\n' +
     '  .pdf-pages { flex: 0 0 64%; min-width: 0; }\n' +
     '  .pdf-page { margin: 0 0 16px; text-align: center; }\n' +
@@ -244,94 +302,99 @@ function buildPdfHtml(imgTags, n) {
     '  .q-row label { flex: 0 0 52px; font-weight: 700; font-size: 15px; }\n' +
     '  .q-row input { flex: 1; padding: 10px 12px; font-size: 16px; border: 1px solid #cbd5e1; border-radius: 6px; }\n' +
     '  .q-row input:focus { outline: none; border-color: #2b6cb0; box-shadow: 0 0 0 3px rgba(43,108,176,.15); background: #fffef5; }\n' +
-    '  /* 모바일: 위아래로 접되 답 패널은 상단 sticky 유지 */\n' +
     '  @media (max-width: 768px) {\n' +
     '    .pdf-doc { flex-direction: column; gap: 12px; }\n' +
     '    .pdf-pages { flex: none; width: 100%; order: 2; }\n' +
     '    .pdf-answers { flex: none; width: 100%; order: 1; position: sticky; top: 0; max-height: 45vh; z-index: 20; box-shadow: 0 2px 8px rgba(0,0,0,.12); }\n' +
     '  }\n' +
     '</style>\n' +
-    '<div class="pdf-doc">\n' +
-    '  <div class="pdf-pages">\n' +
-    '    ' + imgTags.join('\n    ') + '\n' +
-    '  </div>\n' +
-    '  <div class="pdf-answers">\n' +
-    '    <h3>✏️ 답 입력</h3>\n' +
-    '    ' + inputs.join('\n    ') + '\n' +
-    '  </div>\n' +
-    '</div>';
+    '<div class="pdf-doc">\n  <div class="pdf-pages">\n    ' + imgTags.join('\n    ') + '\n  </div>\n' +
+    '  <div class="pdf-answers">\n    <h3>✏️ 답 입력</h3>\n    ' + inputs.join('\n    ') + '\n  </div>\n</div>';
 }
 
-// ---- 채점 방식 토글: 자가채점이면 문항표 정답 입력 숨김(생략 가능) ----
-function currentGradeMode() {
-  var sel = document.querySelector('input[name="gradeMode"]:checked');
-  return sel ? sel.value : 'teacher';
-}
-function syncGradeMode() {
-  var self = currentGradeMode() === 'self';
-  document.getElementById('qtableWrap').style.display = self ? 'none' : 'block';
-}
-document.querySelectorAll('input[name="gradeMode"]').forEach(function (r) {
-  r.addEventListener('change', syncGradeMode);
-});
+// ================= 채점 방식 =================
+function currentGradeMode() { var s = document.querySelector('input[name="gradeMode"]:checked'); return s ? s.value : 'teacher'; }
+function syncGradeMode() { document.getElementById('qtableWrap').style.display = currentGradeMode() === 'self' ? 'none' : 'block'; }
+document.querySelectorAll('input[name="gradeMode"]').forEach(function (r) { r.addEventListener('change', syncGradeMode); });
 syncGradeMode();
 
-// ---- 등록/수정 상태 ----
-var editingId = null; // null 이면 신규 등록, 값이 있으면 그 활동 수정(PUT)
-
 function collectQuestions() {
-  if (currentGradeMode() === 'self') return []; // 자가채점: 정답표 없음
+  if (currentGradeMode() === 'self') return [];
   var questions = [];
   document.querySelectorAll('.q-type').forEach(function (sel) {
     var num = parseInt(sel.getAttribute('data-num'), 10);
     var type = sel.value;
     var ansEl = document.querySelector('.q-answer[data-num="' + num + '"]');
-    var answer = type === 'essay' ? '' : (ansEl ? ansEl.value.trim() : '');
-    questions.push({ num: num, type: type, answer: answer });
+    questions.push({ num: num, type: type, answer: type === 'essay' ? '' : (ansEl ? ansEl.value.trim() : '') });
   });
   return questions;
 }
 
-// ---- 활동 만들기 / 수정 반영 ----
-document.getElementById('createBtn').addEventListener('click', function () {
+// ================= 미리보기 =================
+function updatePreview() {
+  var title = document.getElementById('title').value || '활동';
+  var body = document.getElementById('htmlBody').value || '<p class="muted" style="color:#999">문제 내용이 여기에 표시됩니다.</p>';
+  var doc = '<!doctype html><html lang="ko"><head><meta charset="utf-8"><style>body{font-family:system-ui,sans-serif;margin:0;background:#f5f6f8;padding:12px;color:#1a1a1a}</style></head><body>' +
+    '<div style="background:#2b6cb0;color:#fff;padding:12px;border-radius:10px;margin-bottom:12px"><div style="font-weight:700">' + escapeAttr(title) + '</div>' +
+    '<input placeholder="닉네임(이름)" style="width:100%;margin-top:6px;padding:8px;border:0;border-radius:6px;box-sizing:border-box" disabled></div>' +
+    '<div style="background:#fff;padding:14px;border-radius:10px">' + body + '</div>' +
+    '<button style="width:100%;margin-top:12px;padding:13px;background:#2f855a;color:#fff;border:0;border-radius:10px;font-weight:700" disabled>선생님께 제출</button>' +
+    '</body></html>';
+  document.getElementById('preview').srcdoc = doc;
+}
+function escapeAttr(s) { return String(s).replace(/[<>&"]/g, function (c) { return { '<': '&lt;', '>': '&gt;', '&': '&amp;', '"': '&quot;' }[c]; }); }
+document.getElementById('title').addEventListener('input', updatePreview);
+document.getElementById('htmlBody').addEventListener('input', updatePreview);
+updatePreview();
+
+// ================= 발행 / 임시저장 / 수정 =================
+var editingId = null;
+
+function submitActivity(status) {
   var title = document.getElementById('title').value.trim();
   var html_body = document.getElementById('htmlBody').value;
   if (!title) { alert('활동 제목을 입력하세요.'); return; }
-  if (!html_body.trim()) { alert('학생용 HTML을 붙여넣으세요.'); return; }
+  if (!html_body.trim()) { alert('학생용 HTML(문제)을 넣으세요.'); return; }
 
-  var questions = collectQuestions();
-  var btn = this;
+  var payload = { title: title, html_body: html_body, questions: collectQuestions(), status: status };
   var isEdit = !!editingId;
-  btn.disabled = true; btn.textContent = isEdit ? '수정 중...' : '만드는 중...';
-
   var url = isEdit ? (SERVER + '/api/activities/' + editingId) : (SERVER + '/api/activities');
   var method = isEdit ? 'PUT' : 'POST';
 
-  fetch(url, {
-    method: method,
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ title: title, html_body: html_body, questions: questions }),
-  })
+  fetch(url, { method: method, headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) })
     .then(function (r) { return r.json(); })
     .then(function (data) {
-      if (!data.ok) throw new Error(data.error || (isEdit ? '수정 실패' : '생성 실패'));
+      if (!data.ok) throw new Error(data.error || '실패');
       if (isEdit) {
         alert('수정 반영 완료! (version ' + data.version + ') 학생 화면은 8초 내 변경 알림을 받습니다.');
         exitEditMode();
+      } else if (status === 'draft') {
+        alert('임시 저장했습니다. 아래 "보관함"에서 이어서 편집·발행하세요.');
+        resetForm();
       } else {
-        var goUrl = SERVER + '/go/' + data.activityId;
-        var link = document.getElementById('goLink');
-        link.href = goUrl; link.textContent = goUrl;
-        document.getElementById('createdId').textContent = 'activityId: ' + data.activityId;
-        document.getElementById('linkBox').style.display = 'block';
+        showPublish(data.activityId, data.join_code);
       }
       loadList();
     })
-    .catch(function (err) { alert('실패: ' + err.message); })
-    .finally(function () { btn.disabled = false; btn.textContent = editingId ? '수정 반영' : '활동 만들기'; });
-});
+    .catch(function (err) { alert('실패: ' + err.message); });
+}
+document.getElementById('publishBtn').addEventListener('click', function () { submitActivity('open'); });
+document.getElementById('draftBtn').addEventListener('click', function () { submitActivity('draft'); });
 
-// ---- 수정 모드 진입/종료 ----
+function showPublish(id, code) {
+  var goUrl = SERVER + '/go/' + id;
+  var joinUrl = SERVER + '/join/' + code;
+  document.getElementById('pubCode').textContent = code || '----';
+  var link = document.getElementById('pubLink'); link.href = goUrl; link.textContent = goUrl;
+  var j = document.getElementById('pubJoin'); j.href = joinUrl; j.textContent = joinUrl;
+  var qb = document.getElementById('qrBox'); qb.innerHTML = '';
+  if (window.QRCode) { new QRCode(qb, { text: goUrl, width: 128, height: 128 }); }
+  else { qb.innerHTML = '<span class="muted">QR 생성 실패</span>'; }
+  document.getElementById('publishBox').classList.add('show');
+  document.getElementById('step3').classList.add('on');
+  document.getElementById('publishBox').scrollIntoView({ behavior: 'smooth' });
+}
+
 function enterEditMode(id) {
   fetch(SERVER + '/api/activities/' + id)
     .then(function (r) { return r.json(); })
@@ -340,13 +403,10 @@ function enterEditMode(id) {
       editingId = id;
       document.getElementById('title').value = data.activity.title || '';
       document.getElementById('htmlBody').value = data.activity.html_body || '';
-
       var qs = data.questions || [];
-      // 채점 방식 추정: 문항이 있으면 교사 정답표, 없으면 자가채점
       var mode = qs.length ? 'teacher' : 'self';
       document.querySelector('input[name="gradeMode"][value="' + mode + '"]').checked = true;
       syncGradeMode();
-
       if (qs.length) {
         document.getElementById('qcount').value = qs.length;
         buildRows();
@@ -357,105 +417,84 @@ function enterEditMode(id) {
           if (ans && q.type !== 'essay') ans.value = q.answer || '';
         });
       }
-
-      document.getElementById('createBtn').textContent = '수정 반영';
-      document.getElementById('cancelEditBtn').style.display = 'inline-block';
-      document.getElementById('linkBox').style.display = 'none';
+      document.getElementById('cancelEditBtn').style.display = 'inline-flex';
+      document.getElementById('publishBtn').textContent = '🚀 수정 반영(발행)';
+      document.getElementById('publishBox').classList.remove('show');
+      updatePreview();
       window.scrollTo({ top: 0, behavior: 'smooth' });
     })
     .catch(function (err) { alert('수정 준비 실패: ' + err.message); });
 }
-function exitEditMode() {
-  editingId = null;
-  document.getElementById('createBtn').textContent = '활동 만들기';
-  document.getElementById('cancelEditBtn').style.display = 'none';
-  document.getElementById('title').value = '';
-  document.getElementById('htmlBody').value = '';
-}
+function exitEditMode() { editingId = null; document.getElementById('publishBtn').textContent = '🚀 발행하기'; document.getElementById('cancelEditBtn').style.display = 'none'; resetForm(); }
+function resetForm() { document.getElementById('title').value = ''; document.getElementById('htmlBody').value = ''; document.getElementById('fileHint').textContent = '.html 은 그대로 불러오고, .pdf 는 브라우저에서 페이지 이미지로 변환합니다.'; updatePreview(); }
 document.getElementById('cancelEditBtn').addEventListener('click', exitEditMode);
 
-// ---- 활동 목록 ----
+// ================= 목록 (진행중 / 보관함) =================
 function loadList() {
   fetch(SERVER + '/api/activities')
     .then(function (r) { return r.json(); })
     .then(function (data) {
-      var body = document.getElementById('listBody');
-      if (!data.ok || !data.activities.length) {
-        body.innerHTML = '<tr><td colspan="4" class="muted">아직 활동이 없습니다.</td></tr>';
-        return;
-      }
-      body.innerHTML = '';
-      data.activities.forEach(function (a) {
-        var tr = document.createElement('tr');
-        var when = a.created_at ? new Date(a.created_at).toLocaleString('ko-KR') : '';
-        tr.innerHTML =
-          '<td>' + escapeHtml(a.title || '(제목 없음)') + '<div class="muted">' +
-            '<a href="' + SERVER + '/go/' + a.id + '" target="_blank">/go/' + a.id.slice(0, 8) + '…</a></div></td>' +
-          '<td>' + escapeHtml(a.status || '') + '</td>' +
-          '<td class="muted">' + when + '</td>' +
-          '<td class="actions">' +
-            '<button class="btn-blue btn-sm" data-act="result" data-id="' + a.id + '">결과 보기</button>' +
-            '<a class="btn btn-green btn-sm" href="' + SERVER + '/present/' + a.id + '" target="_blank" style="text-decoration:none;">발표 모드</a>' +
-            '<button class="btn-gray btn-sm" data-act="edit" data-id="' + a.id + '">수정</button>' +
-            '<button class="btn-red btn-sm" data-act="delete" data-id="' + a.id + '">삭제</button>' +
-          '</td>';
-        body.appendChild(tr);
-      });
-      body.querySelectorAll('button[data-act]').forEach(function (b) {
-        b.addEventListener('click', function () {
-          var id = b.getAttribute('data-id');
-          var act = b.getAttribute('data-act');
-          if (act === 'delete') deleteActivity(id);
-          else if (act === 'edit') enterEditMode(id);
-          else showResults(id);
-        });
-      });
+      var open = document.getElementById('openList');
+      var draft = document.getElementById('draftList');
+      if (!data.ok) { open.innerHTML = draft.innerHTML = '<div class="muted">불러오기 실패</div>'; return; }
+      var opens = data.activities.filter(function (a) { return a.status !== 'draft'; });
+      var drafts = data.activities.filter(function (a) { return a.status === 'draft'; });
+      open.innerHTML = opens.length ? opens.map(rowHtml).join('') : '<div class="muted">진행 중인 활동이 없습니다.</div>';
+      draft.innerHTML = drafts.length ? drafts.map(rowHtml).join('') : '<div class="muted">임시 저장된 활동이 없습니다.</div>';
+      bindRowActions();
     });
 }
-
+function rowHtml(a) {
+  var when = a.created_at ? new Date(a.created_at).toLocaleString('ko-KR') : '';
+  var badge = a.status === 'draft' ? '<span class="badge draft">작성중</span>' : '<span class="badge open">진행중</span>';
+  return '<div class="list-item">' +
+    '<div class="li-main"><div class="li-title">' + escapeHtml(a.title || '(제목 없음)') + ' ' + badge + '</div>' +
+      '<div class="li-sub">입장코드 <span class="li-code">' + (a.join_code || '----') + '</span> · ' + when + '</div></div>' +
+    '<div class="li-actions">' +
+      '<a class="btn btn-blue btn-sm" href="' + SERVER + '/dashboard/' + a.id + '" target="_blank">📊 대시보드</a>' +
+      '<a class="btn btn-green btn-sm" href="' + SERVER + '/present/' + a.id + '" target="_blank">🎬 발표</a>' +
+      '<button class="btn-outline btn-sm" data-act="qr" data-id="' + a.id + '" data-code="' + (a.join_code || '') + '">QR</button>' +
+      '<button class="btn-gray btn-sm" data-act="edit" data-id="' + a.id + '">수정</button>' +
+      '<button class="btn-gray btn-sm" data-act="dup" data-id="' + a.id + '">복제</button>' +
+      '<button class="btn-red btn-sm" data-act="del" data-id="' + a.id + '">삭제</button>' +
+    '</div></div>';
+}
+function bindRowActions() {
+  document.querySelectorAll('[data-act]').forEach(function (b) {
+    b.addEventListener('click', function () {
+      var id = b.getAttribute('data-id'), act = b.getAttribute('data-act');
+      if (act === 'del') deleteActivity(id);
+      else if (act === 'edit') enterEditMode(id);
+      else if (act === 'dup') duplicateActivity(id);
+      else if (act === 'qr') showQr(id, b.getAttribute('data-code'));
+    });
+  });
+}
 function deleteActivity(id) {
   if (!confirm('이 활동과 딸린 제출을 모두 삭제할까요?')) return;
   fetch(SERVER + '/api/activities/' + id, { method: 'DELETE' })
     .then(function (r) { return r.json(); })
-    .then(function (data) {
-      if (!data.ok) throw new Error(data.error || '삭제 실패');
-      loadList();
-      document.getElementById('results').style.display = 'none';
-    })
-    .catch(function (err) { alert('삭제 실패: ' + err.message); });
+    .then(function (d) { if (!d.ok) throw new Error(d.error); loadList(); })
+    .catch(function (e) { alert('삭제 실패: ' + e.message); });
 }
-
-function showResults(id) {
-  fetch(SERVER + '/api/submissions?activityId=' + id)
+function duplicateActivity(id) {
+  fetch(SERVER + '/api/activities/' + id + '/duplicate', { method: 'POST' })
     .then(function (r) { return r.json(); })
-    .then(function (data) {
-      var box = document.getElementById('results');
-      var out = document.getElementById('resultsBody');
-      box.style.display = 'block';
-      if (!data.ok || !data.submissions.length) {
-        out.innerHTML = '<p class="muted">아직 제출이 없습니다.</p>';
-        box.scrollIntoView({ behavior: 'smooth' });
-        return;
-      }
-      var html = '<table class="list-table"><thead><tr><th>닉네임</th><th>점수</th><th>제출시각</th><th>답안</th></tr></thead><tbody>';
-      data.submissions.forEach(function (s) {
-        var when = s.created_at ? new Date(s.created_at).toLocaleString('ko-KR') : '';
-        html += '<tr><td>' + escapeHtml(s.nickname || '(익명)') + '</td>' +
-          '<td><b>' + (s.auto_score == null ? '-' : s.auto_score) + '</b></td>' +
-          '<td class="muted">' + when + '</td>' +
-          '<td><pre>' + escapeHtml(JSON.stringify(s.answers || {}, null, 1)) + '</pre></td></tr>';
-      });
-      html += '</tbody></table>';
-      out.innerHTML = html;
-      box.scrollIntoView({ behavior: 'smooth' });
-    })
-    .catch(function (err) { alert('결과 조회 실패: ' + err.message); });
+    .then(function (d) { if (!d.ok) throw new Error(d.error); alert('복제 완료! 보관함에 "복제본"이 생겼습니다 (입장코드 ' + d.join_code + ').'); loadList(); })
+    .catch(function (e) { alert('복제 실패: ' + e.message); });
 }
+function showQr(id, code) {
+  var goUrl = SERVER + '/go/' + id;
+  document.getElementById('qrModalCode').textContent = code || '----';
+  document.getElementById('qrModalLink').textContent = goUrl;
+  var img = document.getElementById('qrModalImg'); img.innerHTML = '';
+  if (window.QRCode) new QRCode(img, { text: goUrl, width: 160, height: 160 });
+  document.getElementById('qrModal').classList.add('show');
+}
+document.getElementById('qrModal').addEventListener('click', function (e) { if (e.target === this) this.classList.remove('show'); });
 
 function escapeHtml(s) {
-  return String(s).replace(/[&<>"']/g, function (c) {
-    return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c];
-  });
+  return String(s == null ? '' : s).replace(/[&<>"']/g, function (c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]; });
 }
 
 loadList();
