@@ -1,0 +1,253 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>교사 — 활동 등록</title>
+<style>
+  :root { --blue: #2b6cb0; --green: #2f855a; --red: #c53030; --line: #e2e8f0; }
+  * { box-sizing: border-box; }
+  body { font-family: system-ui, -apple-system, "Segoe UI", sans-serif; margin: 0; background: #f5f6f8; color: #1a1a1a; }
+  .wrap { max-width: 860px; margin: 0 auto; padding: 20px 16px 60px; }
+  h1 { font-size: 22px; }
+  h2 { font-size: 17px; margin-top: 28px; border-bottom: 2px solid var(--line); padding-bottom: 6px; }
+  .card { background: #fff; border-radius: 12px; padding: 16px; margin-bottom: 16px; box-shadow: 0 1px 3px rgba(0,0,0,.06); }
+  label { display: block; font-weight: 600; margin: 12px 0 6px; }
+  input[type=text], input[type=number], textarea, select {
+    width: 100%; padding: 10px; font-size: 15px; border: 1px solid var(--line); border-radius: 8px; font-family: inherit;
+  }
+  textarea { min-height: 180px; resize: vertical; }
+  .row { display: flex; gap: 10px; align-items: center; }
+  .qtable { width: 100%; border-collapse: collapse; margin-top: 8px; }
+  .qtable th, .qtable td { border: 1px solid var(--line); padding: 8px; text-align: left; }
+  .qtable th { background: #f7fafc; font-size: 13px; }
+  .qtable td.num { width: 48px; text-align: center; font-weight: 700; }
+  .qtable select { width: 110px; }
+  button { padding: 10px 16px; font-size: 15px; font-weight: 700; color: #fff; border: 0; border-radius: 8px; cursor: pointer; }
+  .btn-blue { background: var(--blue); }
+  .btn-green { background: var(--green); }
+  .btn-gray { background: #718096; }
+  .btn-red { background: var(--red); }
+  .btn-sm { padding: 6px 10px; font-size: 13px; }
+  .link-box { margin-top: 14px; padding: 12px; background: #ebf8ff; border: 1px solid #bee3f8; border-radius: 8px; display: none; }
+  .link-box a { color: var(--blue); font-weight: 700; word-break: break-all; }
+  .list-table { width: 100%; border-collapse: collapse; }
+  .list-table th, .list-table td { border-bottom: 1px solid var(--line); padding: 10px 8px; text-align: left; font-size: 14px; }
+  .muted { color: #718096; font-size: 13px; }
+  #results { display: none; }
+  pre { background: #f7fafc; padding: 10px; border-radius: 8px; overflow-x: auto; font-size: 12px; }
+  .actions { display: flex; gap: 6px; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>📝 교사 — 활동 등록</h1>
+
+  <div class="card">
+    <label for="title">활동 제목</label>
+    <input id="title" type="text" placeholder="예) 3단원 쪽지시험" />
+
+    <label for="htmlBody">학생용 HTML (붙여넣기)</label>
+    <textarea id="htmlBody" placeholder="학생에게 보여줄 문제 HTML을 붙여넣으세요. 답 입력칸의 name 은 q1, q2, ... 규칙을 사용하세요."></textarea>
+
+    <div class="row" style="margin-top:12px;">
+      <label style="margin:0;">문항 수</label>
+      <input id="qcount" type="number" min="0" max="50" value="3" style="width:90px;" />
+      <button class="btn-gray btn-sm" id="buildRows">문항표 만들기</button>
+    </div>
+
+    <table class="qtable" id="qtable" style="display:none;">
+      <thead>
+        <tr><th class="num">번호</th><th>유형</th><th>정답</th></tr>
+      </thead>
+      <tbody id="qbody"></tbody>
+    </table>
+
+    <div style="margin-top:16px;">
+      <button class="btn-green" id="createBtn">활동 만들기</button>
+    </div>
+
+    <div class="link-box" id="linkBox">
+      ✅ 생성 완료! 학생 응시 주소:<br />
+      <a id="goLink" href="#" target="_blank"></a>
+      <div class="muted" id="createdId"></div>
+    </div>
+  </div>
+
+  <h2>기존 활동</h2>
+  <div class="card">
+    <table class="list-table">
+      <thead>
+        <tr><th>제목</th><th>상태</th><th>생성일</th><th>동작</th></tr>
+      </thead>
+      <tbody id="listBody">
+        <tr><td colspan="4" class="muted">불러오는 중...</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <div class="card" id="results">
+    <h2 style="margin-top:0;border:0;">결과 보기</h2>
+    <div id="resultsBody"></div>
+  </div>
+</div>
+
+<script>
+var SERVER = window.location.origin;
+
+// ---- 문항표 만들기 ----
+document.getElementById('buildRows').addEventListener('click', buildRows);
+function buildRows() {
+  var n = parseInt(document.getElementById('qcount').value, 10) || 0;
+  var body = document.getElementById('qbody');
+  body.innerHTML = '';
+  for (var i = 1; i <= n; i++) {
+    var tr = document.createElement('tr');
+    tr.innerHTML =
+      '<td class="num">' + i + '</td>' +
+      '<td><select class="q-type" data-num="' + i + '">' +
+        '<option value="choice">객관식</option>' +
+        '<option value="short" selected>단답</option>' +
+        '<option value="essay">서술형</option>' +
+      '</select></td>' +
+      '<td><input type="text" class="q-answer" data-num="' + i + '" placeholder="정답 (name=q' + i + ')" /></td>';
+    body.appendChild(tr);
+  }
+  document.getElementById('qtable').style.display = n ? 'table' : 'none';
+  // 유형 바뀌면 서술형 정답칸 비활성
+  body.querySelectorAll('.q-type').forEach(function (sel) {
+    sel.addEventListener('change', function () { syncAnswerDisabled(sel); });
+    syncAnswerDisabled(sel);
+  });
+}
+function syncAnswerDisabled(sel) {
+  var num = sel.getAttribute('data-num');
+  var ans = document.querySelector('.q-answer[data-num="' + num + '"]');
+  if (!ans) return;
+  if (sel.value === 'essay') { ans.disabled = true; ans.value = ''; ans.placeholder = '서술형 — 정답 없음'; }
+  else { ans.disabled = false; ans.placeholder = '정답 (name=q' + num + ')'; }
+}
+buildRows(); // 초기 3행
+
+// ---- 활동 만들기 ----
+document.getElementById('createBtn').addEventListener('click', function () {
+  var title = document.getElementById('title').value.trim();
+  var html_body = document.getElementById('htmlBody').value;
+  if (!title) { alert('활동 제목을 입력하세요.'); return; }
+  if (!html_body.trim()) { alert('학생용 HTML을 붙여넣으세요.'); return; }
+
+  var questions = [];
+  document.querySelectorAll('.q-type').forEach(function (sel) {
+    var num = parseInt(sel.getAttribute('data-num'), 10);
+    var type = sel.value;
+    var ansEl = document.querySelector('.q-answer[data-num="' + num + '"]');
+    var answer = type === 'essay' ? '' : (ansEl ? ansEl.value.trim() : '');
+    questions.push({ num: num, type: type, answer: answer });
+  });
+
+  var btn = this;
+  btn.disabled = true; btn.textContent = '만드는 중...';
+
+  fetch(SERVER + '/api/activities', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ title: title, html_body: html_body, questions: questions }),
+  })
+    .then(function (r) { return r.json(); })
+    .then(function (data) {
+      if (!data.ok) throw new Error(data.error || '생성 실패');
+      var url = SERVER + '/go/' + data.activityId;
+      var link = document.getElementById('goLink');
+      link.href = url; link.textContent = url;
+      document.getElementById('createdId').textContent = 'activityId: ' + data.activityId;
+      document.getElementById('linkBox').style.display = 'block';
+      loadList();
+    })
+    .catch(function (err) { alert('실패: ' + err.message); })
+    .finally(function () { btn.disabled = false; btn.textContent = '활동 만들기'; });
+});
+
+// ---- 활동 목록 ----
+function loadList() {
+  fetch(SERVER + '/api/activities')
+    .then(function (r) { return r.json(); })
+    .then(function (data) {
+      var body = document.getElementById('listBody');
+      if (!data.ok || !data.activities.length) {
+        body.innerHTML = '<tr><td colspan="4" class="muted">아직 활동이 없습니다.</td></tr>';
+        return;
+      }
+      body.innerHTML = '';
+      data.activities.forEach(function (a) {
+        var tr = document.createElement('tr');
+        var when = a.created_at ? new Date(a.created_at).toLocaleString('ko-KR') : '';
+        tr.innerHTML =
+          '<td>' + escapeHtml(a.title || '(제목 없음)') + '<div class="muted">' +
+            '<a href="' + SERVER + '/go/' + a.id + '" target="_blank">/go/' + a.id.slice(0, 8) + '…</a></div></td>' +
+          '<td>' + escapeHtml(a.status || '') + '</td>' +
+          '<td class="muted">' + when + '</td>' +
+          '<td class="actions">' +
+            '<button class="btn-blue btn-sm" data-act="result" data-id="' + a.id + '">결과 보기</button>' +
+            '<button class="btn-red btn-sm" data-act="delete" data-id="' + a.id + '">삭제</button>' +
+          '</td>';
+        body.appendChild(tr);
+      });
+      body.querySelectorAll('button[data-act]').forEach(function (b) {
+        b.addEventListener('click', function () {
+          var id = b.getAttribute('data-id');
+          if (b.getAttribute('data-act') === 'delete') deleteActivity(id);
+          else showResults(id);
+        });
+      });
+    });
+}
+
+function deleteActivity(id) {
+  if (!confirm('이 활동과 딸린 제출을 모두 삭제할까요?')) return;
+  fetch(SERVER + '/api/activities/' + id, { method: 'DELETE' })
+    .then(function (r) { return r.json(); })
+    .then(function (data) {
+      if (!data.ok) throw new Error(data.error || '삭제 실패');
+      loadList();
+      document.getElementById('results').style.display = 'none';
+    })
+    .catch(function (err) { alert('삭제 실패: ' + err.message); });
+}
+
+function showResults(id) {
+  fetch(SERVER + '/api/submissions?activityId=' + id)
+    .then(function (r) { return r.json(); })
+    .then(function (data) {
+      var box = document.getElementById('results');
+      var out = document.getElementById('resultsBody');
+      box.style.display = 'block';
+      if (!data.ok || !data.submissions.length) {
+        out.innerHTML = '<p class="muted">아직 제출이 없습니다.</p>';
+        box.scrollIntoView({ behavior: 'smooth' });
+        return;
+      }
+      var html = '<table class="list-table"><thead><tr><th>닉네임</th><th>점수</th><th>제출시각</th><th>답안</th></tr></thead><tbody>';
+      data.submissions.forEach(function (s) {
+        var when = s.created_at ? new Date(s.created_at).toLocaleString('ko-KR') : '';
+        html += '<tr><td>' + escapeHtml(s.nickname || '(익명)') + '</td>' +
+          '<td><b>' + (s.auto_score == null ? '-' : s.auto_score) + '</b></td>' +
+          '<td class="muted">' + when + '</td>' +
+          '<td><pre>' + escapeHtml(JSON.stringify(s.answers || {}, null, 1)) + '</pre></td></tr>';
+      });
+      html += '</tbody></table>';
+      out.innerHTML = html;
+      box.scrollIntoView({ behavior: 'smooth' });
+    })
+    .catch(function (err) { alert('결과 조회 실패: ' + err.message); });
+}
+
+function escapeHtml(s) {
+  return String(s).replace(/[&<>"']/g, function (c) {
+    return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c];
+  });
+}
+
+loadList();
+</script>
+</body>
+</html>
