@@ -109,8 +109,14 @@
         <div class="dropzone" id="dropzone">
           <input id="fileInput" type="file" accept=".html,.htm,.pdf" />
           <div class="big">📄 파일을 여기로 끌어놓거나 클릭해서 선택</div>
-          <div class="muted" id="fileHint">.html 은 그대로 불러오고, .pdf 는 브라우저에서 페이지 이미지로 변환합니다.</div>
+          <div class="muted" id="fileHint">.html 은 그대로 불러오고, .pdf 는 브라우저에서 변환합니다.</div>
         </div>
+        <div class="row" style="margin-top:8px; gap:16px;">
+          <span class="muted" style="font-weight:600;">PDF 변환 방식</span>
+          <label style="margin:0; font-weight:400;"><input type="radio" name="pdfMode" value="image" checked /> 그림으로(이미지)</label>
+          <label style="margin:0; font-weight:400;"><input type="radio" name="pdfMode" value="text" /> 글자로(텍스트·TTS 지원)</label>
+        </div>
+        <div class="muted" id="pdfModeHint" style="margin-top:4px;">그림 모드가 안전합니다. 글자 모드는 폰트 크기 조절·읽어주기(TTS)가 되지만, 그림·표가 많으면 깨질 수 있어요.</div>
 
         <div class="row" style="margin-top:10px;">
           <label style="margin:0;">문항 수</label>
@@ -247,24 +253,109 @@ function handleFile(file) {
   }
 }
 
-// ================= PDF → 페이지 이미지 =================
+function currentPdfMode() { var s = document.querySelector('input[name="pdfMode"]:checked'); return s ? s.value : 'image'; }
+
+// ================= PDF → 페이지 이미지 / 글자 =================
 function convertPdf(file, hint) {
   var n = parseInt(document.getElementById('qcount').value, 10) || 10;
-  hint.textContent = '⏳ ' + file.name + ' 변환 중...';
+  var mode = currentPdfMode();
+  hint.textContent = '⏳ ' + file.name + ' 변환 중... (' + (mode === 'text' ? '글자' : '그림') + ' 모드)';
   var fr = new FileReader();
   fr.onload = function () {
     var typed = new Uint8Array(fr.result);
     pdfjsLib.getDocument({ data: typed }).promise
-      .then(function (pdf) { return renderAllPages(pdf, hint, file.name); })
-      .then(function (imgTags) {
-        document.getElementById('htmlBody').value = buildPdfHtml(imgTags, n);
-        hint.textContent = '✅ ' + file.name + ' → ' + imgTags.length + '페이지 이미지 + ' + n + '문항 입력칸 생성.';
-        updatePreview();
+      .then(function (pdf) {
+        if (mode === 'text') {
+          return extractAllText(pdf, hint, file.name).then(function (paras) {
+            document.getElementById('htmlBody').value = buildPdfTextHtml(paras, n);
+            hint.textContent = '✅ ' + file.name + ' → 글자 ' + paras.length + '단락 + ' + n + '문항. 미리보기에서 확인하고, 깨지면 그림 모드로 바꾸세요.';
+            updatePreview();
+          });
+        }
+        return renderAllPages(pdf, hint, file.name).then(function (imgTags) {
+          document.getElementById('htmlBody').value = buildPdfHtml(imgTags, n);
+          hint.textContent = '✅ ' + file.name + ' → ' + imgTags.length + '페이지 이미지 + ' + n + '문항 입력칸 생성.';
+          updatePreview();
+        });
       })
       .catch(function (err) { console.error(err); alert('PDF 변환 실패: ' + err.message); hint.textContent = '❌ 변환 실패: ' + err.message; });
   };
   fr.onerror = function () { alert('PDF 파일을 읽지 못했습니다.'); };
   fr.readAsArrayBuffer(file);
+}
+
+// 각 페이지 텍스트를 위치정보로 줄·단락 복원 → 단락 문자열 배열
+function extractAllText(pdf, hint, fname) {
+  var paras = [], chain = Promise.resolve();
+  for (var p = 1; p <= pdf.numPages; p++) {
+    (function (pageNum) {
+      chain = chain.then(function () {
+        return pdf.getPage(pageNum).then(function (page) {
+          return page.getTextContent().then(function (tc) {
+            hint.textContent = '⏳ ' + fname + ' 글자 추출... (' + pageNum + '/' + pdf.numPages + ')';
+            reconstructParagraphs(tc.items).forEach(function (para) { paras.push(para); });
+          });
+        });
+      });
+    })(p);
+  }
+  return chain.then(function () { return paras; });
+}
+
+// transform(y) 로 줄을 묶고, 줄 간격이 크면 단락 분리
+function reconstructParagraphs(items) {
+  var rows = [];
+  items.forEach(function (it) {
+    var str = (it.str || '');
+    if (!str) return;
+    var y = it.transform[5], x = it.transform[4];
+    var h = it.height || Math.abs(it.transform[3]) || 10;
+    var line = null;
+    for (var i = 0; i < rows.length; i++) { if (Math.abs(rows[i].y - y) <= Math.max(3, h * 0.6)) { line = rows[i]; break; } }
+    if (!line) { line = { y: y, h: h, parts: [] }; rows.push(line); }
+    line.parts.push({ x: x, str: str });
+  });
+  rows.sort(function (a, b) { return b.y - a.y; }); // 위→아래
+  var lines = rows.map(function (r) {
+    r.parts.sort(function (a, b) { return a.x - b.x; });
+    return { y: r.y, h: r.h, text: r.parts.map(function (p) { return p.str; }).join(' ').replace(/\s+/g, ' ').trim() };
+  }).filter(function (l) { return l.text; });
+
+  // 줄 간격으로 단락 묶기
+  var paras = [], cur = [];
+  for (var i = 0; i < lines.length; i++) {
+    if (i > 0) {
+      var gap = lines[i - 1].y - lines[i].y;
+      if (gap > lines[i].h * 1.8) { if (cur.length) { paras.push(cur.join(' ')); cur = []; } }
+    }
+    cur.push(lines[i].text);
+  }
+  if (cur.length) paras.push(cur.join(' '));
+  return paras;
+}
+
+// 글자 모드 학생 HTML: 반응형 텍스트 + 폰트조절/TTS 표식(data-tts=on) + 답 입력칸
+function buildPdfTextHtml(paras, n) {
+  var body = paras.map(function (t) { return '<p class="tts-para">' + escapeHtml(t) + '</p>'; }).join('\n    ');
+  var inputs = [];
+  for (var i = 1; i <= n; i++) {
+    inputs.push('<div class="q-row"><label for="q' + i + '">' + i + '번</label><input type="text" id="q' + i + '" name="q' + i + '" placeholder="' + i + '번 답" autocomplete="off" /></div>');
+  }
+  return '' +
+    '<style>\n' +
+    '  .pdf-text-doc { max-width: 760px; margin: 0 auto; font-size: var(--tts-fs, 18px); line-height: 1.75; }\n' +
+    '  .pdf-text-doc .tts-para { margin: 0 0 14px; white-space: pre-wrap; word-break: break-word; }\n' +
+    '  .pdf-text-doc .pdf-note { background: #fffaf0; border: 1px solid #f6e05e; color: #975a16; padding: 8px 12px; border-radius: 8px; font-size: 14px; }\n' +
+    '  .pdf-text-answers { margin-top: 20px; padding-top: 16px; border-top: 2px dashed #cbd5e1; }\n' +
+    '  .pdf-text-answers .q-row { display: flex; align-items: center; gap: 10px; margin-bottom: 10px; }\n' +
+    '  .pdf-text-answers label { flex: 0 0 52px; font-weight: 700; }\n' +
+    '  .pdf-text-answers input { flex: 1; padding: 10px 12px; font-size: 16px; border: 1px solid #cbd5e1; border-radius: 6px; }\n' +
+    '</style>\n' +
+    '<div class="pdf-text-doc" data-tts="on">\n' +
+    '    <div class="pdf-note">📖 글자 모드입니다. 폰트 크기 조절과 🔊 읽어주기(TTS)를 쓸 수 있어요. 그림·표는 빠졌을 수 있으니 필요하면 그림 모드로 다시 올리세요.</div>\n    ' +
+    body + '\n' +
+    '    <div class="pdf-text-answers">\n      ' + inputs.join('\n      ') + '\n    </div>\n' +
+    '</div>';
 }
 function renderAllPages(pdf, hint, fname) {
   var tags = [], scale = 1.5, chain = Promise.resolve();
