@@ -102,7 +102,11 @@ function renderPresentPage(activity) {
   body { font-family: system-ui, -apple-system, "Segoe UI", sans-serif; margin: 0; background: #0f172a; color: #e2e8f0; height: 100vh; overflow: hidden; }
   .topbar { display: flex; align-items: center; gap: 12px; padding: 12px 20px; background: #1e293b; border-bottom: 1px solid #334155; }
   .topbar h1 { font-size: 16px; margin: 0; color: #94a3b8; font-weight: 600; }
+  .participation { font-size: 14px; font-weight: 800; color: #4ade80; background: #14321f; border: 1px solid #22c55e44; padding: 5px 12px; border-radius: 999px; }
   .nav { display: flex; align-items: center; gap: 6px; margin-left: auto; flex-wrap: wrap; }
+  .reveal-row { padding: 10px 16px 0; }
+  .reveal-row button { width: 100%; padding: 10px; font-size: 14px; font-weight: 800; border: 1px solid #475569; background: #334155; color: #e2e8f0; border-radius: 8px; cursor: pointer; }
+  .reveal-row button.revealed { background: #22543d; border-color: #22c55e; color: #d1fae5; }
   .nav button { min-width: 40px; height: 40px; padding: 0 12px; font-size: 16px; font-weight: 700; border: 1px solid #475569; background: #334155; color: #e2e8f0; border-radius: 8px; cursor: pointer; }
   .nav button.qbtn.active { background: #3b82f6; border-color: #3b82f6; color: #fff; }
   .nav button:disabled { opacity: .4; cursor: default; }
@@ -153,6 +157,7 @@ function renderPresentPage(activity) {
 <body>
   <div class="topbar">
     <h1>🎬 발표 모드 · ${title}</h1>
+    <span class="participation" id="participation">🙋 제출 0명</span>
     <div class="nav" id="nav"></div>
   </div>
   <div class="layout">
@@ -179,6 +184,9 @@ ${body}
       </div>
     </div>
     <div class="right">
+      <div class="reveal-row">
+        <button id="revealBtn" title="정답 공개/가리기">🙈 정답 가림 — 공개하기</button>
+      </div>
       <div class="q-answer" id="qAnswer"></div>
       <div class="filters">
         <button data-f="all" class="active">전체</button>
@@ -193,7 +201,7 @@ ${body}
 <script>
 (function () {
   var ACTIVITY_ID = ${JSON.stringify(activityId)};
-  var state = { questions: [], students: [], curIdx: 0, filter: 'all' };
+  var state = { questions: [], students: [], curIdx: 0, filter: 'all', reveal: false };
 
   function fetchData() {
     return fetch('/api/present/' + ACTIVITY_ID)
@@ -211,7 +219,21 @@ ${body}
   function curQ() { return state.questions[state.curIdx]; }
   function isCorrect(stu, num) { var c = stu.byNum && stu.byNum[num]; return c ? c.correct : null; }
 
-  function render() { renderNav(); renderAnswer(); renderRight(); }
+  function render() { renderParticipation(); renderNav(); renderAnswer(); renderRight(); }
+
+  // 실시간 참여 현황 바
+  function renderParticipation() {
+    document.getElementById('participation').textContent = '🙋 제출 ' + state.students.length + '명';
+  }
+
+  // 정답 공개 토글(기본 가림)
+  var revealBtn = document.getElementById('revealBtn');
+  revealBtn.onclick = function () {
+    state.reveal = !state.reveal;
+    revealBtn.textContent = state.reveal ? '🙉 정답 공개됨 — 가리기' : '🙈 정답 가림 — 공개하기';
+    revealBtn.classList.toggle('revealed', state.reveal);
+    renderAnswer();
+  };
 
   // 문항 이동 시에만 필기 초기화(폴링 render 에서는 초기화하지 않음)
   function goTo(idx) {
@@ -254,9 +276,14 @@ ${body}
     var rateHtml = q.type === 'essay'
       ? '<div class="rate">서술형 — 정답률 없음 (제출 ' + countAnswered(q.num) + '명)</div>'
       : '<div class="rate">정답률 <b>' + (total ? Math.round(correct / total * 100) : 0) + '%</b> (' + correct + ' / ' + total + ')</div>';
-    var valHtml = q.type === 'essay'
-      ? '<div class="val essay">— (서술형: 정답 없음)</div>'
-      : '<div class="val">' + escapeHtml(q.answer || '(정답 미입력)') + '</div>';
+    var valHtml;
+    if (q.type === 'essay') {
+      valHtml = '<div class="val essay">— (서술형: 정답 없음)</div>';
+    } else if (!state.reveal) {
+      valHtml = '<div class="val" style="letter-spacing:4px;color:#64748b">●●●</div>';
+    } else {
+      valHtml = '<div class="val">' + escapeHtml(q.answer || '(정답 미입력)') + '</div>';
+    }
 
     el.innerHTML =
       '<div><span class="qnum">' + q.num + '번 문항</span><span class="qtype">' + typeLabel + '</span></div>' +
