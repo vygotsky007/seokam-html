@@ -23,7 +23,8 @@
   .qtable th { background: #f7fafc; font-size: 13px; }
   .qtable td.num { width: 48px; text-align: center; font-weight: 700; }
   .qtable select { width: 110px; }
-  button { padding: 10px 16px; font-size: 15px; font-weight: 700; color: #fff; border: 0; border-radius: 8px; cursor: pointer; }
+  button, a.btn { display: inline-block; padding: 10px 16px; font-size: 15px; font-weight: 700; color: #fff; border: 0; border-radius: 8px; cursor: pointer; line-height: 1.2; }
+  .actions a.btn { display: inline-flex; align-items: center; }
   .btn-blue { background: var(--blue); }
   .btn-green { background: var(--green); }
   .btn-gray { background: #718096; }
@@ -47,8 +48,12 @@
     <label for="title">활동 제목</label>
     <input id="title" type="text" placeholder="예) 3단원 쪽지시험" />
 
-    <label for="htmlBody">학생용 HTML (붙여넣기)</label>
-    <textarea id="htmlBody" placeholder="학생에게 보여줄 문제 HTML을 붙여넣으세요. 답 입력칸의 name 은 q1, q2, ... 규칙을 사용하세요."></textarea>
+    <label for="htmlBody">학생용 HTML (파일 올리기 또는 붙여넣기)</label>
+    <div class="row" style="margin-bottom:8px;">
+      <input id="htmlFile" type="file" accept=".html,.htm" />
+      <span class="muted" id="fileHint">.html 파일을 고르면 아래 칸이 자동으로 채워집니다.</span>
+    </div>
+    <textarea id="htmlBody" placeholder="학생에게 보여줄 문제 HTML을 파일로 올리거나 여기에 붙여넣으세요. 답 입력칸의 name 은 q1, q2, ... 규칙을 사용하세요."></textarea>
 
     <div class="row" style="margin-top:12px;">
       <label style="margin:0;">문항 수</label>
@@ -129,6 +134,19 @@ function syncAnswerDisabled(sel) {
 }
 buildRows(); // 초기 3행
 
+// ---- 파일 올리기 → textarea 자동 채움 ----
+document.getElementById('htmlFile').addEventListener('change', function (e) {
+  var file = e.target.files && e.target.files[0];
+  if (!file) return;
+  var reader = new FileReader();
+  reader.onload = function () {
+    document.getElementById('htmlBody').value = reader.result;
+    document.getElementById('fileHint').textContent = '✅ ' + file.name + ' 불러옴 (' + reader.result.length + '자). 필요하면 수정하세요.';
+  };
+  reader.onerror = function () { alert('파일을 읽지 못했습니다.'); };
+  reader.readAsText(file, 'utf-8');
+});
+
 // ---- 활동 만들기 ----
 document.getElementById('createBtn').addEventListener('click', function () {
   var title = document.getElementById('title').value.trim();
@@ -188,6 +206,7 @@ function loadList() {
           '<td class="muted">' + when + '</td>' +
           '<td class="actions">' +
             '<button class="btn-blue btn-sm" data-act="result" data-id="' + a.id + '">결과 보기</button>' +
+            '<a class="btn btn-green btn-sm" href="' + SERVER + '/present/' + a.id + '" target="_blank" style="text-decoration:none;">발표 모드</a>' +
             '<button class="btn-red btn-sm" data-act="delete" data-id="' + a.id + '">삭제</button>' +
           '</td>';
         body.appendChild(tr);

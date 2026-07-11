@@ -1,7 +1,8 @@
-// 2단계 API: 교사 활동 등록/목록/상세/삭제
+// 2단계 API: 교사 활동 등록/목록/상세/삭제 + 발표 모드 데이터
 const express = require('express');
 const router = express.Router();
 const supabase = require('../db');
+const { grade } = require('../grade');
 
 // POST /api/activities
 // body = { title, html_body, questions:[{num,type,answer}] }
@@ -89,6 +90,52 @@ router.get('/activities/:id', async (req, res) => {
   }
 
   return res.json({ ok: true, activity, questions });
+});
+
+// GET /api/present/:id → 발표 모드 데이터
+// 활동 + 문항 + 제출(제출순 익명번호, 문항별 정오 판정 포함) 반환. 발표 화면이 5초마다 폴링.
+router.get('/present/:id', async (req, res) => {
+  const { id } = req.params;
+
+  const { data: activity, error: aErr } = await supabase
+    .from('activities')
+    .select('id, title')
+    .eq('id', id)
+    .single();
+
+  if (aErr || !activity) {
+    return res.status(404).json({ ok: false, error: '활동을 찾을 수 없습니다.' });
+  }
+
+  const { data: questions, error: qErr } = await supabase
+    .from('questions')
+    .select('num, type, answer')
+    .eq('activity_id', id)
+    .order('num', { ascending: true });
+
+  if (qErr) {
+    return res.status(500).json({ ok: false, error: qErr.message });
+  }
+
+  const { data: subs, error: sErr } = await supabase
+    .from('submissions')
+    .select('id, nickname, answers, created_at')
+    .eq('activity_id', id)
+    .order('created_at', { ascending: true }); // 제출 순서대로 익명 번호 부여
+
+  if (sErr) {
+    return res.status(500).json({ ok: false, error: sErr.message });
+  }
+
+  // 각 제출을 grade.js 로 채점해 문항번호별 {given, correct} 매핑
+  const students = (subs || []).map((s, i) => {
+    const { results } = grade(questions || [], s.answers || {});
+    const byNum = {};
+    results.forEach((r) => { byNum[r.num] = { given: r.given, correct: r.correct }; });
+    return { no: i + 1, nickname: s.nickname || null, byNum };
+  });
+
+  return res.json({ ok: true, activity, questions: questions || [], students });
 });
 
 // DELETE /api/activities/:id → cascade 로 문항·제출 같이 삭제

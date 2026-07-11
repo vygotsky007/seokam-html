@@ -41,6 +41,232 @@ app.get('/go/:id', async (req, res) => {
   res.type('html').send(renderStudentPage(activity));
 });
 
+// 발표 모드 — 문항별 좌우분할·정오필터·익명번호·실시간 폴링
+app.get('/present/:id', async (req, res) => {
+  const { id } = req.params;
+  const { data: activity, error } = await supabase
+    .from('activities')
+    .select('id, title')
+    .eq('id', id)
+    .single();
+
+  if (error || !activity) {
+    return res.status(404).send('<h1>활동을 찾을 수 없습니다.</h1>');
+  }
+  res.type('html').send(renderPresentPage(activity));
+});
+
+function renderPresentPage(activity) {
+  const title = escapeHtml(activity.title || '활동');
+  const activityId = activity.id;
+
+  return `<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>발표 모드 — ${title}</title>
+<style>
+  * { box-sizing: border-box; }
+  body { font-family: system-ui, -apple-system, "Segoe UI", sans-serif; margin: 0; background: #0f172a; color: #e2e8f0; height: 100vh; overflow: hidden; }
+  .topbar { display: flex; align-items: center; gap: 12px; padding: 12px 20px; background: #1e293b; border-bottom: 1px solid #334155; }
+  .topbar h1 { font-size: 16px; margin: 0; color: #94a3b8; font-weight: 600; }
+  .nav { display: flex; align-items: center; gap: 6px; margin-left: auto; }
+  .nav button { min-width: 40px; height: 40px; padding: 0 12px; font-size: 16px; font-weight: 700; border: 1px solid #475569; background: #334155; color: #e2e8f0; border-radius: 8px; cursor: pointer; }
+  .nav button.qbtn.active { background: #3b82f6; border-color: #3b82f6; color: #fff; }
+  .nav button:disabled { opacity: .4; cursor: default; }
+  .live { font-size: 12px; color: #4ade80; margin-left: 8px; white-space: nowrap; }
+  .layout { display: flex; height: calc(100vh - 65px); }
+  .left { flex: 1 1 62%; padding: 40px; display: flex; flex-direction: column; justify-content: center; }
+  .right { flex: 0 0 38%; max-width: 480px; border-left: 1px solid #334155; background: #1e293b; display: flex; flex-direction: column; }
+  .qnum { font-size: 20px; color: #60a5fa; font-weight: 700; }
+  .qtype { display: inline-block; font-size: 13px; padding: 2px 10px; border-radius: 999px; background: #334155; color: #cbd5e1; margin-left: 10px; vertical-align: middle; }
+  .answer-box { margin-top: 24px; }
+  .answer-label { font-size: 15px; color: #94a3b8; }
+  .answer-val { font-size: 56px; font-weight: 800; color: #f8fafc; margin-top: 8px; line-height: 1.1; word-break: break-word; }
+  .answer-essay { font-size: 28px; color: #cbd5e1; }
+  .rate { margin-top: 32px; font-size: 18px; color: #cbd5e1; }
+  .rate b { color: #4ade80; font-size: 22px; }
+  .filters { display: flex; gap: 8px; padding: 14px 16px; border-bottom: 1px solid #334155; }
+  .filters button { flex: 1; padding: 10px; font-size: 14px; font-weight: 700; border: 1px solid #475569; background: #334155; color: #e2e8f0; border-radius: 8px; cursor: pointer; }
+  .filters button.active { background: #3b82f6; border-color: #3b82f6; color: #fff; }
+  .panel-head { padding: 10px 16px; font-size: 13px; color: #94a3b8; border-bottom: 1px solid #334155; }
+  .list { flex: 1; overflow-y: auto; padding: 8px 12px; }
+  .item { display: flex; align-items: center; gap: 10px; padding: 10px 12px; border-radius: 8px; margin-bottom: 6px; background: #0f172a; }
+  .item .no { flex: 0 0 44px; font-weight: 800; color: #93c5fd; }
+  .item .ans { flex: 1; word-break: break-word; }
+  .item .mark { flex: 0 0 28px; text-align: center; font-size: 18px; }
+  .item.correct { border-left: 4px solid #22c55e; }
+  .item.wrong { border-left: 4px solid #ef4444; }
+  .item.neutral { border-left: 4px solid #64748b; }
+  .mark.ok { color: #22c55e; }
+  .mark.no { color: #ef4444; }
+  .empty { color: #64748b; padding: 24px; text-align: center; }
+</style>
+</head>
+<body>
+  <div class="topbar">
+    <h1>🎬 발표 모드 · ${title}</h1>
+    <div class="nav" id="nav"></div>
+  </div>
+  <div class="layout">
+    <div class="left" id="left"></div>
+    <div class="right">
+      <div class="filters">
+        <button data-f="all" class="active">전체</button>
+        <button data-f="correct">맞은 사람</button>
+        <button data-f="wrong">틀린 사람</button>
+      </div>
+      <div class="panel-head" id="panelHead">응답 현황</div>
+      <div class="list" id="list"></div>
+    </div>
+  </div>
+
+<script>
+(function () {
+  var ACTIVITY_ID = ${JSON.stringify(activityId)};
+  var state = { questions: [], students: [], curIdx: 0, filter: 'all' };
+
+  function fetchData() {
+    return fetch('/api/present/' + ACTIVITY_ID)
+      .then(function (r) { return r.json(); })
+      .then(function (data) {
+        if (!data.ok) throw new Error(data.error || '조회 실패');
+        state.questions = data.questions || [];
+        state.students = data.students || [];
+        if (state.curIdx >= state.questions.length) state.curIdx = 0;
+        render();
+      })
+      .catch(function (err) { console.error(err); });
+  }
+
+  function curQ() { return state.questions[state.curIdx]; }
+
+  function isCorrect(stu, num) {
+    var c = stu.byNum && stu.byNum[num];
+    return c ? c.correct : null; // true/false/null(서술형)
+  }
+
+  function render() {
+    renderNav();
+    renderLeft();
+    renderRight();
+  }
+
+  function renderNav() {
+    var nav = document.getElementById('nav');
+    var html = '';
+    html += '<button id="prev" ' + (state.curIdx <= 0 ? 'disabled' : '') + '>← 이전</button>';
+    state.questions.forEach(function (q, i) {
+      html += '<button class="qbtn ' + (i === state.curIdx ? 'active' : '') + '" data-i="' + i + '">' + q.num + '</button>';
+    });
+    html += '<button id="next" ' + (state.curIdx >= state.questions.length - 1 ? 'disabled' : '') + '>다음 →</button>';
+    html += '<span class="live">● 실시간 (5초)</span>';
+    nav.innerHTML = html;
+    var prev = document.getElementById('prev'); if (prev) prev.onclick = function () { if (state.curIdx > 0) { state.curIdx--; render(); } };
+    var next = document.getElementById('next'); if (next) next.onclick = function () { if (state.curIdx < state.questions.length - 1) { state.curIdx++; render(); } };
+    nav.querySelectorAll('.qbtn').forEach(function (b) {
+      b.onclick = function () { state.curIdx = parseInt(b.getAttribute('data-i'), 10); render(); };
+    });
+  }
+
+  function renderLeft() {
+    var left = document.getElementById('left');
+    var q = curQ();
+    if (!q) { left.innerHTML = '<div class="empty">문항이 없습니다.</div>'; return; }
+    var typeLabel = q.type === 'choice' ? '객관식' : q.type === 'short' ? '단답' : '서술형';
+
+    // 정답률 (채점 대상만, 서술형 제외)
+    var total = 0, correct = 0;
+    state.students.forEach(function (s) {
+      var c = isCorrect(s, q.num);
+      if (c === null) return; // 서술형/미채점
+      total++; if (c === true) correct++;
+    });
+    var rateHtml = q.type === 'essay'
+      ? '<div class="rate">서술형 — 정답률 없음 (제출 ' + countAnswered(q.num) + '명)</div>'
+      : '<div class="rate">정답률 <b>' + (total ? Math.round(correct / total * 100) : 0) + '%</b> (' + correct + ' / ' + total + ')</div>';
+
+    var ansHtml;
+    if (q.type === 'essay') {
+      ansHtml = '<div class="answer-val answer-essay">— (서술형: 정답 없음)</div>';
+    } else {
+      ansHtml = '<div class="answer-val">' + escapeHtml(q.answer || '(정답 미입력)') + '</div>';
+    }
+
+    left.innerHTML =
+      '<div><span class="qnum">' + q.num + '번 문항</span><span class="qtype">' + typeLabel + '</span></div>' +
+      '<div class="answer-box"><div class="answer-label">정답</div>' + ansHtml + '</div>' +
+      rateHtml;
+  }
+
+  function countAnswered(num) {
+    var n = 0;
+    state.students.forEach(function (s) {
+      var c = s.byNum && s.byNum[num];
+      if (c && String(c.given || '').trim() !== '') n++;
+    });
+    return n;
+  }
+
+  function renderRight() {
+    var list = document.getElementById('list');
+    var q = curQ();
+    if (!q) { list.innerHTML = '<div class="empty">문항이 없습니다.</div>'; return; }
+
+    var rows = state.students.filter(function (s) {
+      var c = isCorrect(s, q.num);
+      if (state.filter === 'all') return true;
+      if (state.filter === 'correct') return c === true;
+      if (state.filter === 'wrong') return c === false;
+      return true;
+    });
+
+    document.getElementById('panelHead').textContent =
+      '응답 현황 · ' + q.num + '번 · ' + labelOf(state.filter) + ' (' + rows.length + '명)';
+
+    if (!rows.length) { list.innerHTML = '<div class="empty">해당하는 제출이 없습니다.</div>'; return; }
+
+    var html = '';
+    rows.forEach(function (s) {
+      var cell = s.byNum && s.byNum[q.num];
+      var given = cell ? (cell.given || '') : '';
+      var c = cell ? cell.correct : null;
+      var cls = c === true ? 'correct' : c === false ? 'wrong' : 'neutral';
+      var mark = c === true ? '<span class="mark ok">✔</span>' : c === false ? '<span class="mark no">✘</span>' : '<span class="mark">·</span>';
+      html += '<div class="item ' + cls + '">' +
+        '<div class="no">' + s.no + '번</div>' +
+        '<div class="ans">' + (given ? escapeHtml(given) : '<i style="color:#64748b">무응답</i>') + '</div>' +
+        mark + '</div>';
+    });
+    list.innerHTML = html;
+  }
+
+  function labelOf(f) { return f === 'correct' ? '맞은 사람' : f === 'wrong' ? '틀린 사람' : '전체'; }
+
+  document.querySelectorAll('.filters button').forEach(function (b) {
+    b.onclick = function () {
+      state.filter = b.getAttribute('data-f');
+      document.querySelectorAll('.filters button').forEach(function (x) { x.classList.remove('active'); });
+      b.classList.add('active');
+      renderRight();
+    };
+  });
+
+  function escapeHtml(s) {
+    return String(s).replace(/[&<>"']/g, function (c) {
+      return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c];
+    });
+  }
+
+  fetchData();
+  setInterval(fetchData, 5000); // 실시간 갱신
+})();
+</script>
+</body>
+</html>`;
+}
+
 function renderStudentPage(activity) {
   const title = escapeHtml(activity.title || '활동');
   const body = activity.html_body || '';
