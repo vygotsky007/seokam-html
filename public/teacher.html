@@ -233,18 +233,29 @@ function buildPdfHtml(imgTags, n) {
   }
   return '' +
     '<style>\n' +
-    '  .pdf-doc { max-width: 820px; margin: 0 auto; }\n' +
+    '  /* 교실 PC 좌우 분할: 왼쪽 문제 스크롤, 오른쪽 답 패널 고정 */\n' +
+    '  .pdf-doc { display: flex; align-items: flex-start; gap: 20px; max-width: 1200px; margin: 0 auto; }\n' +
+    '  .pdf-pages { flex: 0 0 64%; min-width: 0; }\n' +
     '  .pdf-page { margin: 0 0 16px; text-align: center; }\n' +
     '  .pdf-page img { max-width: 100%; height: auto; border: 1px solid #e2e8f0; border-radius: 6px; }\n' +
-    '  .answers { margin-top: 20px; padding-top: 16px; border-top: 2px dashed #cbd5e1; }\n' +
-    '  .answers h3 { margin: 0 0 10px; }\n' +
-    '  .q-row { display: flex; align-items: center; gap: 10px; margin-bottom: 8px; }\n' +
-    '  .q-row label { flex: 0 0 48px; font-weight: 700; }\n' +
-    '  .q-row input { flex: 1; padding: 8px 10px; font-size: 15px; border: 1px solid #cbd5e1; border-radius: 6px; }\n' +
+    '  .pdf-answers { flex: 1 1 36%; position: sticky; top: 0; align-self: flex-start; max-height: 100vh; overflow-y: auto; background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 10px; padding: 16px; }\n' +
+    '  .pdf-answers h3 { margin: 0 0 12px; }\n' +
+    '  .q-row { display: flex; align-items: center; gap: 10px; margin-bottom: 10px; }\n' +
+    '  .q-row label { flex: 0 0 52px; font-weight: 700; font-size: 15px; }\n' +
+    '  .q-row input { flex: 1; padding: 10px 12px; font-size: 16px; border: 1px solid #cbd5e1; border-radius: 6px; }\n' +
+    '  .q-row input:focus { outline: none; border-color: #2b6cb0; box-shadow: 0 0 0 3px rgba(43,108,176,.15); background: #fffef5; }\n' +
+    '  /* 모바일: 위아래로 접되 답 패널은 상단 sticky 유지 */\n' +
+    '  @media (max-width: 768px) {\n' +
+    '    .pdf-doc { flex-direction: column; gap: 12px; }\n' +
+    '    .pdf-pages { flex: none; width: 100%; order: 2; }\n' +
+    '    .pdf-answers { flex: none; width: 100%; order: 1; position: sticky; top: 0; max-height: 45vh; z-index: 20; box-shadow: 0 2px 8px rgba(0,0,0,.12); }\n' +
+    '  }\n' +
     '</style>\n' +
     '<div class="pdf-doc">\n' +
-    '  ' + imgTags.join('\n  ') + '\n' +
-    '  <div class="answers">\n' +
+    '  <div class="pdf-pages">\n' +
+    '    ' + imgTags.join('\n    ') + '\n' +
+    '  </div>\n' +
+    '  <div class="pdf-answers">\n' +
     '    <h3>✏️ 답 입력</h3>\n' +
     '    ' + inputs.join('\n    ') + '\n' +
     '  </div>\n' +
