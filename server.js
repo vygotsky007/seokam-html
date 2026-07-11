@@ -175,6 +175,10 @@ function renderPresentPage(activity) {
         <span class="tb-sep"></span>
         <button id="tbEraser" title="지우개">지우개</button>
         <button id="tbClear" title="전체 지우기">전체 지우기</button>
+        <span class="tb-sep" id="ttsSep" style="display:none"></span>
+        <button id="ttsRead" title="문제 읽어주기" style="display:none">🔊 문제 읽기</button>
+        <button id="ttsStop" title="정지" style="display:none">⏹</button>
+        <select id="ttsRate" title="읽기 속도" style="display:none; height:34px; border-radius:6px; background:#334155; color:#e2e8f0; border:1px solid #475569;"><option value="1">보통</option><option value="0.7">느리게</option></select>
       </div>
       <div class="problem-wrap" id="problemWrap">
         <div class="problem-content" id="problemContent">
@@ -425,6 +429,23 @@ ${body}
   setTimeout(fitCanvas, 500);
   applyPenMode();
 
+  // ---- TTS: 글자 모드(data-tts=on) 활동에서만 문제 읽어주기 ----
+  (function initPresentTts() {
+    var textDoc = content.querySelector('.pdf-text-doc[data-tts="on"]');
+    if (!textDoc || !('speechSynthesis' in window)) return; // 이미지/기존 활동은 TTS 버튼 숨김(비활성)
+    ['ttsSep', 'ttsRead', 'ttsStop', 'ttsRate'].forEach(function (id) { document.getElementById(id).style.display = ''; });
+    function rate() { return parseFloat(document.getElementById('ttsRate').value) || 1; }
+    document.getElementById('ttsRead').onclick = function () {
+      var text = textDoc.innerText || textDoc.textContent || '';
+      if (!text.trim()) return;
+      window.speechSynthesis.cancel();
+      var u = new SpeechSynthesisUtterance(text);
+      u.lang = 'ko-KR'; u.rate = rate();
+      window.speechSynthesis.speak(u);
+    };
+    document.getElementById('ttsStop').onclick = function () { window.speechSynthesis.cancel(); };
+  })();
+
   fetchData();
   setInterval(fetchData, 5000); // 오른쪽 통계 실시간 갱신
 })();
@@ -464,11 +485,23 @@ function renderStudentPage(activity) {
   .score { font-size: 22px; font-weight: 800; }
   #__updateBanner { display: none; position: sticky; top: 0; z-index: 50; background: #fefcbf; color: #744210; border: 1px solid #ecc94b; border-radius: 10px; padding: 12px 14px; margin-bottom: 12px; font-weight: 700; }
   #__updateBanner button { margin-left: 10px; padding: 6px 14px; font-size: 14px; font-weight: 700; color: #fff; background: #d69e2e; border: 0; border-radius: 8px; cursor: pointer; }
+  #__ttsBar { display: none; align-items: center; gap: 8px; flex-wrap: wrap; background: #fff; border: 1px solid #e2e8f0; border-radius: 10px; padding: 8px 12px; margin-bottom: 12px; }
+  #__ttsBar .lab { font-size: 13px; color: #718096; font-weight: 700; }
+  #__ttsBar button, #__ttsBar select { padding: 6px 10px; font-size: 14px; font-weight: 700; border: 1px solid #cbd5e1; background: #f7fafc; border-radius: 7px; cursor: pointer; }
+  .tts-play { margin-right: 6px; padding: 2px 8px !important; font-size: 13px !important; background: #ebf8ff !important; border: 1px solid #bee3f8 !important; border-radius: 6px; cursor: pointer; }
 </style>
 </head>
 <body>
 <div class="wrap">
   <div id="__updateBanner">🔔 선생님이 문제를 수정했어요. <button id="__reloadBtn" type="button">새로고침</button></div>
+  <div id="__ttsBar">
+    <span class="lab">📖 글자 크기</span>
+    <button id="__fsMinus" type="button">A-</button>
+    <button id="__fsPlus" type="button">A+</button>
+    <span class="lab">🔊 읽기 속도</span>
+    <select id="__ttsRate"><option value="1">보통</option><option value="0.7">느리게</option></select>
+    <button id="__ttsStop" type="button">⏹ 정지</button>
+  </div>
   <div class="bar">
     <h1>${title}</h1>
     <input id="__nickname" type="text" placeholder="닉네임(이름)을 입력하세요" autocomplete="off" />
@@ -594,6 +627,37 @@ ${body}
       .catch(function () {});
   }
   setInterval(pollVersion, 8000);
+
+  // ---- TTS(읽어주기) + 글자 크기: 글자 모드(data-tts=on) 활동에서만 활성 ----
+  (function initTts() {
+    var doc = document.querySelector('.pdf-text-doc[data-tts="on"]');
+    if (!doc || !('speechSynthesis' in window)) return; // 이미지 모드/기존 HTML은 TTS 비활성
+    var bar = document.getElementById('__ttsBar');
+    bar.style.display = 'flex';
+
+    var fs = 18;
+    function setFs(v) { fs = Math.max(12, Math.min(40, v)); doc.style.setProperty('--tts-fs', fs + 'px'); }
+    document.getElementById('__fsPlus').onclick = function () { setFs(fs + 3); };
+    document.getElementById('__fsMinus').onclick = function () { setFs(fs - 3); };
+
+    function rate() { return parseFloat(document.getElementById('__ttsRate').value) || 1; }
+    function speak(text) {
+      if (!text) return;
+      window.speechSynthesis.cancel();
+      var u = new SpeechSynthesisUtterance(text);
+      u.lang = 'ko-KR'; u.rate = rate();
+      window.speechSynthesis.speak(u);
+    }
+    document.getElementById('__ttsStop').onclick = function () { window.speechSynthesis.cancel(); };
+
+    // 각 단락 앞에 🔊 버튼
+    doc.querySelectorAll('.tts-para').forEach(function (p) {
+      var btn = document.createElement('button');
+      btn.type = 'button'; btn.className = 'tts-play'; btn.textContent = '🔊';
+      btn.onclick = function () { speak(p.textContent); };
+      p.insertBefore(btn, p.firstChild);
+    });
+  })();
 })();
 </script>
 </body>
