@@ -4,6 +4,8 @@
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
 <title>교사 — 활동 등록</title>
+<!-- 브라우저에서 PDF → 페이지 이미지 변환 (서버 부담 0) -->
+<script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
 <style>
   :root { --blue: #2b6cb0; --green: #2f855a; --red: #c53030; --line: #e2e8f0; }
   * { box-sizing: border-box; }
@@ -48,12 +50,18 @@
     <label for="title">활동 제목</label>
     <input id="title" type="text" placeholder="예) 3단원 쪽지시험" />
 
-    <label for="htmlBody">학생용 HTML (파일 올리기 또는 붙여넣기)</label>
+    <label for="htmlBody">학생용 HTML (HTML/PDF 올리기 또는 붙여넣기)</label>
     <div class="row" style="margin-bottom:8px;">
       <input id="htmlFile" type="file" accept=".html,.htm" />
       <span class="muted" id="fileHint">.html 파일을 고르면 아래 칸이 자동으로 채워집니다.</span>
     </div>
-    <textarea id="htmlBody" placeholder="학생에게 보여줄 문제 HTML을 파일로 올리거나 여기에 붙여넣으세요. 답 입력칸의 name 은 q1, q2, ... 규칙을 사용하세요."></textarea>
+    <div class="row" style="margin-bottom:8px; flex-wrap:wrap;">
+      <input id="pdfFile" type="file" accept=".pdf" />
+      <label style="margin:0;">문항 수</label>
+      <input id="pdfQcount" type="number" min="1" max="100" value="10" style="width:80px;" />
+      <span class="muted" id="pdfHint">PDF를 고르면 브라우저에서 각 페이지를 이미지로 변환하고 답 입력칸(q1..qN)을 붙여 아래 칸을 채웁니다.</span>
+    </div>
+    <textarea id="htmlBody" placeholder="학생에게 보여줄 문제 HTML을 파일(HTML/PDF)로 올리거나 여기에 붙여넣으세요. 답 입력칸의 name 은 q1, q2, ... 규칙을 사용하세요."></textarea>
 
     <div class="row" style="margin-top:12px;">
       <label style="margin:0;">문항 수</label>
@@ -146,6 +154,92 @@ document.getElementById('htmlFile').addEventListener('change', function (e) {
   reader.onerror = function () { alert('파일을 읽지 못했습니다.'); };
   reader.readAsText(file, 'utf-8');
 });
+
+// ---- PDF 올리기 → 브라우저(pdf.js)에서 페이지 이미지 + 입력칸 HTML 생성 → textarea 채움 ----
+if (window.pdfjsLib) {
+  pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
+}
+document.getElementById('pdfFile').addEventListener('change', function (e) {
+  var file = e.target.files && e.target.files[0];
+  if (!file) return;
+  if (!window.pdfjsLib) { alert('PDF 라이브러리(pdf.js)를 불러오지 못했습니다. 인터넷 연결을 확인하세요.'); return; }
+
+  var hint = document.getElementById('pdfHint');
+  var n = parseInt(document.getElementById('pdfQcount').value, 10) || 10;
+  hint.textContent = '⏳ ' + file.name + ' 변환 중...';
+
+  var fr = new FileReader();
+  fr.onload = function () {
+    var typed = new Uint8Array(fr.result);
+    pdfjsLib.getDocument({ data: typed }).promise
+      .then(function (pdf) { return renderAllPages(pdf, hint, file.name); })
+      .then(function (imgTags) {
+        var html = buildPdfHtml(imgTags, n);
+        document.getElementById('htmlBody').value = html;
+        hint.textContent = '✅ ' + file.name + ' → ' + imgTags.length + '페이지 이미지 + ' + n + '문항 입력칸 생성. 필요하면 수정하세요.';
+      })
+      .catch(function (err) {
+        console.error(err);
+        alert('PDF 변환 실패: ' + err.message);
+        hint.textContent = '❌ 변환 실패: ' + err.message;
+      });
+  };
+  fr.onerror = function () { alert('PDF 파일을 읽지 못했습니다.'); };
+  fr.readAsArrayBuffer(file);
+});
+
+function renderAllPages(pdf, hint, fname) {
+  var tags = [];
+  var scale = 1.5;
+  var chain = Promise.resolve();
+  for (var p = 1; p <= pdf.numPages; p++) {
+    (function (pageNum) {
+      chain = chain.then(function () {
+        return pdf.getPage(pageNum).then(function (page) {
+          var viewport = page.getViewport({ scale: scale });
+          var canvas = document.createElement('canvas');
+          canvas.width = Math.ceil(viewport.width);
+          canvas.height = Math.ceil(viewport.height);
+          var ctx = canvas.getContext('2d');
+          return page.render({ canvasContext: ctx, viewport: viewport }).promise.then(function () {
+            var dataUrl = canvas.toDataURL('image/jpeg', 0.85);
+            tags.push('<figure class="pdf-page"><img alt="문제지 ' + pageNum + '페이지" src="' + dataUrl + '" /></figure>');
+            hint.textContent = '⏳ ' + fname + ' 변환 중... (' + pageNum + '/' + pdf.numPages + '페이지)';
+          });
+        });
+      });
+    })(p);
+  }
+  return chain.then(function () { return tags; });
+}
+
+function buildPdfHtml(imgTags, n) {
+  var inputs = [];
+  for (var i = 1; i <= n; i++) {
+    inputs.push(
+      '<div class="q-row"><label for="q' + i + '">' + i + '번</label>' +
+      '<input type="text" id="q' + i + '" name="q' + i + '" placeholder="' + i + '번 답" autocomplete="off" /></div>'
+    );
+  }
+  return '' +
+    '<style>\n' +
+    '  .pdf-doc { max-width: 820px; margin: 0 auto; }\n' +
+    '  .pdf-page { margin: 0 0 16px; text-align: center; }\n' +
+    '  .pdf-page img { max-width: 100%; height: auto; border: 1px solid #e2e8f0; border-radius: 6px; }\n' +
+    '  .answers { margin-top: 20px; padding-top: 16px; border-top: 2px dashed #cbd5e1; }\n' +
+    '  .answers h3 { margin: 0 0 10px; }\n' +
+    '  .q-row { display: flex; align-items: center; gap: 10px; margin-bottom: 8px; }\n' +
+    '  .q-row label { flex: 0 0 48px; font-weight: 700; }\n' +
+    '  .q-row input { flex: 1; padding: 8px 10px; font-size: 15px; border: 1px solid #cbd5e1; border-radius: 6px; }\n' +
+    '</style>\n' +
+    '<div class="pdf-doc">\n' +
+    '  ' + imgTags.join('\n  ') + '\n' +
+    '  <div class="answers">\n' +
+    '    <h3>✏️ 답 입력</h3>\n' +
+    '    ' + inputs.join('\n    ') + '\n' +
+    '  </div>\n' +
+    '</div>';
+}
 
 // ---- 활동 만들기 ----
 document.getElementById('createBtn').addEventListener('click', function () {
