@@ -172,8 +172,10 @@ function renderPresentPage(activity, sliceByNum) {
   .tb-label { font-size: 12px; color: #94a3b8; }
   .problem-wrap { position: relative; flex: 1; overflow: hidden; background: #0f172a; touch-action: none; }
   .zoom-layer { position: relative; transform-origin: 0 0; width: 100%; will-change: transform; }
-  .problem-content { background: #fff; color: #111; padding: 28px; min-height: 100%; font-size: 21px; line-height: 1.6; }
-  .problem-content img { max-width: 100%; height: auto; }
+  .problem-content { background: #fff; color: #111; padding: 28px; min-height: 100%; font-size: 21px; line-height: 1.6; text-align: center; }
+  .problem-content img { max-width: 100%; height: auto; display: inline-block; }
+  .problem-content > * { text-align: left; }
+  .problem-content > img, .problem-content > .slice-full { text-align: center; }
   #drawCanvas { position: absolute; top: 0; left: 0; z-index: 10; touch-action: none; }
 
   /* 오른쪽: 정답·정답률·필터·목록 (기존 유지) */
@@ -515,10 +517,19 @@ ${body}
     view.panX = cx - contentX * view.z; view.panY = cy - contentY * view.z;
     clampPan(); applyZoom();
   }
-  function zoomCenter(newZ) { var r = wrap.getBoundingClientRect(); zoomAt(newZ, r.left + r.width / 2, r.top + r.height / 2); }
+  // 확대 기준점: 실제로 보이는 콘텐츠(이미지)의 중심을 뷰포트 안으로 클램프한 지점
+  // → 좁은 조각 이미지가 좌상단으로 밀려나지 않고 화면 중앙에서 커진다.
+  function zoomCenter(newZ) {
+    var el = content.querySelector('img') || content;
+    var cr = el.getBoundingClientRect();
+    var wr = wrap.getBoundingClientRect();
+    var ax = Math.min(Math.max((cr.left + cr.right) / 2, wr.left + 20), wr.right - 20);
+    var ay = Math.min(Math.max((cr.top + cr.bottom) / 2, wr.top + 20), wr.bottom - 20);
+    zoomAt(newZ, ax, ay);
+  }
   document.getElementById('zoomIn').onclick = function () { zoomCenter(view.z * 1.25); };
   document.getElementById('zoomOut').onclick = function () { zoomCenter(view.z / 1.25); };
-  document.getElementById('zoomReset').onclick = function () { view.z = 1; view.panX = 0; view.panY = 0; applyZoom(); };
+  document.getElementById('zoomReset').onclick = function () { view.z = 1; view.panX = 0; view.panY = 0; applyZoom(); }; // 배율·위치 모두 초기화
   wrap.addEventListener('wheel', function (e) {
     if (e.ctrlKey || e.metaKey) { e.preventDefault(); zoomAt(view.z * (e.deltaY < 0 ? 1.1 : 0.9), e.clientX, e.clientY); }
     else { e.preventDefault(); view.panX -= e.deltaX; view.panY -= e.deltaY; clampPan(); applyZoom(); } // 일반 휠 = 상하/좌우 이동
