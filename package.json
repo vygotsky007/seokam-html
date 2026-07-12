@@ -1,7 +1,7 @@
 {
-  "name": "seokam-html",
+  "name": "munjaesam",
   "version": "0.1.0",
-  "description": "학생 응답 수집 앱 (1단계: 제출 저장 + health + 조회 API)",
+  "description": "문제샘 — 학생 응답 수집 앱 (교사 등록·QR·자동채점·발표·문항 나누기·한 문제씩 응시)",
   "main": "server.js",
   "scripts": {
     "start": "node server.js"

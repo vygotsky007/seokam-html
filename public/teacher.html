@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
-<title>새싹 수집 — 교사</title>
+<title>문제샘 — 교사</title>
 <!-- 브라우저에서 PDF → 페이지 이미지 변환(서버 부담 0) + QR 생성 -->
 <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
@@ -95,7 +95,7 @@
 </head>
 <body>
 <div class="topnav">
-  <div class="brand">🌱 새싹 <span>수집</span></div>
+  <div class="brand" id="brand">📝 <span>문제샘</span></div>
   <div class="sp"></div>
   <a href="/join.html" target="_blank">학생 입장 페이지</a>
 </div>
@@ -154,6 +154,13 @@
             <tbody id="qbody"></tbody>
           </table>
           <div class="muted" style="margin-top:6px;">💡 정답을 비워두거나 ‘채점’ 체크를 끄면 그 문항은 <b>채점에서 제외</b>됩니다. (예: 20문항 중 정답 넣은 것만 채점)</div>
+        </div>
+
+        <label style="margin-top:14px;">학생 응시 방식</label>
+        <div class="row" style="gap:16px;">
+          <label style="margin:0; font-weight:400;"><input type="radio" name="viewMode" value="all" checked /> 전체 보기(기존)</label>
+          <label style="margin:0; font-weight:400;"><input type="radio" name="viewMode" value="single" id="viewSingle" disabled /> 한 문제씩</label>
+          <span class="muted" id="viewModeHint">‘한 문제씩’은 <b>문항 나누기</b>를 먼저 해야 선택할 수 있어요.</span>
         </div>
 
         <div class="row" style="margin-top:18px;">
@@ -218,6 +225,21 @@
 
 <script>
 var SERVER = window.location.origin;
+var APP_NAME = '문제샘'; // 앱 이름(임시) — 한 곳에서 관리
+document.title = APP_NAME + ' — 교사';
+(function () { var b = document.getElementById('brand'); if (b) b.innerHTML = '📝 <span>' + APP_NAME + '</span>'; })();
+
+// '한 문제씩' 응시 방식 활성화(문항 나누기 조각이 있을 때만)
+function enableSingleMode() {
+  var el = document.getElementById('viewSingle');
+  if (el) el.disabled = false;
+  var h = document.getElementById('viewModeHint');
+  if (h) h.innerHTML = '✅ 문항 조각이 있어 <b>한 문제씩</b> 응시를 쓸 수 있어요.';
+}
+function getViewMode() {
+  var s = document.querySelector('input[name="viewMode"]:checked');
+  return (s && s.value === 'single') ? 'single' : 'all';
+}
 if (window.pdfjsLib) {
   pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
 }
@@ -528,7 +550,8 @@ function saveSlices() {
     });
   });
   sliceImages = images; sliceGroups = groups;
-  document.getElementById('sliceStatus').textContent = '✅ ' + count + '개 문항 조각 저장됨 — [발행]/[수정 반영] 시 함께 저장됩니다.';
+  if (count > 0) enableSingleMode(); // 조각이 생겼으니 '한 문제씩' 선택 가능
+  document.getElementById('sliceStatus').textContent = '✅ ' + count + '개 문항 조각 저장됨 — [발행]/[수정 반영] 시 함께 저장됩니다. ("한 문제씩" 응시 방식 선택 가능)';
   document.getElementById('sliceCard').style.display = 'none';
 }
 
@@ -888,7 +911,7 @@ function submitActivity(status) {
   if (!title) { alert('활동 제목을 입력하세요.'); return; }
   if (!html_body.trim()) { alert('학생용 HTML(문제)을 넣으세요.'); return; }
 
-  var payload = { title: title, html_body: html_body, questions: collectQuestions(), status: status };
+  var payload = { title: title, html_body: html_body, questions: collectQuestions(), status: status, view_mode: getViewMode() };
   var isEdit = !!editingId;
   var url = isEdit ? (SERVER + '/api/activities/' + editingId) : (SERVER + '/api/activities');
   var method = isEdit ? 'PUT' : 'POST';
@@ -949,8 +972,16 @@ function enterEditMode(id) {
           if (sel) { sel.value = q.type || 'short'; syncAnswerDisabled(sel); }
           if (ans && q.type !== 'essay') ans.value = q.answer || '';
           if (g) g.checked = q.graded !== false;
+          // 이미 저장된 조각 이미지는 재사용(수정 후 발행 시 유지)
+          if (q.slice_image) { sliceImages[q.num] = q.slice_image; if (q.group_label) sliceGroups[q.num] = q.group_label; }
         });
       }
+      // 응시 방식 복원 + 조각 있으면 '한 문제씩' 활성화
+      var hasSlice = qs.some(function (q) { return q.slice_image; });
+      if (hasSlice) enableSingleMode();
+      var vm = data.activity.view_mode === 'single' ? 'single' : 'all';
+      var vmEl = document.querySelector('input[name="viewMode"][value="' + vm + '"]');
+      if (vmEl && !vmEl.disabled) vmEl.checked = true; else document.querySelector('input[name="viewMode"][value="all"]').checked = true;
       document.getElementById('cancelEditBtn').style.display = 'inline-flex';
       document.getElementById('publishBtn').textContent = '🚀 수정 반영(발행)';
       document.getElementById('publishBox').classList.remove('show');
@@ -960,7 +991,15 @@ function enterEditMode(id) {
     .catch(function (err) { alert('수정 준비 실패: ' + err.message); });
 }
 function exitEditMode() { editingId = null; document.getElementById('publishBtn').textContent = '🚀 발행하기'; document.getElementById('cancelEditBtn').style.display = 'none'; resetForm(); }
-function resetForm() { document.getElementById('title').value = ''; document.getElementById('htmlBody').value = ''; document.getElementById('fileHint').textContent = '.html 은 그대로 불러오고, .pdf 는 브라우저에서 페이지 이미지로 변환합니다.'; updatePreview(); }
+function resetForm() {
+  document.getElementById('title').value = ''; document.getElementById('htmlBody').value = '';
+  document.getElementById('fileHint').textContent = '.html 은 그대로 불러오고, .pdf 는 브라우저에서 페이지 이미지로 변환합니다.';
+  sliceImages = {}; sliceGroups = {};
+  var vs = document.getElementById('viewSingle'); if (vs) { vs.disabled = true; }
+  document.querySelector('input[name="viewMode"][value="all"]').checked = true;
+  var h = document.getElementById('viewModeHint'); if (h) h.innerHTML = '‘한 문제씩’은 <b>문항 나누기</b>를 먼저 해야 선택할 수 있어요.';
+  updatePreview();
+}
 document.getElementById('cancelEditBtn').addEventListener('click', exitEditMode);
 
 // ================= 목록 (진행중 / 보관함) =================

@@ -11,6 +11,9 @@ const activitiesRouter = require('./routes/activities');
 const app = express();
 const PORT = process.env.PORT || 4002;
 
+// 앱 이름(임시). 나중에 한 번에 바꿀 수 있게 한 곳에 모음.
+const APP_NAME = '문제샘';
+
 app.use(cors()); // 학생 HTML이 다른 출처에서 fetch 가능하도록 허용
 app.use(express.json({ limit: '2mb' })); // 교사가 붙여넣는 HTML 대비 여유
 app.use(express.static(path.join(__dirname, 'public')));
@@ -30,12 +33,26 @@ app.get('/go/:id', async (req, res) => {
 
   const { data: activity, error } = await supabase
     .from('activities')
-    .select('id, title, html_body, status, version')
+    .select('id, title, html_body, status, version, view_mode')
     .eq('id', id)
     .single();
 
   if (error || !activity) {
     return res.status(404).send('<h1>활동을 찾을 수 없습니다.</h1>');
+  }
+
+  // 한 문제씩 모드: 문항 조각(slice_image)들을 불러와 전용 화면 렌더
+  if (activity.view_mode === 'single') {
+    const { data: questions } = await supabase
+      .from('questions')
+      .select('num, type, slice_image, group_label')
+      .eq('activity_id', id)
+      .order('num', { ascending: true });
+    const qs = (questions || []).filter((q) => q); // 안전
+    // slice_image 가 하나라도 있으면 single 화면, 없으면 기존 전체 화면으로 폴백
+    if (qs.some((q) => q.slice_image)) {
+      return res.type('html').send(renderStudentSinglePage(activity, qs));
+    }
   }
 
   res.type('html').send(renderStudentPage(activity));
@@ -53,8 +70,36 @@ app.get('/present/:id', async (req, res) => {
   if (error || !activity) {
     return res.status(404).send('<h1>활동을 찾을 수 없습니다.</h1>');
   }
-  res.type('html').send(renderPresentPage(activity));
+
+  // 문항 조각(slice_image)이 있으면 문항 넘길 때 그 조각을 크게 표시 — 문항번호→이미지 맵을 페이지에 1회 주입
+  const { data: qs } = await supabase
+    .from('questions')
+    .select('num, slice_image, group_label')
+    .eq('activity_id', id)
+    .order('num', { ascending: true });
+  const sliceByNum = buildSliceByNum(qs || []);
+
+  res.type('html').send(renderPresentPage(activity, sliceByNum));
 });
+
+// 문항번호 → slice 이미지. 묶음(group_label "3~4")은 포함된 모든 번호에 같은 조각을 매핑.
+function buildSliceByNum(qs) {
+  const map = {};
+  const parseRange = (s) => {
+    s = String(s || '');
+    const m = s.match(/(\d+)\s*[~\-]\s*(\d+)/);
+    if (m) { const a = +m[1], b = +m[2], out = []; for (let i = Math.min(a, b); i <= Math.max(a, b); i++) out.push(i); return out; }
+    return s.split(/[,\s]+/).map(Number).filter((n) => n > 0);
+  };
+  qs.forEach((q) => {
+    if (!q.slice_image) return;
+    let nums = q.group_label ? parseRange(q.group_label) : [q.num];
+    if (!nums.length) nums = [q.num];
+    nums.forEach((n) => { if (map[n] == null) map[n] = q.slice_image; });
+    if (map[q.num] == null) map[q.num] = q.slice_image;
+  });
+  return map;
+}
 
 // 짧은 입장: 4자리 코드 → 해당 활동 /go/:id 로 리다이렉트
 app.get('/join/:code', async (req, res) => {
@@ -86,10 +131,13 @@ app.get('/dashboard/:id', async (req, res) => {
   res.type('html').send(renderDashboardPage(activity));
 });
 
-function renderPresentPage(activity) {
+function renderPresentPage(activity, sliceByNum) {
   const title = escapeHtml(activity.title || '활동');
   const activityId = activity.id;
-  const body = activity.html_body || '';
+  const slices = sliceByNum || {};
+  const hasSlices = Object.keys(slices).length > 0;
+  // 조각이 있으면 왼쪽은 클라이언트가 문항별 이미지로 채움(초기 비움), 없으면 기존 html_body 그대로.
+  const body = hasSlices ? '' : (activity.html_body || '');
 
   return `<!doctype html>
 <html lang="ko">
@@ -270,7 +318,10 @@ ${body}
 <script>
 (function () {
   var ACTIVITY_ID = ${JSON.stringify(activityId)};
+  var SLICE_BY_NUM = ${JSON.stringify(slices)};
+  var HAS_SLICES = ${hasSlices ? 'true' : 'false'};
   var state = { questions: [], students: [], curIdx: 0, filter: 'all', reveal: false };
+  var lastProblemNum = null;
 
   function fetchData() {
     return fetch('/api/present/' + ACTIVITY_ID)
@@ -280,9 +331,25 @@ ${body}
         state.questions = data.questions || [];
         state.students = data.students || [];
         if (state.curIdx >= state.questions.length) state.curIdx = 0;
-        render(); // 오른쪽 통계만 갱신(왼쪽 문제·필기는 건드리지 않음)
+        renderProblem(); // 조각 모드: 현재 문항 이미지 반영(바뀔 때만)
+        render(); // 오른쪽 통계만 갱신
       })
       .catch(function (err) { console.error(err); });
+  }
+
+  // 조각 모드에서 현재 문항의 slice_image 를 왼쪽에 크게 표시(문항 바뀔 때만 교체)
+  function renderProblem() {
+    if (!HAS_SLICES) return;
+    var q = curQ(); if (!q) return;
+    if (q.num === lastProblemNum) return;
+    lastProblemNum = q.num;
+    var img = SLICE_BY_NUM[q.num];
+    content.innerHTML = img
+      ? '<img class="slice-full" alt="' + q.num + '번 문항" src="' + img + '" />'
+      : '<div style="padding:40px;color:#64748b;text-align:center;font-size:20px;">' + q.num + '번 — 문항 이미지가 없습니다</div>';
+    var im = content.querySelector('img');
+    if (im) { im.addEventListener('load', fitCanvas); }
+    fitCanvas();
   }
 
   function curQ() { return state.questions[state.curIdx]; }
@@ -309,6 +376,7 @@ ${body}
     if (idx < 0 || idx >= state.questions.length || idx === state.curIdx) return;
     state.curIdx = idx;
     clearCanvas();
+    renderProblem(); // 조각 모드: 문항 이미지 교체
     render();
   }
 
@@ -881,6 +949,270 @@ ${body}
       p.insertBefore(btn, p.firstChild);
     });
   })();
+})();
+</script>
+</body>
+</html>`;
+}
+
+// 학생 한 문제씩 응시 화면 (view_mode='single')
+function renderStudentSinglePage(activity, questions) {
+  const title = escapeHtml(activity.title || '활동');
+  const activityId = activity.id;
+  const version = Number(activity.version) || 1;
+  const qData = (questions || []).map((q) => ({
+    num: q.num, type: q.type || 'short',
+    slice_image: q.slice_image || null, group_label: q.group_label || null,
+  }));
+
+  return `<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>${title} · ${APP_NAME}</title>
+<style>
+  * { box-sizing: border-box; }
+  body { font-family: system-ui, -apple-system, "Segoe UI", sans-serif; margin: 0; background: #f5f6f8; color: #1a1a1a; }
+  .top { background: #fff; border-bottom: 1px solid #e2e8f0; padding: 12px 14px; position: sticky; top: 0; z-index: 20; }
+  .top .brand { font-size: 12px; color: #718096; }
+  .top h1 { font-size: 17px; margin: 2px 0 8px; }
+  .top input.nick { width: 100%; padding: 9px; font-size: 15px; border: 1px solid #cbd5e1; border-radius: 8px; margin-bottom: 8px; }
+  .prog { height: 8px; background: #edf2f7; border-radius: 999px; overflow: hidden; margin-bottom: 8px; }
+  .prog > div { height: 100%; background: #48bb78; width: 0; transition: width .2s; }
+  .chips { display: flex; flex-wrap: wrap; gap: 6px; }
+  .chip { width: 34px; height: 34px; border-radius: 8px; border: 2px solid transparent; font-weight: 800; font-size: 13px; cursor: pointer; background: #e2e8f0; color: #4a5568; }
+  .chip.answered { background: #c6f6d5; color: #22543d; }
+  .chip.later { background: #fefcbf; color: #975a16; }
+  .chip.wrong { background: #fed7d7; color: #c53030; }
+  .chip.cur { border-color: #2b6cb0; }
+  .wrap { max-width: 820px; margin: 0 auto; padding: 14px; }
+  .slide { background: #fff; border: 1px solid #e2e8f0; border-radius: 12px; padding: 14px; }
+  .slide .grouptag { display: inline-block; font-size: 12px; background: #ebf8ff; color: #2b6cb0; font-weight: 700; padding: 2px 10px; border-radius: 999px; margin-bottom: 8px; }
+  .slide img { width: 100%; height: auto; border: 1px solid #e2e8f0; border-radius: 8px; }
+  .slide .noimg { padding: 30px; text-align: center; color: #a0aec0; }
+  .answers { margin-top: 12px; }
+  .arow { display: flex; align-items: center; gap: 10px; margin-bottom: 8px; }
+  .arow label { flex: 0 0 46px; font-weight: 800; }
+  .arow input { flex: 1; padding: 11px 12px; font-size: 16px; border: 1px solid #cbd5e1; border-radius: 8px; }
+  .nav { display: flex; gap: 8px; margin-top: 14px; }
+  .nav button { flex: 1; padding: 13px; font-size: 15px; font-weight: 800; border: 1px solid #cbd5e1; background: #fff; border-radius: 10px; cursor: pointer; }
+  .nav button.later.on { background: #fefcbf; border-color: #ecc94b; color: #975a16; }
+  .nav button.next { background: #2b6cb0; color: #fff; border-color: #2b6cb0; }
+  .overlay { display: none; position: fixed; inset: 0; background: rgba(0,0,0,.45); z-index: 50; align-items: center; justify-content: center; padding: 20px; }
+  .overlay.show { display: flex; }
+  .sheet { background: #fff; border-radius: 16px; padding: 24px; max-width: 380px; width: 100%; text-align: center; }
+  .sheet h2 { margin: 0 0 8px; font-size: 20px; }
+  .sheet p { color: #4a5568; margin: 0 0 18px; }
+  .sheet button { width: 100%; padding: 13px; font-size: 15px; font-weight: 800; border-radius: 10px; margin-top: 8px; cursor: pointer; border: 1px solid #cbd5e1; background: #fff; }
+  .sheet button.primary { background: #2f855a; color: #fff; border-color: #2f855a; }
+  #updateBanner { display: none; background: #fefcbf; color: #744210; border: 1px solid #ecc94b; border-radius: 8px; padding: 8px 12px; margin: 8px 0; font-weight: 700; font-size: 14px; }
+  #updateBanner button { margin-left: 8px; padding: 4px 10px; border: 0; border-radius: 6px; background: #d69e2e; color: #fff; font-weight: 700; cursor: pointer; }
+</style>
+</head>
+<body>
+  <div class="top">
+    <div class="brand">${APP_NAME}</div>
+    <h1>${title}</h1>
+    <input class="nick" id="nick" type="text" placeholder="닉네임(이름)을 입력하세요" autocomplete="off" />
+    <div id="updateBanner">🔔 선생님이 문제를 수정했어요. <button id="reloadBtn">새로고침</button></div>
+    <div class="prog"><div id="progFill"></div></div>
+    <div class="chips" id="chips"></div>
+  </div>
+  <div class="wrap">
+    <div class="slide" id="slide"></div>
+    <div class="nav">
+      <button id="prevBtn">← 이전</button>
+      <button class="later" id="laterBtn">🔖 나중에 다시</button>
+      <button class="next" id="nextBtn">다음 →</button>
+    </div>
+  </div>
+
+  <div class="overlay" id="finishOverlay"><div class="sheet" id="finishSheet"></div></div>
+  <div class="overlay" id="resultOverlay"><div class="sheet" id="resultSheet"></div></div>
+
+<script>
+(function () {
+  var ACTIVITY_ID = ${JSON.stringify(activityId)};
+  var MY_VERSION = ${version};
+  var QUESTIONS = ${JSON.stringify(qData)};
+  var slides = buildSlides(QUESTIONS);
+  var answers = {}, later = {}, wrong = {};
+  var cur = 0, submitted = false, restrictWrong = false;
+
+  function parseRange(s) {
+    s = String(s || '');
+    var m = s.match(/(\\d+)\\s*[~\\-]\\s*(\\d+)/);
+    if (m) { var a = +m[1], b = +m[2], out = []; for (var i = Math.min(a, b); i <= Math.max(a, b); i++) out.push(i); return out; }
+    return s.split(/[,\\s]+/).map(Number).filter(function (n) { return n > 0; });
+  }
+  function buildSlides(qs) {
+    var covered = {}, out = [];
+    qs.forEach(function (q) {
+      if (covered[q.num]) return;
+      if (q.slice_image) {
+        var nums = q.group_label ? parseRange(q.group_label) : [q.num];
+        if (!nums.length) nums = [q.num];
+        // 실제 존재하는 문항 번호만
+        nums = nums.filter(function (n) { return qs.some(function (x) { return x.num === n; }); });
+        if (!nums.length) nums = [q.num];
+        nums.forEach(function (n) { covered[n] = true; });
+        out.push({ image: q.slice_image, nums: nums, group: q.group_label || null });
+      } else {
+        covered[q.num] = true;
+        out.push({ image: null, nums: [q.num], group: null });
+      }
+    });
+    return out;
+  }
+
+  function allNums() { return QUESTIONS.map(function (q) { return q.num; }); }
+  function hasAnswer(num) { return String(answers['q' + num] || '').trim() !== ''; }
+  function slideOfQuestion(num) { for (var i = 0; i < slides.length; i++) { if (slides[i].nums.indexOf(num) >= 0) return i; } return 0; }
+  function navigable() {
+    if (!restrictWrong) return slides.map(function (_, i) { return i; });
+    return slides.map(function (_, i) { return i; }).filter(function (i) { return slides[i].nums.some(function (n) { return wrong[n]; }); });
+  }
+
+  function render() {
+    // 진행바
+    var total = allNums().length;
+    var done = allNums().filter(hasAnswer).length;
+    document.getElementById('progFill').style.width = total ? Math.round(done / total * 100) + '%' : '0';
+    // 칩
+    var chips = document.getElementById('chips'); chips.innerHTML = '';
+    var curNums = slides[cur] ? slides[cur].nums : [];
+    QUESTIONS.forEach(function (q) {
+      var b = document.createElement('button'); b.className = 'chip'; b.textContent = q.num;
+      if (submitted && wrong[q.num]) b.classList.add('wrong');
+      else if (later[q.num]) b.classList.add('later');
+      else if (hasAnswer(q.num)) b.classList.add('answered');
+      if (curNums.indexOf(q.num) >= 0) b.classList.add('cur');
+      b.onclick = function () { goQuestion(q.num); };
+      chips.appendChild(b);
+    });
+    // 슬라이드
+    var s = slides[cur]; var el = document.getElementById('slide');
+    var html = '';
+    if (s.group) html += '<span class="grouptag">묶음 ' + escapeHtml(s.group) + '</span>';
+    html += s.image ? '<img alt="문항" src="' + s.image + '" />' : '<div class="noimg">(이미지 없는 문항)</div>';
+    html += '<div class="answers">';
+    s.nums.forEach(function (n) {
+      var q = QUESTIONS.filter(function (x) { return x.num === n; })[0] || { type: 'short' };
+      html += '<div class="arow"><label>' + n + '번</label>' +
+        '<input type="text" data-num="' + n + '" value="' + escapeHtml(answers['q' + n] || '') + '" placeholder="답 입력" autocomplete="off" /></div>';
+    });
+    html += '</div>';
+    el.innerHTML = html;
+    el.querySelectorAll('input[data-num]').forEach(function (inp) {
+      inp.addEventListener('input', function () { answers['q' + inp.getAttribute('data-num')] = inp.value; render(); });
+    });
+    // 나중에 다시 버튼 상태(현재 슬라이드 첫 문항 기준)
+    var laterOn = curNums.some(function (n) { return later[n]; });
+    document.getElementById('laterBtn').classList.toggle('on', laterOn);
+    var nav = navigable();
+    document.getElementById('prevBtn').disabled = nav.indexOf(cur) <= 0;
+  }
+
+  function goSlide(i) { if (i < 0 || i >= slides.length) return; cur = i; render(); window.scrollTo({ top: 0, behavior: 'smooth' }); }
+  function goQuestion(num) { goSlide(slideOfQuestion(num)); }
+  function step(dir) {
+    var nav = navigable(); var pos = nav.indexOf(cur);
+    if (pos < 0) { if (nav.length) goSlide(nav[0]); return; }
+    if (dir > 0 && pos === nav.length - 1) { finish(); return; }
+    var np = Math.max(0, Math.min(nav.length - 1, pos + dir));
+    goSlide(nav[np]);
+  }
+
+  document.getElementById('prevBtn').onclick = function () { step(-1); };
+  document.getElementById('nextBtn').onclick = function () { step(1); };
+  document.getElementById('laterBtn').onclick = function () {
+    var nums = slides[cur].nums;
+    var on = nums.some(function (n) { return later[n]; });
+    nums.forEach(function (n) { if (on) delete later[n]; else later[n] = true; });
+    render();
+    if (!on) step(1); // 표시하면 다음으로
+  };
+
+  // ---- 마무리 분기 ----
+  function finish() {
+    var unanswered = allNums().filter(function (n) { return !hasAnswer(n); });
+    var laterNums = allNums().filter(function (n) { return later[n]; });
+    var sheet = document.getElementById('finishSheet');
+    var h;
+    if (unanswered.length) {
+      h = '<h2>잠깐만요 🙂</h2><p>아직 안 푼 문제가 ' + unanswered.length + '개 있어요. 한 번 더 살펴볼까요?</p>' +
+        '<button class="primary" id="fGo">안 푼 문제로 가기</button><button id="fSubmit">그래도 제출</button>';
+    } else if (laterNums.length) {
+      h = '<h2>거의 다 됐어요 ✨</h2><p>다시 볼 문제가 ' + laterNums.length + '개 있어요. 확인해볼까요?</p>' +
+        '<button class="primary" id="fGo">다시 볼 문제로 가기</button><button id="fSubmit">제출하기</button>';
+    } else {
+      h = '<h2>다 풀었어요! 🎉</h2><p>제출하기 전에 한 번 더 확인해볼까요?</p>' +
+        '<button id="fGo">처음부터 훑어보기</button><button class="primary" id="fSubmit">제출하기</button>';
+    }
+    sheet.innerHTML = h;
+    document.getElementById('finishOverlay').classList.add('show');
+    document.getElementById('fSubmit').onclick = function () { hide('finishOverlay'); submit(); };
+    document.getElementById('fGo').onclick = function () {
+      hide('finishOverlay');
+      if (unanswered.length) goQuestion(unanswered[0]);
+      else if (laterNums.length) goQuestion(laterNums[0]);
+      else goSlide(0);
+    };
+  }
+  function hide(id) { document.getElementById(id).classList.remove('show'); }
+
+  // ---- 제출 ----
+  function submit() {
+    var nick = (document.getElementById('nick').value || '').trim();
+    if (!nick) { alert('닉네임(이름)을 입력해 주세요.'); document.getElementById('nick').focus(); return; }
+    fetch('/api/submit', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ activityId: ACTIVITY_ID, nickname: nick, answers: answers, replace: true }),
+    }).then(function (r) { return r.json(); }).then(function (data) {
+      if (!data.ok) throw new Error(data.error || '제출 실패');
+      submitted = true;
+      wrong = {};
+      (data.results || []).forEach(function (r) { if (r.correct === false) wrong[r.num] = true; });
+      showResult(data);
+    }).catch(function (e) { alert('제출 실패: ' + e.message); });
+  }
+
+  function showResult(data) {
+    var score = data.auto_score || 0, gradable = data.gradable || 0;
+    var missed = gradable - score;
+    var sheet = document.getElementById('resultSheet');
+    var h;
+    if (gradable > 0 && missed === 0) {
+      h = '<h2>완벽해요! 수고했어요 🎉</h2><p>모든 채점 문항을 맞혔어요.</p><button class="primary" id="rDone">제출 완료</button>';
+    } else if (missed > 0) {
+      h = '<h2>' + missed + '개가 아쉬워요</h2><p>조금 더 생각해보고 다시 제출할 수 있어요.</p>' +
+        '<button class="primary" id="rRedo">다시 풀어보기</button><button id="rDone">이대로 제출 완료</button>';
+    } else {
+      h = '<h2>제출 완료 ✅</h2><p>수고했어요!</p><button class="primary" id="rDone">확인</button>';
+    }
+    sheet.innerHTML = h;
+    document.getElementById('resultOverlay').classList.add('show');
+    var done = document.getElementById('rDone'); if (done) done.onclick = function () { hide('resultOverlay'); render(); };
+    var redo = document.getElementById('rRedo');
+    if (redo) redo.onclick = function () {
+      hide('resultOverlay'); restrictWrong = true;
+      var nav = navigable(); if (nav.length) goSlide(nav[0]); render();
+    };
+    render();
+  }
+
+  // 버전 폴링(수정 알림)
+  document.getElementById('reloadBtn').onclick = function () { location.reload(); };
+  setInterval(function () {
+    fetch('/api/activities/' + ACTIVITY_ID + '/version').then(function (r) { return r.json(); }).then(function (d) {
+      if (d && d.ok && Number(d.version) > MY_VERSION) document.getElementById('updateBanner').style.display = 'block';
+    }).catch(function () {});
+  }, 8000);
+
+  function escapeHtml(s) { return String(s == null ? '' : s).replace(/[&<>"']/g, function (c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]; }); }
+
+  render();
 })();
 </script>
 </body>

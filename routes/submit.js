@@ -10,7 +10,7 @@ const { grade } = require('../grade');
 //  (B) HTML 자가채점:    body = { activityId, nickname, self_scored:true, score, total, detail }
 //      → 서버 채점을 건너뛰고 auto_score=score. answers 컬럼에 {self_scored,score,total,detail} 통째로 저장.
 router.post('/submit', async (req, res) => {
-  const { activityId, nickname, answers, self_scored, score, total, detail } = req.body || {};
+  const { activityId, nickname, answers, self_scored, score, total, detail, replace } = req.body || {};
 
   if (!activityId) {
     return res.status(400).json({ ok: false, error: 'activityId 가 필요합니다.' });
@@ -58,23 +58,42 @@ router.post('/submit', async (req, res) => {
 
   const { auto_score, gradable, results } = grade(questions, answers);
 
-  const { data, error } = await supabase
-    .from('submissions')
-    .insert({
-      activity_id: activityId,
-      nickname: nickname ?? null,
-      answers: answers ?? {},
-      auto_score,
-    })
-    .select('id')
-    .single();
+  // 재제출(replace): 같은 활동+닉네임 제출이 있으면 마지막 제출로 대체(update), 없으면 insert.
+  // (한 문제씩 모드의 '다시 풀어보기'에서 사용. 닉네임 없으면 항상 새 행.)
+  let existingId = null;
+  if (replace && nickname) {
+    const { data: prev } = await supabase
+      .from('submissions')
+      .select('id')
+      .eq('activity_id', activityId)
+      .eq('nickname', nickname)
+      .order('created_at', { ascending: false })
+      .limit(1);
+    if (prev && prev.length) existingId = prev[0].id;
+  }
+
+  let data, error;
+  if (existingId) {
+    ({ data, error } = await supabase
+      .from('submissions')
+      .update({ answers: answers ?? {}, auto_score })
+      .eq('id', existingId)
+      .select('id')
+      .single());
+  } else {
+    ({ data, error } = await supabase
+      .from('submissions')
+      .insert({ activity_id: activityId, nickname: nickname ?? null, answers: answers ?? {}, auto_score })
+      .select('id')
+      .single());
+  }
 
   if (error) {
-    console.error('[submit] insert 실패:', error.message);
+    console.error('[submit] 저장 실패:', error.message);
     return res.status(500).json({ ok: false, error: error.message });
   }
 
-  return res.json({ ok: true, id: data.id, auto_score, gradable, results });
+  return res.json({ ok: true, id: data.id, replaced: !!existingId, auto_score, gradable, results });
 });
 
 // GET /api/submissions?activityId=...  → 최신순 제출 목록 (auto_score, nickname, answers 포함)

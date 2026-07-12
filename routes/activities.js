@@ -23,19 +23,20 @@ async function genUniqueJoinCode() {
 // body = { title, html_body, questions:[{num,type,answer}], status? }
 // status: 'draft'(임시저장) | 'open'(발행, 기본)
 router.post('/activities', async (req, res) => {
-  const { title, html_body, questions, status } = req.body || {};
+  const { title, html_body, questions, status, view_mode } = req.body || {};
 
   if (!title || !html_body) {
     return res.status(400).json({ ok: false, error: 'title 과 html_body 가 필요합니다.' });
   }
 
   const st = status === 'draft' ? 'draft' : 'open';
+  const vm = view_mode === 'single' ? 'single' : 'all';
   const join_code = await genUniqueJoinCode();
 
   // 1) 활동 1행 insert
   const { data: act, error: actErr } = await supabase
     .from('activities')
-    .insert({ title, html_body, status: st, join_code })
+    .insert({ title, html_body, status: st, join_code, view_mode: vm })
     .select('id, join_code')
     .single();
 
@@ -261,7 +262,7 @@ router.get('/activities/:id/version', async (req, res) => {
 // questions 는 기존 삭제 후 재삽입.
 router.put('/activities/:id', async (req, res) => {
   const { id } = req.params;
-  const { title, html_body, questions, status } = req.body || {};
+  const { title, html_body, questions, status, view_mode } = req.body || {};
 
   if (!title || !html_body) {
     return res.status(400).json({ ok: false, error: 'title 과 html_body 가 필요합니다.' });
@@ -281,6 +282,7 @@ router.put('/activities/:id', async (req, res) => {
 
   const patch = { title, html_body, version: nextVersion };
   if (status === 'draft' || status === 'open') patch.status = status; // 발행/임시저장 전환 허용
+  if (view_mode === 'single' || view_mode === 'all') patch.view_mode = view_mode;
 
   const { error: upErr } = await supabase
     .from('activities')
