@@ -114,9 +114,13 @@
         <div class="row" style="margin-top:8px; gap:16px;">
           <span class="muted" style="font-weight:600;">PDF 변환 방식</span>
           <label style="margin:0; font-weight:400;"><input type="radio" name="pdfMode" value="image" checked /> 그림으로(이미지)</label>
-          <label style="margin:0; font-weight:400;"><input type="radio" name="pdfMode" value="text" /> 글자로(텍스트·TTS 지원)</label>
+          <label style="margin:0; font-weight:400;"><input type="radio" name="pdfMode" value="text" /> 글자로(텍스트·TTS)</label>
+          <label style="margin:0; font-weight:400;"><input type="radio" name="pdfMode" value="rich" /> HTML 재구성 ★ (글자+그림)</label>
         </div>
-        <div class="muted" id="pdfModeHint" style="margin-top:4px;">그림 모드가 안전합니다. 글자 모드는 폰트 크기 조절·읽어주기(TTS)가 되지만, 그림·표가 많으면 깨질 수 있어요.</div>
+        <div class="muted" id="pdfModeHint" style="margin-top:4px;">그림 모드가 가장 안전합니다. HTML 재구성은 글자는 실제 텍스트로, 그림은 &lt;img&gt;로 살려 배치합니다(2단·복잡 레이아웃은 어긋날 수 있어요).</div>
+        <div class="row" style="margin-top:6px;">
+          <button class="btn-gray btn-sm" id="revertImageBtn" style="display:none;">🖼 그림 모드로 되돌리기</button>
+        </div>
 
         <div class="row" style="margin-top:10px;">
           <label style="margin:0;">문항 수</label>
@@ -256,10 +260,15 @@ function handleFile(file) {
 function currentPdfMode() { var s = document.querySelector('input[name="pdfMode"]:checked'); return s ? s.value : 'image'; }
 
 // ================= PDF → 페이지 이미지 / 글자 =================
+var pdfImageBackup = null; // 그림 모드 백업 HTML(되돌리기용)
+
 function convertPdf(file, hint) {
   var n = parseInt(document.getElementById('qcount').value, 10) || 10;
   var mode = currentPdfMode();
-  hint.textContent = '⏳ ' + file.name + ' 변환 중... (' + (mode === 'text' ? '글자' : '그림') + ' 모드)';
+  var label = mode === 'text' ? '글자' : mode === 'rich' ? 'HTML 재구성' : '그림';
+  document.getElementById('revertImageBtn').style.display = 'none';
+  pdfImageBackup = null;
+  hint.textContent = '⏳ ' + file.name + ' 변환 중... (' + label + ' 모드)';
   var fr = new FileReader();
   fr.onload = function () {
     var typed = new Uint8Array(fr.result);
@@ -272,6 +281,9 @@ function convertPdf(file, hint) {
             updatePreview();
           });
         }
+        if (mode === 'rich') {
+          return buildRichFromPdf(pdf, n, hint, file.name);
+        }
         return renderAllPages(pdf, hint, file.name).then(function (imgTags) {
           document.getElementById('htmlBody').value = buildPdfHtml(imgTags, n);
           hint.textContent = '✅ ' + file.name + ' → ' + imgTags.length + '페이지 이미지 + ' + n + '문항 입력칸 생성.';
@@ -283,6 +295,15 @@ function convertPdf(file, hint) {
   fr.onerror = function () { alert('PDF 파일을 읽지 못했습니다.'); };
   fr.readAsArrayBuffer(file);
 }
+
+// 그림 모드로 되돌리기: rich 변환 시 함께 만들어 둔 백업 HTML로 교체
+document.getElementById('revertImageBtn').addEventListener('click', function () {
+  if (!pdfImageBackup) return;
+  document.getElementById('htmlBody').value = pdfImageBackup;
+  document.getElementById('fileHint').textContent = '🖼 그림 모드 결과로 되돌렸습니다.';
+  updatePreview();
+  this.style.display = 'none';
+});
 
 // 각 페이지 텍스트를 위치정보로 줄·단락 복원 → 단락 문자열 배열
 function extractAllText(pdf, hint, fname) {
@@ -355,6 +376,190 @@ function buildPdfTextHtml(paras, n) {
     '    <div class="pdf-note">📖 글자 모드입니다. 폰트 크기 조절과 🔊 읽어주기(TTS)를 쓸 수 있어요. 그림·표는 빠졌을 수 있으니 필요하면 그림 모드로 다시 올리세요.</div>\n    ' +
     body + '\n' +
     '    <div class="pdf-text-answers">\n      ' + inputs.join('\n      ') + '\n    </div>\n' +
+    '</div>';
+}
+
+// ================= HTML 재구성(글자+그림) =================
+function buildRichFromPdf(pdf, n, hint, fname) {
+  var scale = 2.0, pageHtmls = [], imgBackup = [], totalText = 0, chain = Promise.resolve();
+  for (var p = 1; p <= pdf.numPages; p++) {
+    (function (pageNum) {
+      chain = chain.then(function () {
+        return pdf.getPage(pageNum).then(function (page) {
+          var viewport = page.getViewport({ scale: scale });
+          var canvas = document.createElement('canvas');
+          canvas.width = Math.ceil(viewport.width); canvas.height = Math.ceil(viewport.height);
+          return page.render({ canvasContext: canvas.getContext('2d'), viewport: viewport }).promise.then(function () {
+            imgBackup.push('<figure class="pdf-page"><img alt="문제지 ' + pageNum + '페이지" src="' + canvas.toDataURL('image/jpeg', 0.85) + '" /></figure>');
+            return page.getTextContent().then(function (tc) {
+              var textItems = tc.items.map(function (it) {
+                var tx = pdfjsLib.Util.transform(viewport.transform, it.transform);
+                var h = Math.hypot(tx[2], tx[3]) || 10;
+                return { x: tx[4], y: tx[5], w: (it.width || 0) * scale, h: h, str: it.str || '' };
+              }).filter(function (t) { return (t.str || '').length; });
+              textItems.forEach(function (t) { totalText += t.str.replace(/\s/g, '').length; });
+              return extractPageImages(page, viewport, canvas).then(function (imgs) {
+                pageHtmls.push('<div class="rich-page">\n' + orderPageElements(textItems, imgs, canvas.width) + '\n</div>');
+                hint.textContent = '⏳ ' + fname + ' 재구성... (' + pageNum + '/' + pdf.numPages + '페이지)';
+              });
+            });
+          });
+        });
+      });
+    })(p);
+  }
+  return chain.then(function () {
+    pdfImageBackup = buildPdfHtml(imgBackup, n); // 그림 모드 백업 항상 생성
+    if (totalText < 10) { // 텍스트 거의 없음 → 자동 폴백
+      document.getElementById('htmlBody').value = pdfImageBackup;
+      hint.textContent = '⚠ 텍스트가 거의 추출되지 않아 자동으로 그림 모드로 전환했습니다. (스캔 PDF일 수 있어요)';
+      updatePreview();
+      return;
+    }
+    document.getElementById('htmlBody').value = buildRichHtml(pageHtmls, n);
+    document.getElementById('revertImageBtn').style.display = 'inline-flex';
+    hint.textContent = '✅ ' + fname + ' → HTML 재구성 완료. 오른쪽 미리보기에서 확인하고, 깨졌으면 [그림 모드로 되돌리기]를 누르세요.';
+    updatePreview();
+  });
+}
+
+// operatorList 를 걸어 CTM 을 추적, 이미지 op 의 화면상 위치(bbox)를 구해 렌더된 페이지 캔버스에서 크롭
+function extractPageImages(page, viewport, pageCanvas) {
+  return page.getOperatorList().then(function (opList) {
+    var OPS = pdfjsLib.OPS, Util = pdfjsLib.Util;
+    var imgOps = {};
+    [OPS.paintImageXObject, OPS.paintJpegXObject, OPS.paintImageMaskXObject, OPS.paintInlineImageXObject].forEach(function (o) { if (o != null) imgOps[o] = 1; });
+    var ctm = [1, 0, 0, 1, 0, 0], stack = [], imgs = [];
+    for (var i = 0; i < opList.fnArray.length; i++) {
+      var fn = opList.fnArray[i], args = opList.argsArray[i];
+      if (fn === OPS.save) stack.push(ctm.slice());
+      else if (fn === OPS.restore) { if (stack.length) ctm = stack.pop(); }
+      else if (fn === OPS.transform) ctm = Util.transform(ctm, args);
+      else if (imgOps[fn]) {
+        try {
+          var corners = [[0, 0], [1, 0], [1, 1], [0, 1]].map(function (c) {
+            return Util.applyTransform(Util.applyTransform(c, ctm), viewport.transform);
+          });
+          var xs = corners.map(function (p) { return p[0]; }), ys = corners.map(function (p) { return p[1]; });
+          var x = Math.min.apply(null, xs), y = Math.min.apply(null, ys);
+          var w = Math.max.apply(null, xs) - x, h = Math.max.apply(null, ys) - y;
+          if (w > 10 && h > 10 && w <= pageCanvas.width * 1.2 && h <= pageCanvas.height * 1.2) {
+            var cc = document.createElement('canvas');
+            cc.width = Math.round(w); cc.height = Math.round(h);
+            cc.getContext('2d').drawImage(pageCanvas, Math.round(x), Math.round(y), Math.round(w), Math.round(h), 0, 0, Math.round(w), Math.round(h));
+            imgs.push({ x: x, y: y, w: w, h: h, src: cc.toDataURL('image/jpeg', 0.85) });
+          }
+        } catch (e) { /* 이미지 하나 실패는 무시 */ }
+      }
+    }
+    return imgs;
+  }).catch(function () { return []; });
+}
+
+// 텍스트/이미지 블록을 단(컬럼)·y 순서로 정렬해 읽는 순서대로 HTML 생성 (순수 함수 — 테스트 가능)
+function orderPageElements(textItems, images, W) {
+  var twoCol = detectTwoCol(textItems, W);
+  var mid = W / 2;
+  function colOf(cx) { return twoCol ? (cx < mid ? 0 : 1) : 0; }
+
+  var cols = [[], []];
+  // 텍스트: 컬럼별로 모아 줄→단락 복원
+  var colText = [[], []];
+  textItems.forEach(function (t) { colText[colOf(t.x + t.w / 2)].push(t); });
+  colText.forEach(function (items, ci) {
+    linesToParagraphs(groupLines(items)).forEach(function (para) {
+      cols[ci].push({ y: para.y, html: '<p class="tts-para">' + escapeHtml(para.text) + '</p>' });
+    });
+  });
+  // 이미지: 컬럼별로 배치
+  (images || []).forEach(function (im) {
+    cols[colOf(im.x + im.w / 2)].push({ y: im.y, html: '<figure class="rich-img"><img src="' + im.src + '" alt="그림" /></figure>' });
+  });
+
+  var out = [];
+  cols.forEach(function (col) {
+    col.sort(function (a, b) { return a.y - b.y; }); // 위→아래 (device y 는 아래로 증가)
+    col.forEach(function (e) { out.push(e.html); });
+  });
+  return out.join('\n');
+}
+
+// 두 단 레이아웃 감지: 중앙 거터를 사이에 두고 좌·우 양쪽에 텍스트가 충분한가
+function detectTwoCol(textItems, W) {
+  if (!textItems || textItems.length < 8) return false;
+  var mid = W / 2, left = 0, right = 0, cross = 0;
+  textItems.forEach(function (t) {
+    if (t.x + t.w <= mid * 1.02) left++;
+    else if (t.x >= mid * 0.98) right++;
+    else cross++;
+  });
+  return left >= 4 && right >= 4 && cross <= (left + right) * 0.18;
+}
+
+// 같은 y 의 조각을 한 줄로 묶고, x 근접도로 글자 조각(HWP 쪼개짐)을 합침
+function groupLines(items) {
+  var rows = [];
+  items.forEach(function (it) {
+    var line = null;
+    for (var i = 0; i < rows.length; i++) { if (Math.abs(rows[i].y - it.y) <= Math.max(3, it.h * 0.5)) { line = rows[i]; break; } }
+    if (!line) { line = { y: it.y, h: it.h, parts: [] }; rows.push(line); }
+    line.parts.push(it);
+  });
+  return rows.map(function (r) {
+    r.parts.sort(function (a, b) { return a.x - b.x; });
+    var text = '';
+    for (var i = 0; i < r.parts.length; i++) {
+      var p = r.parts[i];
+      if (i > 0) {
+        var prev = r.parts[i - 1];
+        var gap = p.x - (prev.x + prev.w);
+        // 붙은 글자 조각은 그대로, 벌어지면 공백 (대략 글자폭 30%)
+        if (gap > (p.h || 10) * 0.3) text += ' ';
+      }
+      text += p.str;
+    }
+    return { y: r.y, h: r.h, text: text.replace(/\s+/g, ' ').trim() };
+  }).filter(function (l) { return l.text; }).sort(function (a, b) { return a.y - b.y; });
+}
+
+// 줄 간격이 크면 단락 분리. 단락 y = 첫 줄 y
+function linesToParagraphs(lines) {
+  var paras = [], cur = [], curY = null;
+  for (var i = 0; i < lines.length; i++) {
+    if (i > 0) {
+      var gap = lines[i].y - lines[i - 1].y;
+      if (gap > lines[i].h * 1.8) { if (cur.length) { paras.push({ y: curY, text: cur.join(' ') }); cur = []; curY = null; } }
+    }
+    if (curY == null) curY = lines[i].y;
+    cur.push(lines[i].text);
+  }
+  if (cur.length) paras.push({ y: curY, text: cur.join(' ') });
+  return paras;
+}
+
+// 재구성 결과 학생 HTML (텍스트=실제 글자, 그림=<img>) + 폰트조절/TTS(data-tts=on) + 답칸
+function buildRichHtml(pageHtmls, n) {
+  var inputs = [];
+  for (var i = 1; i <= n; i++) {
+    inputs.push('<div class="q-row"><label for="q' + i + '">' + i + '번</label><input type="text" id="q' + i + '" name="q' + i + '" placeholder="' + i + '번 답" autocomplete="off" /></div>');
+  }
+  return '' +
+    '<style>\n' +
+    '  .rich-doc { max-width: 820px; margin: 0 auto; font-size: var(--tts-fs, 18px); line-height: 1.7; }\n' +
+    '  .rich-doc .tts-para { margin: 0 0 12px; white-space: pre-wrap; word-break: break-word; }\n' +
+    '  .rich-doc .rich-img { margin: 12px 0; text-align: center; }\n' +
+    '  .rich-doc .rich-img img { max-width: 100%; height: auto; border: 1px solid #e2e8f0; border-radius: 6px; }\n' +
+    '  .rich-doc .rich-page { padding-bottom: 12px; margin-bottom: 12px; border-bottom: 1px dashed #e2e8f0; }\n' +
+    '  .rich-doc .pdf-note { background: #fffaf0; border: 1px solid #f6e05e; color: #975a16; padding: 8px 12px; border-radius: 8px; font-size: 14px; margin-bottom: 12px; }\n' +
+    '  .rich-answers { margin-top: 20px; padding-top: 16px; border-top: 2px dashed #cbd5e1; }\n' +
+    '  .rich-answers .q-row { display: flex; align-items: center; gap: 10px; margin-bottom: 10px; }\n' +
+    '  .rich-answers label { flex: 0 0 52px; font-weight: 700; }\n' +
+    '  .rich-answers input { flex: 1; padding: 10px 12px; font-size: 16px; border: 1px solid #cbd5e1; border-radius: 6px; }\n' +
+    '</style>\n' +
+    '<div class="pdf-text-doc rich-doc" data-tts="on">\n' +
+    '    <div class="pdf-note">📝 HTML 재구성 결과입니다. 글자는 실제 텍스트(확대·읽어주기 가능), 그림은 이미지로 넣었습니다. 배치가 어긋나면 [그림 모드로 되돌리기]를 쓰세요.</div>\n    ' +
+    pageHtmls.join('\n    ') + '\n' +
+    '    <div class="rich-answers">\n      ' + inputs.join('\n      ') + '\n    </div>\n' +
     '</div>';
 }
 function renderAllPages(pdf, hint, fname) {
