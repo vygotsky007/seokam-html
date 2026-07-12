@@ -348,7 +348,7 @@ ${body}
     var img = SLICE_BY_NUM[q.num];
     content.innerHTML = img
       ? '<img class="slice-full" alt="' + q.num + '번 문항" src="' + img + '" />'
-      : '<div style="padding:40px;color:#64748b;text-align:center;font-size:20px;">' + q.num + '번 — 문항 이미지가 없습니다</div>';
+      : '<div style="padding:40px;color:#e11d48;text-align:center;font-size:20px;">🙏 문항 이미지를 불러올 수 없어요</div>';
     var im = content.querySelector('img');
     if (im) { im.addEventListener('load', fitCanvas); }
     fitCanvas();
@@ -1106,7 +1106,7 @@ function renderStudentSinglePage(activity, questions) {
     var s = slides[cur]; var el = document.getElementById('slide');
     var html = '';
     if (s.group) html += '<span class="grouptag">묶음 ' + escapeHtml(s.group) + '</span>';
-    html += s.image ? '<img alt="문항" src="' + s.image + '" />' : '<div class="noimg">(이미지 없는 문항)</div>';
+    html += s.image ? '<img alt="문항" src="' + s.image + '" />' : '<div class="noimg" style="color:#e11d48;">🙏 문항 이미지를 불러올 수 없어요</div>';
     html += '<div class="answers">';
     s.nums.forEach(function (n) {
       var q = QUESTIONS.filter(function (x) { return x.num === n; })[0] || { type: 'short' };

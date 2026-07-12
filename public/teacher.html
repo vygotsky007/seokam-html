@@ -578,23 +578,30 @@ function addSliceLine(div, pg, si) {
 
   var label = document.createElement('div'); label.className = 'slice-label'; label.style.top = topPct + '%';
   label.style.left = (pg.twoCol && s.col === 1) ? '52%' : '6px';
-  label.textContent = (s.group ? s.group : s.num) + '번';
-  label.title = '클릭해 번호/묶음 수정';
+  label.textContent = labelOf(pg, s) + '번';
+  label.title = '클릭해 번호 수정';
   label.addEventListener('click', function (ev) {
     ev.stopPropagation();
-    var v = prompt('문항 번호(또는 "3~4" 같은 묶음 라벨)', s.group || String(s.num));
+    var v = prompt('문항 번호', String(s.num));
     if (v == null) return; v = v.trim();
-    if (/^\d+$/.test(v)) { s.num = parseInt(v, 10); s.group = null; } else if (v) { s.group = v; }
+    if (/^\d+$/.test(v)) { s.num = parseInt(v, 10); }
     renderSliceEditor();
   });
 
   var tools = document.createElement('div'); tools.className = 'slice-tools'; tools.style.top = topPct + '%';
   tools.style.right = (pg.twoCol && s.col === 0) ? '52%' : '6px';
-  var mergeBtn = document.createElement('button'); mergeBtn.className = 'btn-gray'; mergeBtn.textContent = '묶기';
-  mergeBtn.addEventListener('click', function (ev) { ev.stopPropagation(); mergeWithNext(pg, s); });
+  if (s.groupId) {
+    var unBtn = document.createElement('button'); unBtn.className = 'btn-gray'; unBtn.textContent = '묶음해제';
+    unBtn.addEventListener('click', function (ev) { ev.stopPropagation(); unmerge(pg, s); });
+    tools.appendChild(unBtn);
+  } else {
+    var mergeBtn = document.createElement('button'); mergeBtn.className = 'btn-gray'; mergeBtn.textContent = '묶기';
+    mergeBtn.addEventListener('click', function (ev) { ev.stopPropagation(); mergeWithNext(pg, s); });
+    tools.appendChild(mergeBtn);
+  }
   var delBtn = document.createElement('button'); delBtn.className = 'btn-red'; delBtn.textContent = '삭제';
   delBtn.addEventListener('click', function (ev) { ev.stopPropagation(); var i = pg.slices.indexOf(s); if (i >= 0) pg.slices.splice(i, 1); renderSliceEditor(); });
-  tools.appendChild(mergeBtn); tools.appendChild(delBtn);
+  tools.appendChild(delBtn);
 
   line.addEventListener('pointerdown', function (e) {
     e.preventDefault();
@@ -611,45 +618,79 @@ function addSliceLine(div, pg, si) {
   div.appendChild(line); div.appendChild(label); div.appendChild(tools);
 }
 
-// 인접 문항 묶기: 같은 컬럼에서 y 가 바로 다음인 경계를 없애고 group_label 부여
-function mergeWithNext(pg, s) {
-  var sameCol = pg.slices.filter(function (x) { return x.col === s.col; }).sort(function (a, b) { return a.y - b.y; });
-  var idx = sameCol.indexOf(s);
-  if (idx < 0 || idx + 1 >= sameCol.length) { alert('이 컬럼에 묶을 다음 문항이 없습니다.'); return; }
-  var next = sameCol[idx + 1];
-  var a = s.group ? s.group.split('~')[0] : s.num;
-  var b = next.group ? next.group.split('~').pop() : next.num;
-  s.group = a + '~' + b;
-  var ni = pg.slices.indexOf(next); if (ni >= 0) pg.slices.splice(ni, 1);
-  renderSliceEditor();
+// ---- 묶음(그룹) 모델: 각 slice 는 자기 컬럼의 [y..다음경계] 영역을 가지며, 같은 groupId 끼리 한 조각으로 합성 ----
+var sliceGroupSeq = 1;
+function readingOrder(pg) { return pg.slices.slice().sort(function (a, b) { return (a.col - b.col) || (a.y - b.y); }); }
+// 같은 컬럼에서 s 다음 경계 y (없으면 페이지 끝)
+function sameColNextY(pg, s) {
+  var after = pg.slices.filter(function (x) { return x.col === s.col && x.y > s.y; }).sort(function (a, b) { return a.y - b.y; });
+  return after.length ? after[0].y : pg.H;
+}
+// s 의 그룹 멤버들(같은 groupId), 없으면 [s]
+function groupMembers(pg, s) {
+  if (!s.groupId) return [s];
+  return pg.slices.filter(function (x) { return x.groupId === s.groupId; });
+}
+// 표시용 라벨: 그룹이면 최소~최대 번호, 아니면 번호
+function labelOf(pg, s) {
+  var m = groupMembers(pg, s).map(function (x) { return x.num; }).sort(function (a, b) { return a - b; });
+  return m.length > 1 ? (m[0] + '~' + m[m.length - 1]) : String(s.num);
 }
 
-// 각 문항 영역을 페이지 캔버스에서 크롭 → sliceImages[번호] 로 저장(발행/수정 시 함께 저장)
+// 읽기 순서상 다음 문항과 묶기 — 다른 컬럼도 허용(왼단 끝→오른단 시작)
+function mergeWithNext(pg, s) {
+  var ro = readingOrder(pg);
+  var idx = ro.indexOf(s);
+  if (idx < 0 || idx + 1 >= ro.length) { alert('묶을 다음 문항이 없습니다.'); return; }
+  var next = ro[idx + 1];
+  var gid = s.groupId || next.groupId || ('g' + (sliceGroupSeq++));
+  var oldNext = next.groupId;
+  s.groupId = gid;
+  // next 가 이미 다른 그룹이면 그 그룹 전체를 흡수
+  pg.slices.forEach(function (x) { if (x === next || (oldNext && x.groupId === oldNext)) x.groupId = gid; });
+  renderSliceEditor();
+}
+function unmerge(pg, s) { var gid = s.groupId; if (!gid) return; pg.slices.forEach(function (x) { if (x.groupId === gid) x.groupId = null; }); renderSliceEditor(); }
+
+// 한 페이지의 문항 조각 이미지 생성(그룹은 멤버 rect 를 세로로 합성). 반환 {images, groups, missing}
+// ①의 핵심: 크롭 = 묶인 모든 문항 영역의 합집합. 단을 걸치면 왼/오 조각을 세로로 이어붙임.
+function computeSliceImagesForPage(pg, acc) {
+  var mid = pg.W / 2;
+  var seen = {};
+  readingOrder(pg).forEach(function (s) {
+    var gid = s.groupId || ('single-' + s.num);
+    if (seen[gid]) return; seen[gid] = true;
+    var members = (s.groupId ? groupMembers(pg, s) : [s]).slice().sort(function (a, b) { return (a.col - b.col) || (a.y - b.y); });
+    var nums = members.map(function (m) { return m.num; }).sort(function (a, b) { return a - b; });
+    var firstNum = nums[0];
+    var rects = members.map(function (m) {
+      var yTop = Math.round(m.y), yBottom = Math.round(sameColNextY(pg, m));
+      var x0 = pg.twoCol ? (m.col === 0 ? 0 : Math.round(mid)) : 0;
+      var x1 = pg.twoCol ? (m.col === 0 ? Math.round(mid) : pg.W) : pg.W;
+      return { x0: x0, y: yTop, w: x1 - x0, h: yBottom - yTop };
+    }).filter(function (r) { return r.w > 0 && r.h > 2; });
+    if (!rects.length) { acc.missing.push(firstNum); return; } // 빈 조각 → 저장 안 함
+    var W = Math.max.apply(null, rects.map(function (r) { return r.w; }));
+    var H = rects.reduce(function (a, r) { return a + r.h; }, 0);
+    var cc = document.createElement('canvas'); cc.width = W; cc.height = H;
+    var ctx = cc.getContext('2d'); ctx.fillStyle = '#fff'; ctx.fillRect(0, 0, W, H);
+    var yo = 0;
+    rects.forEach(function (r) { ctx.drawImage(pg.canvas, r.x0, r.y, r.w, r.h, 0, yo, r.w, r.h); yo += r.h; });
+    acc.images[firstNum] = cc.toDataURL('image/jpeg', 0.85);
+    if (nums.length > 1) acc.groups[firstNum] = nums[0] + '~' + nums[nums.length - 1];
+    acc.count++;
+  });
+}
+
 function saveSlices() {
   if (!sliceState) return;
-  var images = {}, groups = {}, count = 0;
-  sliceState.pages.forEach(function (pg) {
-    var mid = pg.W / 2;
-    [0, 1].forEach(function (col) {
-      var colSlices = pg.slices.filter(function (s) { return s.col === col; }).sort(function (a, b) { return a.y - b.y; });
-      colSlices.forEach(function (s, i) {
-        var yTop = Math.round(s.y);
-        var yBottom = (i + 1 < colSlices.length) ? Math.round(colSlices[i + 1].y) : pg.H;
-        var x0 = pg.twoCol ? (col === 0 ? 0 : Math.round(mid)) : 0;
-        var x1 = pg.twoCol ? (col === 0 ? Math.round(mid) : pg.W) : pg.W;
-        var w = x1 - x0, h = Math.max(1, yBottom - yTop);
-        if (w <= 0 || h <= 2) return;
-        var cc = document.createElement('canvas'); cc.width = w; cc.height = h;
-        cc.getContext('2d').drawImage(pg.canvas, x0, yTop, w, h, 0, 0, w, h);
-        images[s.num] = cc.toDataURL('image/jpeg', 0.8);
-        if (s.group) groups[s.num] = s.group;
-        count++;
-      });
-    });
-  });
-  sliceImages = images; sliceGroups = groups;
-  if (count > 0) enableSingleMode(); // 조각이 생겼으니 '한 문제씩' 선택 가능
-  document.getElementById('sliceStatus').textContent = '✅ ' + count + '개 문항 조각 저장됨 — [발행]/[수정 반영] 시 함께 저장됩니다. ("한 문제씩" 응시 방식 선택 가능)';
+  var acc = { images: {}, groups: {}, missing: [], count: 0 };
+  sliceState.pages.forEach(function (pg) { computeSliceImagesForPage(pg, acc); });
+  sliceImages = acc.images; sliceGroups = acc.groups;
+  if (acc.count > 0) enableSingleMode();
+  var msg = '✅ ' + acc.count + '개 문항 조각 저장됨 — [발행]/[수정 반영] 시 함께 저장됩니다.';
+  if (acc.missing.length) msg += ' ⚠ 영역이 비어 저장 못한 문항: ' + acc.missing.join(', ') + '번(경계를 조정하세요).';
+  document.getElementById('sliceStatus').textContent = msg;
   document.getElementById('sliceCard').style.display = 'none';
 }
 
