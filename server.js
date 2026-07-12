@@ -152,6 +152,21 @@ function renderPresentPage(activity) {
   .mark.ok { color: #22c55e; }
   .mark.no { color: #ef4444; }
   .empty { color: #64748b; padding: 24px; text-align: center; }
+
+  /* 교실 도우미 플로팅 패널 */
+  .helper { position: fixed; left: 16px; bottom: 16px; z-index: 60; width: 300px; }
+  .helper-toggle { width: 100%; padding: 10px 12px; font-size: 14px; font-weight: 800; border: 1px solid #475569; background: #1e293b; color: #e2e8f0; border-radius: 10px; cursor: pointer; box-shadow: 0 4px 14px rgba(0,0,0,.4); }
+  .helper-body { margin-top: 8px; background: #1e293b; border: 1px solid #334155; border-radius: 12px; padding: 12px; box-shadow: 0 8px 24px rgba(0,0,0,.5); max-height: 60vh; overflow-y: auto; }
+  .helper.collapsed .helper-body { display: none; }
+  .helper-sec { margin-bottom: 12px; }
+  .helper-lab { font-size: 12px; color: #94a3b8; font-weight: 700; margin-bottom: 6px; }
+  .helper-grid { display: flex; flex-wrap: wrap; gap: 6px; }
+  .helper-grid button { padding: 8px 10px; font-size: 13px; font-weight: 700; border: 1px solid #475569; background: #334155; color: #e2e8f0; border-radius: 8px; cursor: pointer; }
+  .helper-grid button:hover { background: #3b4a61; }
+  .helper-row { display: flex; align-items: center; gap: 6px; }
+  .helper-row input[type=text] { flex: 1; padding: 8px; font-size: 13px; border: 1px solid #475569; background: #0f172a; color: #e2e8f0; border-radius: 8px; }
+  .helper-row select, .helper-row button { padding: 7px 10px; font-size: 13px; font-weight: 700; border: 1px solid #475569; background: #334155; color: #e2e8f0; border-radius: 8px; cursor: pointer; }
+  .helper-row #customSpeak { background: #2563eb; border-color: #2563eb; }
 </style>
 </head>
 <body>
@@ -199,6 +214,42 @@ ${body}
       </div>
       <div class="panel-head" id="panelHead">응답 현황</div>
       <div class="list" id="list"></div>
+    </div>
+  </div>
+
+  <!-- 교실 도우미: 접었다 펼 수 있는 플로팅 패널(발표 방해 최소화) -->
+  <div id="helper" class="helper collapsed">
+    <button class="helper-toggle" id="helperToggle">🧑‍🏫 교실 도우미</button>
+    <div class="helper-body" id="helperBody">
+      <div class="helper-sec">
+        <div class="helper-lab">안내 음성</div>
+        <div class="helper-grid" id="presetPhrases"></div>
+      </div>
+      <div class="helper-sec">
+        <div class="helper-lab">신호음</div>
+        <div class="helper-grid">
+          <button data-sound="focus">🔔 집중 신호음</button>
+          <button data-sound="start">▶ 시작 신호음</button>
+          <button data-sound="end">⏹ 종료 신호음</button>
+        </div>
+      </div>
+      <div class="helper-sec">
+        <div class="helper-lab">직접 입력해서 읽어주기</div>
+        <div class="helper-row">
+          <input id="customPhrase" type="text" placeholder="예) 3분 뒤에 걷어요" />
+          <button id="customSpeak">🔊</button>
+        </div>
+        <div class="helper-grid" id="recentPhrases"></div>
+      </div>
+      <div class="helper-sec">
+        <div class="helper-row">
+          <span class="helper-lab" style="margin:0">속도</span>
+          <select id="helperRate"><option value="1">보통</option><option value="0.8">느리게</option></select>
+          <span class="helper-lab" style="margin:0">음량</span>
+          <input id="helperVol" type="range" min="0" max="1" step="0.1" value="1" style="flex:1" />
+          <button id="helperStopVoice">정지</button>
+        </div>
+      </div>
     </div>
   </div>
 
@@ -444,6 +495,83 @@ ${body}
       window.speechSynthesis.speak(u);
     };
     document.getElementById('ttsStop').onclick = function () { window.speechSynthesis.cancel(); };
+  })();
+
+  // ---- 교실 도우미: 안내 음성 + 신호음(Web Audio) + 커스텀 문구 ----
+  (function initHelper() {
+    var helper = document.getElementById('helper');
+    document.getElementById('helperToggle').onclick = function () { helper.classList.toggle('collapsed'); };
+
+    function say(text) {
+      if (!text || !('speechSynthesis' in window)) return;
+      window.speechSynthesis.cancel();
+      var u = new SpeechSynthesisUtterance(text);
+      u.lang = 'ko-KR';
+      u.rate = parseFloat(document.getElementById('helperRate').value) || 1;
+      u.volume = parseFloat(document.getElementById('helperVol').value);
+      window.speechSynthesis.speak(u);
+    }
+    document.getElementById('helperStopVoice').onclick = function () { window.speechSynthesis.cancel(); };
+
+    // 기본 안내 문구
+    var PRESETS = ['조용히 해주세요', '바른 자세로 앉아주세요', '선생님을 봐주세요', '정리하는 시간이에요', '집중해주세요'];
+    var pg = document.getElementById('presetPhrases');
+    PRESETS.forEach(function (p) {
+      var b = document.createElement('button');
+      b.textContent = '🔊 ' + p;
+      b.onclick = function () { say(p); };
+      pg.appendChild(b);
+    });
+
+    // 커스텀 문구 + 최근 사용(세션 내 배열, 최대 3개)
+    var recent = [];
+    var rg = document.getElementById('recentPhrases');
+    function renderRecent() {
+      rg.innerHTML = '';
+      recent.forEach(function (p) {
+        var b = document.createElement('button');
+        b.textContent = '↩ ' + p;
+        b.onclick = function () { say(p); };
+        rg.appendChild(b);
+      });
+    }
+    function speakCustom() {
+      var el = document.getElementById('customPhrase');
+      var v = (el.value || '').trim();
+      if (!v) return;
+      say(v);
+      recent = [v].concat(recent.filter(function (x) { return x !== v; })).slice(0, 3);
+      renderRecent();
+    }
+    document.getElementById('customSpeak').onclick = speakCustom;
+    document.getElementById('customPhrase').addEventListener('keydown', function (e) { if (e.key === 'Enter') speakCustom(); });
+
+    // 신호음(Web Audio API — 음성 아님)
+    var AC = window.AudioContext || window.webkitAudioContext;
+    var actx = null;
+    function tone(freq, start, dur, type) {
+      var t0 = actx.currentTime + start;
+      var osc = actx.createOscillator();
+      var g = actx.createGain();
+      osc.type = type || 'sine';
+      osc.frequency.value = freq;
+      g.gain.setValueAtTime(0.0001, t0);
+      g.gain.exponentialRampToValueAtTime(0.35, t0 + 0.02);
+      g.gain.exponentialRampToValueAtTime(0.0001, t0 + dur);
+      osc.connect(g); g.connect(actx.destination);
+      osc.start(t0); osc.stop(t0 + dur + 0.02);
+    }
+    function playSound(kind) {
+      if (!AC) return;
+      if (!actx) actx = new AC();
+      if (actx.state === 'suspended') actx.resume();
+      if (kind === 'focus') { tone(880, 0, 0.25); tone(1320, 0.22, 0.35); } // 종소리 2음
+      else if (kind === 'start') { tone(660, 0, 0.18); tone(990, 0.16, 0.3, 'triangle'); } // 상승
+      else if (kind === 'end') { tone(880, 0, 0.2); tone(587, 0.18, 0.34, 'triangle'); } // 하강
+    }
+    document.querySelectorAll('[data-sound]').forEach(function (b) {
+      b.onclick = function () { playSound(b.getAttribute('data-sound')); };
+    });
   })();
 
   fetchData();
