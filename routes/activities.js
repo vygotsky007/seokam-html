@@ -55,6 +55,8 @@ router.post('/activities', async (req, res) => {
       type: q.type || 'short',
       answer: q.type === 'essay' ? null : (q.answer ?? null),
       graded: q.graded === false ? false : true,
+      slice_image: q.slice_image ?? null,
+      group_label: q.group_label ?? null,
     }));
 
     const { error: qErr } = await supabase.from('questions').insert(rows);
@@ -305,6 +307,8 @@ router.put('/activities/:id', async (req, res) => {
       type: q.type || 'short',
       answer: q.type === 'essay' ? null : (q.answer ?? null),
       graded: q.graded === false ? false : true,
+      slice_image: q.slice_image ?? null,
+      group_label: q.group_label ?? null,
     }));
     const { error: insErr } = await supabase.from('questions').insert(rows);
     if (insErr) {
