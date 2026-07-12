@@ -47,7 +47,7 @@ router.post('/submit', async (req, res) => {
   // (A) 서버 정답표 채점 — 기존 방식 유지
   const { data: questions, error: qErr } = await supabase
     .from('questions')
-    .select('num, type, answer')
+    .select('num, type, answer, graded')
     .eq('activity_id', activityId)
     .order('num', { ascending: true });
 

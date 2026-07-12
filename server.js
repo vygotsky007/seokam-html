@@ -725,11 +725,16 @@ ${body}
     var score = data.auto_score || 0;
 
     var html = '<h2>제출 완료!</h2>';
-    html += '<p class="score">채점 결과: ' + score + ' / ' + gradable + '</p>';
+    html += '<p class="score">채점 대상 ' + gradable + '문항 중 <b>' + score + '개</b> 정답</p>';
     html += '<ul>';
     results.forEach(function (r) {
-      if (r.correct === null) {
+      if (r.type === 'essay') {
         html += '<li class="skip">' + r.num + '번 (서술형) — 선생님이 확인합니다</li>';
+      } else if (r.excluded) {
+        // 채점 제외 문항(정답 미입력/채점대상 해제)은 결과에 표시하지 않음
+        return;
+      } else if (r.correct === null) {
+        return;
       } else if (r.correct) {
         html += '<li class="ok">' + r.num + '번 — 정답 ✔</li>';
       } else {

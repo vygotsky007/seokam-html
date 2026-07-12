@@ -14,8 +14,9 @@ function normalize(v) {
   return s;
 }
 
-// questions: [{ num, type, answer }], answers: { q1:'...', q2:'...' } 또는 { '1':'...' }
-// 반환: { auto_score, gradable, results:[{ num, type, given, expected, correct|null }] }
+// questions: [{ num, type, answer, graded }], answers: { q1:'...', q2:'...' } 또는 { '1':'...' }
+// 채점 제외 규칙: 서술형(essay) / graded===false / 정답(answer) 미입력 → correct=null, gradable 에서 제외
+// 반환: { auto_score, gradable, results:[{ num, type, given, expected, correct|null, excluded }] }
 function grade(questions, answers) {
   const a = answers || {};
   const results = [];
@@ -28,14 +29,22 @@ function grade(questions, answers) {
     const given = a['q' + num] ?? a[String(num)] ?? a[num] ?? '';
 
     if (q.type === 'essay') {
-      results.push({ num, type: q.type, given, expected: null, correct: null });
+      results.push({ num, type: q.type, given, expected: null, correct: null, excluded: false });
+      continue;
+    }
+
+    // 채점 제외: 교사가 채점대상 해제(graded=false) 했거나 정답을 안 넣은 문항
+    const hasAnswer = String(q.answer == null ? '' : q.answer).trim() !== '';
+    const excluded = q.graded === false || !hasAnswer;
+    if (excluded) {
+      results.push({ num, type: q.type, given, expected: q.answer ?? '', correct: null, excluded: true });
       continue;
     }
 
     gradable += 1;
     const correct = normalize(given) !== '' && normalize(given) === normalize(q.answer);
     if (correct) auto_score += 1;
-    results.push({ num, type: q.type, given, expected: q.answer ?? '', correct });
+    results.push({ num, type: q.type, given, expected: q.answer ?? '', correct, excluded: false });
   }
 
   return { auto_score, gradable, results };

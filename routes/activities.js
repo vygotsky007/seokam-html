@@ -54,6 +54,7 @@ router.post('/activities', async (req, res) => {
       num: Number(q.num) || i + 1,
       type: q.type || 'short',
       answer: q.type === 'essay' ? null : (q.answer ?? null),
+      graded: q.graded === false ? false : true,
     }));
 
     const { error: qErr } = await supabase.from('questions').insert(rows);
@@ -84,7 +85,7 @@ router.post('/activities/:id/duplicate', async (req, res) => {
 
   const { data: srcQs, error: qErr } = await supabase
     .from('questions')
-    .select('num, type, answer')
+    .select('num, type, answer, graded')
     .eq('activity_id', id)
     .order('num', { ascending: true });
 
@@ -106,7 +107,7 @@ router.post('/activities/:id/duplicate', async (req, res) => {
 
   const list = Array.isArray(srcQs) ? srcQs : [];
   if (list.length) {
-    const rows = list.map((q) => ({ activity_id: newAct.id, num: q.num, type: q.type, answer: q.answer }));
+    const rows = list.map((q) => ({ activity_id: newAct.id, num: q.num, type: q.type, answer: q.answer, graded: q.graded === false ? false : true }));
     const { error: qInsErr } = await supabase.from('questions').insert(rows);
     if (qInsErr) {
       await supabase.from('activities').delete().eq('id', newAct.id);
@@ -148,7 +149,7 @@ router.get('/dashboard/:id', async (req, res) => {
 
   const { data: questions, error: qErr } = await supabase
     .from('questions')
-    .select('num, type, answer')
+    .select('num, type, answer, graded')
     .eq('activity_id', id)
     .order('num', { ascending: true });
   if (qErr) return res.status(500).json({ ok: false, error: qErr.message });
@@ -303,6 +304,7 @@ router.put('/activities/:id', async (req, res) => {
       num: Number(q.num) || i + 1,
       type: q.type || 'short',
       answer: q.type === 'essay' ? null : (q.answer ?? null),
+      graded: q.graded === false ? false : true,
     }));
     const { error: insErr } = await supabase.from('questions').insert(rows);
     if (insErr) {
@@ -331,7 +333,7 @@ router.get('/present/:id', async (req, res) => {
 
   const { data: questions, error: qErr } = await supabase
     .from('questions')
-    .select('num, type, answer')
+    .select('num, type, answer, graded')
     .eq('activity_id', id)
     .order('num', { ascending: true });
 

@@ -139,9 +139,10 @@
         </div>
         <div id="qtableWrap">
           <table class="qtable" id="qtable" style="display:none;">
-            <thead><tr><th class="num">번호</th><th>유형</th><th>정답</th></tr></thead>
+            <thead><tr><th class="num">번호</th><th>유형</th><th>정답</th><th style="width:56px;text-align:center;">채점</th></tr></thead>
             <tbody id="qbody"></tbody>
           </table>
+          <div class="muted" style="margin-top:6px;">💡 정답을 비워두거나 ‘채점’ 체크를 끄면 그 문항은 <b>채점에서 제외</b>됩니다. (예: 20문항 중 정답 넣은 것만 채점)</div>
         </div>
 
         <div class="row" style="margin-top:18px;">
@@ -210,7 +211,8 @@ function buildRows() {
       '<td><select class="q-type" data-num="' + i + '">' +
         '<option value="choice">객관식</option><option value="short" selected>단답</option><option value="essay">서술형</option>' +
       '</select></td>' +
-      '<td><input type="text" class="q-answer" data-num="' + i + '" placeholder="정답 (name=q' + i + ')" /></td>';
+      '<td><input type="text" class="q-answer" data-num="' + i + '" placeholder="정답 (name=q' + i + ')" /></td>' +
+      '<td style="text-align:center;"><input type="checkbox" class="q-graded" data-num="' + i + '" checked title="채점 대상" /></td>';
     body.appendChild(tr);
   }
   document.getElementById('qtable').style.display = n ? 'table' : 'none';
@@ -621,7 +623,12 @@ function collectQuestions() {
     var num = parseInt(sel.getAttribute('data-num'), 10);
     var type = sel.value;
     var ansEl = document.querySelector('.q-answer[data-num="' + num + '"]');
-    questions.push({ num: num, type: type, answer: type === 'essay' ? '' : (ansEl ? ansEl.value.trim() : '') });
+    var gEl = document.querySelector('.q-graded[data-num="' + num + '"]');
+    questions.push({
+      num: num, type: type,
+      answer: type === 'essay' ? '' : (ansEl ? ansEl.value.trim() : ''),
+      graded: gEl ? gEl.checked : true,
+    });
   });
   return questions;
 }
@@ -709,8 +716,10 @@ function enterEditMode(id) {
         qs.forEach(function (q) {
           var sel = document.querySelector('.q-type[data-num="' + q.num + '"]');
           var ans = document.querySelector('.q-answer[data-num="' + q.num + '"]');
+          var g = document.querySelector('.q-graded[data-num="' + q.num + '"]');
           if (sel) { sel.value = q.type || 'short'; syncAnswerDisabled(sel); }
           if (ans && q.type !== 'essay') ans.value = q.answer || '';
+          if (g) g.checked = q.graded !== false;
         });
       }
       document.getElementById('cancelEditBtn').style.display = 'inline-flex';
