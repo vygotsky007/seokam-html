@@ -4,6 +4,18 @@ const router = express.Router();
 const supabase = require('../db');
 const { grade } = require('../grade');
 
+// (C) html_body 답칸(name="q…") 개수와 채점 문항 수 불일치 경고
+function mismatchWarning(html_body, questions) {
+  const qCount = Array.isArray(questions) ? questions.length : 0;
+  if (qCount === 0) return null; // 자가채점 등 문항표 없음
+  const names = (String(html_body || '').match(/name="q\d+"/g) || []);
+  const answerCount = new Set(names).size; // 중복 name 방지
+  if (answerCount !== qCount) {
+    return '학생 화면 답칸(name=q) ' + answerCount + '개와 채점 문항 ' + qCount + '개가 서로 달라요. 문항 수를 맞춰 주세요.';
+  }
+  return null;
+}
+
 // 4자리 숫자 입장 코드 생성(중복 회피). 최대 20회 재시도 후 실패하면 null.
 async function genUniqueJoinCode() {
   for (let i = 0; i < 20; i++) {
@@ -69,7 +81,7 @@ router.post('/activities', async (req, res) => {
     }
   }
 
-  return res.json({ ok: true, activityId, join_code: act.join_code, status: st });
+  return res.json({ ok: true, activityId, join_code: act.join_code, status: st, warning: mismatchWarning(html_body, questions) });
 });
 
 // POST /api/activities/:id/duplicate → 활동 복제(제목+html_body+문항). 제출은 복사 안 함, 새 join_code, status='draft'.
@@ -319,7 +331,7 @@ router.put('/activities/:id', async (req, res) => {
     }
   }
 
-  return res.json({ ok: true, version: nextVersion });
+  return res.json({ ok: true, version: nextVersion, warning: mismatchWarning(html_body, questions) });
 });
 
 // GET /api/present/:id → 발표 모드 데이터

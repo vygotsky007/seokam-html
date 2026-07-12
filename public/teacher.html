@@ -142,6 +142,10 @@
 
         <label style="margin-top:14px;">붙여넣기 / 직접 편집 (학생용 HTML)</label>
         <textarea id="htmlBody" placeholder="파일을 올리거나 여기에 문제 HTML을 붙여넣으세요. 답 입력칸 name 은 q1, q2 … 규칙."></textarea>
+        <div id="answerFallback" style="display:none; align-items:center; gap:10px; margin-top:8px; padding:8px 12px; background:#fffaf0; border:1px solid #f6e05e; border-radius:8px;">
+          <span class="muted" style="color:#975a16;">답칸을 자동으로 못 찾았어요. 문항 수에 맞춰 답칸 블록을 새로 넣을까요?</span>
+          <button class="btn-gray btn-sm" id="answerRemakeBtn" type="button">답칸 다시 만들기</button>
+        </div>
 
         <label style="margin-top:14px;">채점 방식</label>
         <div class="row" style="gap:16px;">
@@ -249,6 +253,14 @@ document.getElementById('buildRows').addEventListener('click', buildRows);
 function buildRows() {
   var n = parseInt(document.getElementById('qcount').value, 10) || 0;
   var body = document.getElementById('qbody');
+  // 기존 입력값 보존(행 증감해도 유지)
+  var prev = {};
+  body.querySelectorAll('.q-type').forEach(function (sel) {
+    var num = sel.getAttribute('data-num');
+    var ans = document.querySelector('.q-answer[data-num="' + num + '"]');
+    var g = document.querySelector('.q-graded[data-num="' + num + '"]');
+    prev[num] = { type: sel.value, answer: ans ? ans.value : '', graded: g ? g.checked : true };
+  });
   body.innerHTML = '';
   for (var i = 1; i <= n; i++) {
     var tr = document.createElement('tr');
@@ -264,6 +276,14 @@ function buildRows() {
   document.getElementById('qtable').style.display = n ? 'table' : 'none';
   body.querySelectorAll('.q-type').forEach(function (sel) {
     sel.addEventListener('change', function () { syncAnswerDisabled(sel); });
+    var num = sel.getAttribute('data-num');
+    if (prev[num]) { // 값 복원
+      sel.value = prev[num].type;
+      var ans = document.querySelector('.q-answer[data-num="' + num + '"]');
+      var g = document.querySelector('.q-graded[data-num="' + num + '"]');
+      if (ans) ans.value = prev[num].answer;
+      if (g) g.checked = prev[num].graded;
+    }
     syncAnswerDisabled(sel);
   });
 }
@@ -275,6 +295,84 @@ function syncAnswerDisabled(sel) {
   else { ans.disabled = false; ans.placeholder = '정답 (name=q' + num + ')'; }
 }
 buildRows();
+
+// ================= 답칸 블록 마커 + 문항 수 동기화(A + B-1) =================
+var ANS_START = '<!--ANSWERS_START-->';
+var ANS_END = '<!--ANSWERS_END-->';
+function answerRowsHtml(n) {
+  var rows = [];
+  for (var i = 1; i <= n; i++) {
+    rows.push('<div class="q-row"><label for="q' + i + '">' + i + '번</label><input type="text" id="q' + i + '" name="q' + i + '" placeholder="' + i + '번 답" autocomplete="off" /></div>');
+  }
+  return rows.join('\n      ');
+}
+// 마커로 감싼 답칸 블록(빌더들이 공통으로 사용)
+function answerBlock(n) { return ANS_START + '\n      ' + answerRowsHtml(n) + '\n      ' + ANS_END; }
+
+// qcount 변경 시: 답칸 블록만 q1..qN 으로 재렌더 교체(문제 이미지·텍스트 보존)
+function syncAnswerCount() {
+  var n = parseInt(document.getElementById('qcount').value, 10) || 0;
+  var ta = document.getElementById('htmlBody');
+  var html = ta.value;
+  if (!html.trim()) return true; // 빈 본문은 대상 아님
+  var s = html.indexOf(ANS_START), e = html.indexOf(ANS_END);
+  if (s >= 0 && e > s) {
+    ta.value = html.slice(0, s + ANS_START.length) + '\n      ' + answerRowsHtml(n) + '\n      ' + html.slice(e);
+    hideAnswerFallback();
+    updatePreview();
+    return true;
+  }
+  // 마커 없음(기존 활동 등) → 답칸 감지해 마커 소급 삽입 후 재시도
+  if (retrofitAnswerMarkers()) return syncAnswerCount();
+  // 감지 실패 → 폴백 버튼 안내
+  showAnswerFallback();
+  return false;
+}
+
+// 기존 html_body 의 q1..qN 입력 블록을 찾아 마커를 소급 삽입
+function retrofitAnswerMarkers() {
+  var ta = document.getElementById('htmlBody');
+  try {
+    var wrap = document.createElement('div');
+    wrap.innerHTML = ta.value;
+    var qEls = Array.prototype.slice.call(wrap.querySelectorAll('input[name]'))
+      .filter(function (el) { return /^q\d+$/.test(el.getAttribute('name') || ''); });
+    if (!qEls.length) return false;
+    var rows = qEls.map(function (el) { return el.closest('.q-row') || el; });
+    var parent = rows[0].parentNode;
+    for (var i = 0; i < rows.length; i++) { if (rows[i].parentNode !== parent) return false; } // 한 블록에 모여있어야 안전
+    parent.insertBefore(document.createComment('ANSWERS_START'), rows[0]);
+    parent.insertBefore(document.createComment('ANSWERS_END'), rows[rows.length - 1].nextSibling);
+    ta.value = wrap.innerHTML;
+    return true;
+  } catch (e) { return false; }
+}
+
+function showAnswerFallback() {
+  var el = document.getElementById('answerFallback');
+  if (el) el.style.display = 'flex';
+}
+function hideAnswerFallback() {
+  var el = document.getElementById('answerFallback');
+  if (el) el.style.display = 'none';
+}
+// 폴백(B-2): 답칸을 자동으로 못 찾을 때, 마커가 붙은 답칸 블록을 본문 끝에 새로 넣기
+function remakeAnswers() {
+  var n = parseInt(document.getElementById('qcount').value, 10) || 0;
+  var ta = document.getElementById('htmlBody');
+  var block = '\n<div class="answers-block" style="margin-top:16px;padding-top:12px;border-top:2px dashed #cbd5e1;">\n' +
+    '  <h3>✏️ 답 입력</h3>\n  ' + answerBlock(n) + '\n</div>';
+  ta.value = ta.value + block;
+  hideAnswerFallback();
+  updatePreview();
+}
+
+// (A) 문항 수 입력이 바뀌면 문항표 즉시 재생성 + (B-1) 답칸 블록 동기화
+document.getElementById('qcount').addEventListener('input', function () {
+  buildRows();
+  syncAnswerCount();
+});
+document.getElementById('answerRemakeBtn').addEventListener('click', remakeAnswers);
 
 // ================= 통합 파일 입력 + 드래그앤드롭 =================
 var dz = document.getElementById('dropzone');
@@ -608,10 +706,6 @@ function reconstructParagraphs(items) {
 // 글자 모드 학생 HTML: 반응형 텍스트 + 폰트조절/TTS 표식(data-tts=on) + 답 입력칸
 function buildPdfTextHtml(paras, n) {
   var body = paras.map(function (t) { return '<p class="tts-para">' + escapeHtml(t) + '</p>'; }).join('\n    ');
-  var inputs = [];
-  for (var i = 1; i <= n; i++) {
-    inputs.push('<div class="q-row"><label for="q' + i + '">' + i + '번</label><input type="text" id="q' + i + '" name="q' + i + '" placeholder="' + i + '번 답" autocomplete="off" /></div>');
-  }
   return '' +
     '<style>\n' +
     '  .pdf-text-doc { max-width: 760px; margin: 0 auto; font-size: var(--tts-fs, 18px); line-height: 1.75; }\n' +
@@ -625,7 +719,7 @@ function buildPdfTextHtml(paras, n) {
     '<div class="pdf-text-doc" data-tts="on">\n' +
     '    <div class="pdf-note">📖 글자 모드입니다. 폰트 크기 조절과 🔊 읽어주기(TTS)를 쓸 수 있어요. 그림·표는 빠졌을 수 있으니 필요하면 그림 모드로 다시 올리세요.</div>\n    ' +
     body + '\n' +
-    '    <div class="pdf-text-answers">\n      ' + inputs.join('\n      ') + '\n    </div>\n' +
+    '    <div class="pdf-text-answers">\n      ' + answerBlock(n) + '\n    </div>\n' +
     '</div>';
 }
 
@@ -789,10 +883,6 @@ function linesToParagraphs(lines) {
 
 // 재구성 결과 학생 HTML (텍스트=실제 글자, 그림=<img>) + 폰트조절/TTS(data-tts=on) + 답칸
 function buildRichHtml(pageHtmls, n) {
-  var inputs = [];
-  for (var i = 1; i <= n; i++) {
-    inputs.push('<div class="q-row"><label for="q' + i + '">' + i + '번</label><input type="text" id="q' + i + '" name="q' + i + '" placeholder="' + i + '번 답" autocomplete="off" /></div>');
-  }
   return '' +
     '<style>\n' +
     '  .rich-doc { max-width: 820px; margin: 0 auto; font-size: var(--tts-fs, 18px); line-height: 1.7; }\n' +
@@ -809,7 +899,7 @@ function buildRichHtml(pageHtmls, n) {
     '<div class="pdf-text-doc rich-doc" data-tts="on">\n' +
     '    <div class="pdf-note">📝 HTML 재구성 결과입니다. 글자는 실제 텍스트(확대·읽어주기 가능), 그림은 이미지로 넣었습니다. 배치가 어긋나면 [그림 모드로 되돌리기]를 쓰세요.</div>\n    ' +
     pageHtmls.join('\n    ') + '\n' +
-    '    <div class="rich-answers">\n      ' + inputs.join('\n      ') + '\n    </div>\n' +
+    '    <div class="rich-answers">\n      ' + answerBlock(n) + '\n    </div>\n' +
     '</div>';
 }
 function renderAllPages(pdf, hint, fname) {
@@ -832,10 +922,6 @@ function renderAllPages(pdf, hint, fname) {
   return chain.then(function () { return tags; });
 }
 function buildPdfHtml(imgTags, n) {
-  var inputs = [];
-  for (var i = 1; i <= n; i++) {
-    inputs.push('<div class="q-row"><label for="q' + i + '">' + i + '번</label><input type="text" id="q' + i + '" name="q' + i + '" placeholder="' + i + '번 답" autocomplete="off" /></div>');
-  }
   return '' +
     '<style>\n' +
     '  .pdf-doc { display: flex; align-items: flex-start; gap: 20px; max-width: 1200px; margin: 0 auto; }\n' +
@@ -855,7 +941,7 @@ function buildPdfHtml(imgTags, n) {
     '  }\n' +
     '</style>\n' +
     '<div class="pdf-doc">\n  <div class="pdf-pages">\n    ' + imgTags.join('\n    ') + '\n  </div>\n' +
-    '  <div class="pdf-answers">\n    <h3>✏️ 답 입력</h3>\n    ' + inputs.join('\n    ') + '\n  </div>\n</div>';
+    '  <div class="pdf-answers">\n    <h3>✏️ 답 입력</h3>\n      ' + answerBlock(n) + '\n  </div>\n</div>';
 }
 
 // ================= 채점 방식 =================
@@ -920,13 +1006,15 @@ function submitActivity(status) {
     .then(function (r) { return r.json(); })
     .then(function (data) {
       if (!data.ok) throw new Error(data.error || '실패');
+      var warn = data.warning ? '\n\n⚠ ' + data.warning : '';
       if (isEdit) {
-        alert('수정 반영 완료! (version ' + data.version + ') 학생 화면은 8초 내 변경 알림을 받습니다.');
+        alert('수정 반영 완료! (version ' + data.version + ') 학생 화면은 8초 내 변경 알림을 받습니다.' + warn);
         exitEditMode();
       } else if (status === 'draft') {
-        alert('임시 저장했습니다. 아래 "보관함"에서 이어서 편집·발행하세요.');
+        alert('임시 저장했습니다. 아래 "보관함"에서 이어서 편집·발행하세요.' + warn);
         resetForm();
       } else {
+        if (warn) alert('발행했어요.' + warn);
         showPublish(data.activityId, data.join_code);
       }
       loadList();
@@ -958,6 +1046,11 @@ function enterEditMode(id) {
       editingId = id;
       document.getElementById('title').value = data.activity.title || '';
       document.getElementById('htmlBody').value = data.activity.html_body || '';
+      // 기존 활동(마커 없는 html_body): 답칸 블록 감지해 마커 소급 삽입, 실패하면 폴백 안내
+      hideAnswerFallback();
+      if (document.getElementById('htmlBody').value.trim() && document.getElementById('htmlBody').value.indexOf(ANS_START) < 0) {
+        if (!retrofitAnswerMarkers()) showAnswerFallback();
+      }
       var qs = data.questions || [];
       var mode = qs.length ? 'teacher' : 'self';
       document.querySelector('input[name="gradeMode"][value="' + mode + '"]').checked = true;
