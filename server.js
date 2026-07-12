@@ -122,7 +122,8 @@ function renderPresentPage(activity) {
   .draw-toolbar button.active { outline: 2px solid #60a5fa; outline-offset: 1px; }
   .tb-sep { width: 1px; height: 24px; background: #475569; margin: 0 2px; }
   .tb-label { font-size: 12px; color: #94a3b8; }
-  .problem-wrap { position: relative; flex: 1; overflow: auto; background: #0f172a; }
+  .problem-wrap { position: relative; flex: 1; overflow: hidden; background: #0f172a; touch-action: none; }
+  .zoom-layer { position: relative; transform-origin: 0 0; width: 100%; will-change: transform; }
   .problem-content { background: #fff; color: #111; padding: 28px; min-height: 100%; font-size: 21px; line-height: 1.6; }
   .problem-content img { max-width: 100%; height: auto; }
   #drawCanvas { position: absolute; top: 0; left: 0; z-index: 10; touch-action: none; }
@@ -190,16 +191,22 @@ function renderPresentPage(activity) {
         <span class="tb-sep"></span>
         <button id="tbEraser" title="지우개">지우개</button>
         <button id="tbClear" title="전체 지우기">전체 지우기</button>
+        <span class="tb-sep"></span>
+        <button id="zoomOut" title="축소">🔍−</button>
+        <button id="zoomReset" title="원래대로">100%</button>
+        <button id="zoomIn" title="확대">🔍+</button>
         <span class="tb-sep" id="ttsSep" style="display:none"></span>
         <button id="ttsRead" title="문제 읽어주기" style="display:none">🔊 문제 읽기</button>
         <button id="ttsStop" title="정지" style="display:none">⏹</button>
         <select id="ttsRate" title="읽기 속도" style="display:none; height:34px; border-radius:6px; background:#334155; color:#e2e8f0; border:1px solid #475569;"><option value="1">보통</option><option value="0.7">느리게</option></select>
       </div>
       <div class="problem-wrap" id="problemWrap">
-        <div class="problem-content" id="problemContent">
+        <div class="zoom-layer" id="zoomLayer">
+          <div class="problem-content" id="problemContent">
 ${body}
+          </div>
+          <canvas id="drawCanvas"></canvas>
         </div>
-        <canvas id="drawCanvas"></canvas>
       </div>
     </div>
     <div class="right">
@@ -240,6 +247,13 @@ ${body}
           <button id="customSpeak">🔊</button>
         </div>
         <div class="helper-grid" id="recentPhrases"></div>
+      </div>
+      <div class="helper-sec">
+        <div class="helper-lab">음성 선택 <span id="voiceNote" style="color:#f59e0b"></span></div>
+        <div class="helper-row">
+          <select id="helperVoice" style="flex:1"></select>
+          <button id="helperPreview">미리듣기</button>
+        </div>
       </div>
       <div class="helper-sec">
         <div class="helper-row">
@@ -409,17 +423,67 @@ ${body}
   var ctx = canvas.getContext('2d');
   var wrap = document.getElementById('problemWrap');
   var content = document.getElementById('problemContent');
+  var zoomLayer = document.getElementById('zoomLayer');
   var pen = { on: true, color: '#ef4444', size: 3, eraser: false };
   var drawing = false, last = null;
+
+  // ---- 확대/축소/패닝 (필기 캔버스와 같은 좌표계로 함께 변환) ----
+  var view = { z: 1, panX: 0, panY: 0 };
+  function applyZoom() {
+    zoomLayer.style.transform = 'translate(' + view.panX + 'px,' + view.panY + 'px) scale(' + view.z + ')';
+    var rb = document.getElementById('zoomReset'); if (rb) rb.textContent = Math.round(view.z * 100) + '%';
+  }
+  function clampPan() {
+    var sw = zoomLayer.offsetWidth * view.z, sh = zoomLayer.offsetHeight * view.z;
+    var ww = wrap.clientWidth, wh = wrap.clientHeight;
+    view.panX = Math.min(0, Math.max(view.panX, Math.min(0, ww - sw)));
+    view.panY = Math.min(0, Math.max(view.panY, Math.min(0, wh - sh)));
+  }
+  function zoomAt(newZ, clientX, clientY) {
+    var r = wrap.getBoundingClientRect();
+    var cx = clientX - r.left, cy = clientY - r.top;
+    var contentX = (cx - view.panX) / view.z, contentY = (cy - view.panY) / view.z;
+    view.z = Math.max(1, Math.min(3, newZ));
+    view.panX = cx - contentX * view.z; view.panY = cy - contentY * view.z;
+    clampPan(); applyZoom();
+  }
+  function zoomCenter(newZ) { var r = wrap.getBoundingClientRect(); zoomAt(newZ, r.left + r.width / 2, r.top + r.height / 2); }
+  document.getElementById('zoomIn').onclick = function () { zoomCenter(view.z * 1.25); };
+  document.getElementById('zoomOut').onclick = function () { zoomCenter(view.z / 1.25); };
+  document.getElementById('zoomReset').onclick = function () { view.z = 1; view.panX = 0; view.panY = 0; applyZoom(); };
+  wrap.addEventListener('wheel', function (e) {
+    if (e.ctrlKey || e.metaKey) { e.preventDefault(); zoomAt(view.z * (e.deltaY < 0 ? 1.1 : 0.9), e.clientX, e.clientY); }
+    else { e.preventDefault(); view.panX -= e.deltaX; view.panY -= e.deltaY; clampPan(); applyZoom(); } // 일반 휠 = 상하/좌우 이동
+  }, { passive: false });
+  // 펜 OFF 일 때 드래그로 패닝(펜 ON 이면 그리기 우선)
+  var panning = false, panStart = null;
+  wrap.addEventListener('pointerdown', function (e) {
+    if (pen.on) return;
+    panning = true; panStart = { x: e.clientX, y: e.clientY, px: view.panX, py: view.panY };
+  });
+  wrap.addEventListener('pointermove', function (e) {
+    if (!panning) return;
+    view.panX = panStart.px + (e.clientX - panStart.x);
+    view.panY = panStart.py + (e.clientY - panStart.y);
+    clampPan(); applyZoom();
+  });
+  function endPan() { panning = false; }
+  wrap.addEventListener('pointerup', endPan);
+  wrap.addEventListener('pointerleave', endPan);
 
   function fitCanvas() {
     var w = content.scrollWidth, h = Math.max(content.scrollHeight, wrap.clientHeight);
     canvas.width = w; canvas.height = h;
     canvas.style.width = w + 'px'; canvas.style.height = h + 'px';
     ctx.lineCap = 'round'; ctx.lineJoin = 'round';
+    clampPan(); applyZoom();
   }
   function clearCanvas() { ctx.clearRect(0, 0, canvas.width, canvas.height); }
-  function point(e) { return { x: e.offsetX, y: e.offsetY }; }
+  // 줌·패닝을 반영해 클라이언트 좌표 → 캔버스 좌표 (필기가 문제와 정확히 정렬)
+  function point(e) {
+    var r = canvas.getBoundingClientRect();
+    return { x: (e.clientX - r.left) * (canvas.width / r.width), y: (e.clientY - r.top) * (canvas.height / r.height) };
+  }
   function drawSeg(a, b) {
     ctx.globalCompositeOperation = pen.eraser ? 'destination-out' : 'source-over';
     ctx.strokeStyle = pen.color;
@@ -502,16 +566,42 @@ ${body}
     var helper = document.getElementById('helper');
     document.getElementById('helperToggle').onclick = function () { helper.classList.toggle('collapsed'); };
 
+    // 한국어 음성 목록(OS 설치분) 채우기
+    var koVoices = [];
+    function loadVoices() {
+      if (!('speechSynthesis' in window)) return;
+      koVoices = window.speechSynthesis.getVoices().filter(function (v) { return /^ko/i.test(v.lang); });
+      var sel = document.getElementById('helperVoice');
+      var note = document.getElementById('voiceNote');
+      sel.innerHTML = '';
+      if (!koVoices.length) {
+        var o = document.createElement('option'); o.value = ''; o.textContent = '(기본 음성)';
+        sel.appendChild(o);
+        note.textContent = '— 설치된 한국어 음성이 없어 기본 음성을 씁니다';
+      } else {
+        note.textContent = '';
+        koVoices.forEach(function (v, i) {
+          var o = document.createElement('option'); o.value = String(i); o.textContent = v.name;
+          sel.appendChild(o);
+        });
+      }
+    }
+    loadVoices();
+    if ('speechSynthesis' in window) window.speechSynthesis.onvoiceschanged = loadVoices;
+
     function say(text) {
       if (!text || !('speechSynthesis' in window)) return;
       window.speechSynthesis.cancel();
       var u = new SpeechSynthesisUtterance(text);
       u.lang = 'ko-KR';
+      var vi = document.getElementById('helperVoice').value;
+      if (vi !== '' && koVoices[vi]) u.voice = koVoices[vi];
       u.rate = parseFloat(document.getElementById('helperRate').value) || 1;
-      u.volume = parseFloat(document.getElementById('helperVol').value);
+      u.volume = parseFloat(document.getElementById('helperVol').value); // 기본 1.0(최대)
       window.speechSynthesis.speak(u);
     }
     document.getElementById('helperStopVoice').onclick = function () { window.speechSynthesis.cancel(); };
+    document.getElementById('helperPreview').onclick = function () { say('안녕하세요'); };
 
     // 기본 안내 문구
     var PRESETS = ['조용히 해주세요', '바른 자세로 앉아주세요', '선생님을 봐주세요', '정리하는 시간이에요', '집중해주세요'];
@@ -546,9 +636,9 @@ ${body}
     document.getElementById('customSpeak').onclick = speakCustom;
     document.getElementById('customPhrase').addEventListener('keydown', function (e) { if (e.key === 'Enter') speakCustom(); });
 
-    // 신호음(Web Audio API — 음성 아님)
+    // 신호음(Web Audio API — 음성 아님). 교실에서 들리게 크게, 컴프레서로 클리핑 방지.
     var AC = window.AudioContext || window.webkitAudioContext;
-    var actx = null;
+    var actx = null, comp = null;
     function tone(freq, start, dur, type) {
       var t0 = actx.currentTime + start;
       var osc = actx.createOscillator();
@@ -556,14 +646,14 @@ ${body}
       osc.type = type || 'sine';
       osc.frequency.value = freq;
       g.gain.setValueAtTime(0.0001, t0);
-      g.gain.exponentialRampToValueAtTime(0.35, t0 + 0.02);
+      g.gain.exponentialRampToValueAtTime(0.85, t0 + 0.02); // 크게(0.35→0.85)
       g.gain.exponentialRampToValueAtTime(0.0001, t0 + dur);
-      osc.connect(g); g.connect(actx.destination);
+      osc.connect(g); g.connect(comp);
       osc.start(t0); osc.stop(t0 + dur + 0.02);
     }
     function playSound(kind) {
       if (!AC) return;
-      if (!actx) actx = new AC();
+      if (!actx) { actx = new AC(); comp = actx.createDynamicsCompressor(); comp.connect(actx.destination); }
       if (actx.state === 'suspended') actx.resume();
       if (kind === 'focus') { tone(880, 0, 0.25); tone(1320, 0.22, 0.35); } // 종소리 2음
       else if (kind === 'start') { tone(660, 0, 0.18); tone(990, 0.16, 0.3, 'triangle'); } // 상승
