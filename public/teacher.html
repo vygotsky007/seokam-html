@@ -504,6 +504,7 @@ function runSlicing() {
                   return { x: tx[4], y: tx[5], w: (it.width || 0) * scale, h: h, str: it.str || '' };
                 }).filter(function (t) { return (t.str || '').trim(); });
                 var det = detectSlicesForPage(items, canvas.width, canvas.height);
+                console.info('[slice v2] page', pn, 'twoCol=', det.twoCol, 'mid=', Math.round(det.mid), 'starts=', det.starts.map(function (s) { return s.num; }), 'suspects=', (det.suspects || []).map(function (s) { return s.num; }));
                 pages.push({ dataUrl: canvas.toDataURL('image/jpeg', 0.85), W: canvas.width, H: canvas.height, canvas: canvas, twoCol: det.twoCol, mid: det.mid, slices: det.starts, suspects: det.suspects || [] });
               });
             });
@@ -516,9 +517,11 @@ function runSlicing() {
     sliceState = { pages: pages };
     sliceSel = [];
     var total = pages.reduce(function (a, pg) { return a + pg.slices.length; }, 0);
+    // 진단 표식: 실화면이 새 코드(단 판정)로 도는지 한눈에 — 2단이면 거터%, 아니면 1단
+    var colInfo = pages.map(function (pg) { return pg.twoCol ? ('2단 ' + Math.round(pg.mid / pg.W * 100) + '%') : '1단'; }).join(' · ');
     status.textContent = total === 0
-      ? '⚠ 문항 번호를 자동으로 못 찾았어요. 각 페이지 이미지를 더블클릭해 경계를 직접 추가하세요.'
-      : '✅ ' + total + '개 문항 인식. 박스로 영역 확인·조정 후 [이대로 저장].';
+      ? '⚠ 문항 번호를 자동으로 못 찾았어요. 각 페이지 이미지를 더블클릭해 경계를 직접 추가하세요. [단 판정: ' + colInfo + ']'
+      : '✅ ' + total + '개 문항 인식 · 단 판정: ' + colInfo + ' · 박스 조정 후 [이대로 저장]';
     renderSliceEditor();
     var card = document.getElementById('sliceCard');
     card.style.display = 'block';
