@@ -474,7 +474,7 @@ document.getElementById('revertImageBtn').addEventListener('click', function () 
 
 // ================= 문항 나누기(1단계: 자동 인식 + 교사 조정) =================
 var lastPdfBytes = null;   // 마지막 업로드 PDF 바이트
-var sliceState = null;     // { pages:[{dataUrl,W,H,canvas,twoCol,slices:[{col,y,num,group}]}] }
+var sliceState = null;     // { pages:[{dataUrl,W,H,canvas,cols:[{x0,x1}],slices:[{col,y,num,group}]}] }
 var sliceImages = {};      // { 문항번호: dataURL }
 var sliceGroups = {};      // { 문항번호: "3~4" }
 
@@ -504,7 +504,7 @@ function runSlicing() {
                   return { x: tx[4], y: tx[5], w: (it.width || 0) * scale, h: h, str: it.str || '' };
                 }).filter(function (t) { return (t.str || '').trim(); });
                 var det = detectSlicesForPage(items, canvas.width, canvas.height);
-                pages.push({ dataUrl: canvas.toDataURL('image/jpeg', 0.85), W: canvas.width, H: canvas.height, canvas: canvas, twoCol: det.twoCol, mid: det.mid, cands: det.cands, slices: [], suspects: [] });
+                pages.push({ dataUrl: canvas.toDataURL('image/jpeg', 0.85), W: canvas.width, H: canvas.height, canvas: canvas, cols: det.cols, cands: det.cands, slices: [], suspects: [] });
               });
             });
           });
@@ -515,7 +515,8 @@ function runSlicing() {
   }).then(function () {
     resolveNumbering(pages);   // 읽기 순서(페이지→단→y)로 인쇄 번호를 확정하고, 어긋나는 후보만 '의심'으로
     pages.forEach(function (pg, i) {
-      console.info('[slice v3] page', i + 1, 'twoCol=', pg.twoCol, 'mid=', Math.round(pg.mid),
+      console.info('[slice v4] page', i + 1, pg.cols.length + '단',
+        'cols=', pg.cols.map(function (c) { return Math.round(c.x0 / pg.W * 100) + '~' + Math.round(c.x1 / pg.W * 100) + '%'; }),
         'starts=', pg.slices.map(function (s) { return s.col + ':' + s.num; }),
         'suspects=', pg.suspects.map(function (s) { return s.num + '(' + s.reason + ')'; }));
     });
@@ -523,7 +524,7 @@ function runSlicing() {
     sliceSel = [];
     var total = pages.reduce(function (a, pg) { return a + pg.slices.length; }, 0);
     // 진단 표식: 실화면이 새 코드(단 판정)로 도는지 한눈에 — 2단이면 거터%, 아니면 1단
-    var colInfo = pages.map(function (pg) { return pg.twoCol ? ('2단 ' + Math.round(pg.mid / pg.W * 100) + '%') : '1단'; }).join(' · ');
+    var colInfo = pages.map(function (pg) { return pg.cols.length + '단'; }).join(' · ');
     status.textContent = total === 0
       ? '⚠ 문항 번호를 자동으로 못 찾았어요. 각 페이지 이미지를 더블클릭해 경계를 직접 추가하세요. [단 판정: ' + colInfo + ']'
       : '✅ ' + total + '개 문항 인식 · 단 판정: ' + colInfo + ' · 박스 조정 후 [이대로 저장]';
@@ -539,8 +540,7 @@ function runSlicing() {
 function detectSlicesForPage(items, W, H) {
   // 단 경계는 본문(상·하단 furniture 제외) 텍스트 x분포로 산출 → 쪽번호가 경계 추정을 흐리지 않음
   var body = items.filter(function (t) { return t.y > H * 0.05 && t.y < H * 0.95; });
-  var col = detectColumns(body.length >= 8 ? body : items, W);
-  var twoCol = col.twoCol, mid = col.mid;
+  var cols = detectColumnBounds(body.length >= 8 ? body : items, W);
   var cands = [];
   function scanCol(colItems, ci) {
     var lines = groupLinesX(colItems);
@@ -552,24 +552,24 @@ function detectSlicesForPage(items, W, H) {
       var num = parseInt(m[1], 10);
       if (num < 1 || num > 99) return;
       var lone = /^\s*\d{1,2}\s*$/.test(l.text);
-      var cx = (l.x + (l.w || 0) / 2) / W;
       var y = Math.max(0, l.y - l.h);
-      // ① 쪽번호: '페이지 최하단 + 가로 중앙 부근 + 단독 숫자' 일 때만. 본문 중간 번호는 절대 여기 안 걸림
-      if (lone && l.y >= H * 0.94 && cx > 0.30 && cx < 0.70) {
+      // ① 쪽번호: '페이지 최하단(5%) + 단독 숫자' 일 때만 의심. 본문 중간 번호는 절대 여기 안 걸림
+      // ※ 가로 2-up 시트는 쪽번호가 반쪽마다 찍혀 페이지 가로중앙이 아니므로 중앙 조건은 쓰지 않는다
+      if (lone && l.y >= H * 0.95) {
         cands.push({ col: ci, y: y, num: num, reason: 'page', drop: true });
         return;
       }
-      // ② 도표·그래프 축·<보기> 속 숫자: 본문 좌측 기준선에서 들여쓰여 있음 → 문항 번호 아님
+      // ② 도표·그래프 축·<보기> 속 숫자: 단 본문 좌측 기준선에서 들여쓰여 있음 → 문항 번호 아님
       if (l.x > margin + tol) return;
       cands.push({ col: ci, y: y, num: num, group: null });
     });
   }
-  if (twoCol) {
-    scanCol(items.filter(function (t) { return (t.x + t.w / 2) < mid; }), 0);
-    scanCol(items.filter(function (t) { return (t.x + t.w / 2) >= mid; }), 1);
-  } else {
-    scanCol(items, 0);
-  }
+  cols.forEach(function (c, ci) {
+    scanCol(items.filter(function (t) {
+      var cx = t.x + t.w / 2;
+      return cx >= c.x0 && (ci === cols.length - 1 ? true : cx < c.x1);
+    }), ci);
+  });
   cands.sort(function (a, b) { return a.col - b.col || a.y - b.y; });
   // 너무 가까운 중복 제거(같은 단 안에서만)
   var dedup = [];
@@ -578,7 +578,65 @@ function detectSlicesForPage(items, W, H) {
     if (last && last.col === s.col && !last.drop && !s.drop && Math.abs(last.y - s.y) < H * 0.02) return;
     dedup.push(s);
   });
-  return { twoCol: twoCol, mid: mid, cands: dedup };
+  return { cols: cols, cands: dedup };
+}
+
+// 단(칼럼) 경계 산출 — x 투영에서 '글자가 거의 없는 세로 띠(거터)'로 쪼갠다.
+// 2단 전제를 버리고 1~6단을 모두 지원: 가로 2-up 시험지(반쪽마다 2단 = 실제 4단)가 여기서 살아난다.
+function detectColumnBounds(items, W) {
+  var full = [{ x0: 0, x1: W }];
+  if (!items || items.length < 8) return full;
+  var BIN = Math.max(2, Math.round(W / 400));
+  var n = Math.ceil(W / BIN), occ = [];
+  for (var i = 0; i < n; i++) occ[i] = 0;
+  items.forEach(function (t) {
+    var a = Math.max(0, Math.floor(t.x / BIN));
+    var b = Math.min(n - 1, Math.floor((t.x + Math.max(1, t.w)) / BIN));
+    for (var k = a; k <= b; k++) occ[k]++;
+  });
+  var maxOcc = Math.max.apply(null, occ);
+  // 거터 판정: 글자가 '거의' 없는 띠. 반쪽 머리글·쪽번호처럼 단을 가로지르는 소수 항목은 무시
+  var thr = Math.max(3, maxOcc * 0.05);
+  // 최소 거터 폭은 글자 크기 기준(페이지 폭 비율 X) — 가로 2-up 은 폭이 2배라 %기준이면 진짜 거터를 놓친다
+  var hs = items.map(function (t) { return t.h; }).sort(function (a, b) { return a - b; });
+  var medH = hs[Math.floor(hs.length / 2)] || 10;
+  var minGut = Math.max(1, Math.round(medH * 0.85 / BIN));
+  var s = 0; while (s < n && occ[s] < thr) s++;
+  var e = n - 1; while (e >= 0 && occ[e] < thr) e--;
+  if (s >= e) return full;
+  var cuts = [], run = 0;                                 // 거터: {x:중앙, w:실제 빈 띠 폭}
+  for (var j = s; j <= e; j++) {
+    if (occ[j] < thr) { run++; continue; }
+    if (run >= minGut) cuts.push({ x: (j - run / 2) * BIN, w: run * BIN });
+    run = 0;
+  }
+  var cols = [], prev = s * BIN;
+  cuts.forEach(function (cut) { cols.push({ x0: prev, x1: cut.x }); prev = cut.x; });
+  cols.push({ x0: prev, x1: (e + 1) * BIN });
+  // 문항 번호가 본문보다 왼쪽에 튀어나온(매달림 들여쓰기) 숫자 열이 '가짜 단'으로 잘리는 일이 잦다.
+  // 버리면 그 안의 번호가 통째로 사라지므로, 좁거나 글자가 적은 단은 '더 좁은 이음매(거터)' 쪽 이웃에 병합.
+  var total = items.length;
+  function mass(col) { return items.filter(function (t) { var cx = t.x + t.w / 2; return cx >= col.x0 && cx < col.x1; }).length; }
+  for (var guard = 0; guard < 12 && cols.length > 1; guard++) {
+    var bad = -1;
+    for (var i2 = 0; i2 < cols.length; i2++) {
+      if ((cols[i2].x1 - cols[i2].x0) < W * 0.16 || mass(cols[i2]) < total * 0.08) { bad = i2; break; }
+    }
+    if (bad < 0) break;
+    var gutL = bad > 0 ? cuts[bad - 1].w : Infinity;      // 왼쪽 이음매 폭
+    var gutR = bad < cols.length - 1 ? cuts[bad].w : Infinity;
+    var into = gutR <= gutL ? bad + 1 : bad - 1;          // 좁은 이음매 = 원래 한 단이던 자리 → 그쪽과 합친다
+    cols[into] = { x0: Math.min(cols[into].x0, cols[bad].x0), x1: Math.max(cols[into].x1, cols[bad].x1) };
+    cuts.splice(gutR <= gutL ? bad : bad - 1, 1);
+    cols.splice(bad, 1);
+  }
+  if (!cols.length || cols.length > 6) return full;
+  cols[0].x0 = 0; cols[cols.length - 1].x1 = W;   // 좌우 끝 단은 페이지 가장자리까지 확장(크롭 시 잘림 방지)
+  for (var q = 0; q + 1 < cols.length; q++) {     // 인접 단 사이 빈 틈은 경계 중앙으로 맞물림
+    var midX = (cols[q].x1 + cols[q + 1].x0) / 2;
+    cols[q].x1 = midX; cols[q + 1].x0 = midX;
+  }
+  return cols;
 }
 
 // 단 본문의 좌측 기준선: 줄 시작 x 의 15퍼센타일(가장 왼쪽 소수 이상치에 흔들리지 않음)
@@ -658,18 +716,22 @@ function renderSliceEditor() {
   sliceState.pages.forEach(function (pg) {
     var div = document.createElement('div'); div.className = 'slice-page';
     var img = document.createElement('img'); img.className = 'pageimg'; img.src = pg.dataUrl; div.appendChild(img);
-    if (pg.twoCol) { var g = document.createElement('div'); g.className = 'slice-gutter'; g.style.left = midPct(pg) + '%'; div.appendChild(g); }
+    // 단 경계선(거터) — 단 수만큼
+    pgCols(pg).forEach(function (c, i) {
+      if (i === 0) return;
+      var g = document.createElement('div'); g.className = 'slice-gutter'; g.style.left = (c.x0 / pg.W * 100) + '%'; div.appendChild(g);
+    });
     // 클릭한 위치에 경계 추가(빈 곳)
     img.addEventListener('dblclick', function (e) {
       var rect = img.getBoundingClientRect();
-      var col = pg.twoCol ? ((e.clientX - rect.left) / rect.width < midPct(pg) / 100 ? 0 : 1) : 0;
+      var col = colAt(pg, (e.clientX - rect.left) / rect.width * pg.W);
       var maxNum = 0; sliceState.pages.forEach(function (p) { p.slices.forEach(function (s) { maxNum = Math.max(maxNum, s.num); }); });
       pg.slices.push({ col: col, y: ((e.clientY - rect.top) / rect.height) * pg.H, num: maxNum + 1 });
       renderSliceEditor();
     });
 
     // 각 컬럼별로 영역 박스
-    var cols = pg.twoCol ? [0, 1] : [0];
+    var cols = pgCols(pg).map(function (_, i) { return i; });
     cols.forEach(function (col) {
       var colSlices = pg.slices.filter(function (s) { return s.col === col; }).sort(function (a, b) { return a.y - b.y; });
       var firstY = colSlices.length ? colSlices[0].y : pg.H;
@@ -688,12 +750,18 @@ function renderSliceEditor() {
   document.getElementById('sliceMergeBtn').disabled = sliceSel.length < 2;
 }
 
-// 단(칼럼)의 좌우 % 범위 — 실제 산출된 거터(pg.mid) 기준. 전체 폭 띠 금지.
-function midPct(pg) { return ((pg.mid != null ? pg.mid : pg.W / 2) / pg.W) * 100; }
+// 단(칼럼) 목록 — 없으면 1단으로 간주
+function pgCols(pg) { return (pg.cols && pg.cols.length) ? pg.cols : [{ x0: 0, x1: pg.W }]; }
+// x(px) 가 속한 단 index
+function colAt(pg, x) {
+  var cs = pgCols(pg);
+  for (var i = 0; i < cs.length; i++) if (x < cs[i].x1) return i;
+  return cs.length - 1;
+}
+// 단의 좌우 % 범위 — 실제 산출된 단 경계 기준. 전체 폭 띠 금지.
 function colX(pg, col) {
-  if (!pg.twoCol) return { l: 0, r: 0 };
-  var mp = midPct(pg);
-  return col === 0 ? { l: 0, r: 100 - mp } : { l: mp, r: 0 };
+  var cs = pgCols(pg), c = cs[Math.min(col, cs.length - 1)];
+  return { l: c.x0 / pg.W * 100, r: 100 - (c.x1 / pg.W * 100) };
 }
 
 function addQBox(div, pg, s, col, yTop, yBottom, color, i, colSlices) {
@@ -767,7 +835,7 @@ function addSuspectMarker(div, pg, sus) {
   m.style.cssText = 'position:absolute;z-index:8;left:' + cx.l + '%;right:' + cx.r + '%;top:' + (sus.y / pg.H * 100) + '%;';
   var badge = document.createElement('div');
   badge.style.cssText = 'display:inline-flex;gap:6px;align-items:center;margin:2px 4px;padding:3px 8px;font-size:11px;font-weight:700;color:#744210;background:#fefcbf;border:1px dashed #d69e2e;border-radius:6px;box-shadow:0 1px 3px rgba(0,0,0,.2);';
-  badge.appendChild(document.createTextNode('❓ 의심: ' + sus.num + (sus.reason === 'order' ? ' (번호 순서 어긋남)' : ' (쪽번호일 수 있음)')));
+  badge.appendChild(document.createTextNode('❓ 의심: ' + sus.num + (sus.reason === 'order' ? ' (번호 중복·순서 어긋남)' : ' (쪽번호일 수 있음)')));
   var add = document.createElement('button');
   add.className = 'btn-blue btn-sm'; add.textContent = '문항으로 추가';
   add.addEventListener('click', function (ev) {
@@ -784,7 +852,7 @@ function addSuspectMarker(div, pg, sus) {
 function updateGapBadge() {
   var hasGap = false;
   sliceState.pages.forEach(function (pg) {
-    (pg.twoCol ? [0, 1] : [0]).forEach(function (col) {
+    pgCols(pg).forEach(function (_c, col) {
       var cs = pg.slices.filter(function (s) { return s.col === col; }).sort(function (a, b) { return a.y - b.y; });
       if (cs.length && cs[0].y > pg.H * 0.02) hasGap = true;
     });
@@ -889,10 +957,9 @@ function cropGroupGlobal(members, acc) {
   var nums = members.map(function (m) { return m.s.num; }).sort(function (a, b) { return a - b; });
   var firstNum = nums[0];
   var rects = members.map(function (m) {
-    var pg = m.pg, s = m.s, mid = (pg.mid != null ? pg.mid : pg.W / 2);
+    var pg = m.pg, s = m.s, c = pgCols(pg)[Math.min(s.col, pgCols(pg).length - 1)];
     var yTop = Math.round(s.y), yBottom = Math.round(sameColNextY(pg, s));
-    var x0 = pg.twoCol ? (s.col === 0 ? 0 : Math.round(mid)) : 0;
-    var x1 = pg.twoCol ? (s.col === 0 ? Math.round(mid) : pg.W) : pg.W;
+    var x0 = Math.round(c.x0), x1 = Math.round(c.x1);
     return { canvas: pg.canvas, x0: x0, y: yTop, w: x1 - x0, h: yBottom - yTop };
   }).filter(function (r) { return r.w > 0 && r.h > 2; });
   if (!rects.length) { acc.missing.push(firstNum); return; }
