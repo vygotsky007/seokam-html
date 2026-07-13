@@ -203,7 +203,10 @@
           <label style="margin:0; font-weight:400;"><input type="radio" name="pdfMode" value="text" /> 글자로(텍스트·TTS)</label>
           <label style="margin:0; font-weight:400;"><input type="radio" name="pdfMode" value="rich" /> HTML 재구성 ★ (글자+그림)</label>
         </div>
-        <div class="muted" id="pdfModeHint" style="margin-top:4px;">그림 모드가 가장 안전합니다. HTML 재구성은 글자는 실제 텍스트로, 그림은 &lt;img&gt;로 살려 배치합니다(2단·복잡 레이아웃은 어긋날 수 있어요).</div>
+        <div class="muted" id="pdfModeHint" style="margin-top:4px;">그림 모드는 페이지를 통째로 이미지로 넣습니다. <b>HTML 재구성</b>은 <b>문항 나누기 결과를 문항별 HTML(발문·지문·선지)로</b> 재구성하고, 변환이 안 된 문항만 조각 이미지로 넣습니다.</div>
+        <div id="richNotice" style="display:none; margin-top:6px; padding:8px 12px; background:#fffaf0; border:1px solid #f6ad55; border-radius:8px; font-size:13px; font-weight:700; color:#975a16;">
+          ⚠ HTML 재구성을 쓰려면 먼저 <b>[✂️ 문항 나누기]</b> → <b>[이대로 저장]</b> 을 실행하세요. 그래야 문항별 HTML로 재구성됩니다.
+        </div>
         <div class="row" style="margin-top:6px;">
           <button class="btn-gray btn-sm" id="revertImageBtn" style="display:none;">🖼 그림 모드로 되돌리기</button>
           <button class="btn-blue btn-sm" id="sliceBtn" style="display:none;">✂️ 문항 나누기</button>
@@ -511,6 +514,78 @@ function handleFile(file) {
 }
 
 function currentPdfMode() { var s = document.querySelector('input[name="pdfMode"]:checked'); return s ? s.value : 'image'; }
+function hasSavedSlices() { return Object.keys(sliceImages).length > 0; }
+function showRichNotice(on) { document.getElementById('richNotice').style.display = on ? 'block' : 'none'; }
+
+// 모드를 나중에 바꿔도 즉시 반영(예전에는 업로드 시점 모드만 적용돼 라디오가 먹히지 않았다)
+document.querySelectorAll('input[name="pdfMode"]').forEach(function (r) {
+  r.addEventListener('change', function () {
+    var mode = currentPdfMode();
+    if (mode === 'rich') {
+      if (!applyRichFromQuestions()) showRichNotice(true);   // 조각 없으면 안내(조용한 폴백 금지)
+      return;
+    }
+    showRichNotice(false);
+    if (mode === 'image' && pdfImageBackup) {                // 그림 모드: 기존 페이지 이미지 방식 그대로
+      document.getElementById('htmlBody').value = pdfImageBackup;
+      updatePreview();
+    }
+  });
+});
+
+// ---- HTML 재구성 = 문항별 HTML 이어붙이기 ----
+// 각 문항 = (번호 + stem/passage/choices HTML) 또는 (변환 안 된 문항 → 그 자리만 조각 이미지),
+// 그 아래 해당 문항의 답 입력칸(name=qN). 페이지 통짜 이미지 나열은 '그림으로' 모드 전용이다.
+function applyRichFromQuestions() {
+  if (!hasSavedSlices()) return false;
+  if (!Object.keys(qHtml).length) convertSlicesToHtml();     // [HTML로 변환] 과 같은 파이프라인
+  document.getElementById('htmlBody').value = buildQuestionHtmlDoc();
+  showRichNotice(false);
+  updatePreview();
+  return true;
+}
+// 편집기에서 문항을 고치거나 [이미지로 되돌리기] 하면 편집칸·미리보기에 즉시 반영
+function refreshRichIfActive() {
+  if (currentPdfMode() === 'rich' && hasSavedSlices() && Object.keys(qHtml).length) {
+    document.getElementById('htmlBody').value = buildQuestionHtmlDoc();
+    updatePreview();
+  }
+}
+
+var Q_DOC_CSS =
+  '<style>\n' +
+  '  .q-item { border: 1px solid #e2e8f0; border-radius: 12px; padding: 14px; margin: 0 0 16px; background: #fff; }\n' +
+  '  .q-num { font-weight: 800; color: #2b6cb0; margin-bottom: 8px; }\n' +
+  '  .q-item .stem { font-weight: 700; margin: 0 0 10px; }\n' +
+  '  .q-item .passage { border: 1px solid #cbd5e1; border-radius: 8px; padding: 10px 12px; background: #f7fafc; margin: 10px 0; }\n' +
+  '  .q-item ol.choices { list-style: none; padding: 0; margin: 10px 0 0; }\n' +
+  '  .q-item ol.choices li { padding: 7px 10px; border: 1px solid #e2e8f0; border-radius: 8px; margin-bottom: 6px; }\n' +
+  '  .q-item img { max-width: 100%; height: auto; border-radius: 6px; margin: 8px 0; }\n' +
+  '  .q-item img.q-slice { border: 1px solid #e2e8f0; }\n' +
+  '  .q-answer-box { margin-top: 12px; padding-top: 10px; border-top: 1px dashed #cbd5e1; }\n' +
+  '  .q-row { display: flex; align-items: center; gap: 10px; margin-bottom: 8px; }\n' +
+  '  .q-row label { flex: 0 0 66px; font-weight: 700; }\n' +
+  '  .q-row input { flex: 1; padding: 10px 12px; font-size: 16px; border: 1px solid #cbd5e1; border-radius: 8px; }\n' +
+  '</style>\n';
+
+function buildQuestionHtmlDoc() {
+  var keys = Object.keys(sliceImages).map(Number).sort(function (a, b) { return a - b; });
+  var blocks = keys.map(function (num) {
+    var group = (sliceNums[num] && sliceNums[num].length) ? sliceNums[num] : [num];
+    var label = group.length > 1 ? (group[0] + '~' + group[group.length - 1]) : String(num);
+    var rec = qHtml[num];
+    var body = (rec && !rec.useImage && rec.html)
+      ? (window.sanitizeHtml ? window.sanitizeHtml(rec.html) : rec.html)
+      : '<img class="q-slice" alt="' + label + '번 문항" src="' + sliceImages[num] + '" />';   // 변환 안 된 문항만 이미지 폴백
+    var answers = group.map(function (n) {
+      return '<div class="q-row"><label for="q' + n + '">' + n + '번 답</label>' +
+        '<input type="text" id="q' + n + '" name="q' + n + '" placeholder="' + n + '번 답" autocomplete="off" /></div>';
+    }).join('\n      ');
+    return '<section class="q-item">\n    <div class="q-num">' + label + '번</div>\n    ' + body +
+      '\n    <div class="q-answer-box">\n      ' + answers + '\n    </div>\n  </section>';
+  });
+  return Q_DOC_CSS + '<div class="q-doc">\n  ' + blocks.join('\n  ') + '\n</div>';
+}
 
 // ================= PDF → 페이지 이미지 / 글자 =================
 var pdfImageBackup = null; // 그림 모드 백업 HTML(되돌리기용)
@@ -536,11 +611,21 @@ function convertPdf(file, hint) {
             updatePreview();
           });
         }
+        // HTML 재구성 = 문항별 변환 파이프라인. 조각이 아직 없으면 임시로 페이지 이미지를 넣되,
+        // 옛 방식으로 조용히 넘어가지 않고 [문항 나누기]를 하라고 눈에 띄게 안내한다.
         if (mode === 'rich') {
-          return buildRichFromPdf(pdf, n, hint, file.name);
+          return renderAllPages(pdf, hint, file.name).then(function (imgTags) {
+            pdfImageBackup = buildPdfHtml(imgTags, n);
+            if (hasSavedSlices()) { applyRichFromQuestions(); hint.textContent = '✅ ' + file.name + ' → 문항별 HTML 재구성 완료.'; return; }
+            document.getElementById('htmlBody').value = pdfImageBackup;   // 임시 베이스(안내와 함께)
+            showRichNotice(true);
+            hint.textContent = '⚠ ' + file.name + ' 불러옴 — HTML 재구성은 [✂️ 문항 나누기] → [이대로 저장] 후에 문항별로 만들어집니다.';
+            updatePreview();
+          });
         }
         return renderAllPages(pdf, hint, file.name).then(function (imgTags) {
           document.getElementById('htmlBody').value = buildPdfHtml(imgTags, n);
+          pdfImageBackup = document.getElementById('htmlBody').value;
           hint.textContent = '✅ ' + file.name + ' → ' + imgTags.length + '페이지 이미지 + ' + n + '문항 입력칸 생성.';
           updatePreview();
         });
@@ -1590,6 +1675,15 @@ function saveSlices() {
   sliceSel = [];
   document.getElementById('sliceCard').style.display = 'none';
   document.getElementById('toHtmlBtn').style.display = acc.count ? 'inline-flex' : 'none';
+  // 문항표·답칸 수를 실제 문항 수에 맞춘다(HTML 재구성이 q1..qN 을 그대로 쓴다)
+  var all = [];
+  Object.keys(sliceNums).forEach(function (k) { all = all.concat(sliceNums[k]); });
+  if (all.length) {
+    document.getElementById('qcount').value = Math.max.apply(null, all);
+    buildRows();
+  }
+  // HTML 재구성 모드면 조각 저장 즉시 문항별 HTML 로 편집칸·미리보기를 채운다
+  if (currentPdfMode() === 'rich' && acc.count) applyRichFromQuestions();
 }
 
 // ================= 문항 HTML화 (텍스트 + 그림 하이브리드) =================
@@ -1780,12 +1874,13 @@ function renderHtmlEditor() {
       raw.placeholder = '문항 내용을 직접 입력하세요.';
       raw.addEventListener('input', function () {
         rec.html = '<div class="q"><p class="stem">' + escapeHtmlText(raw.value) + '</p></div>';
+        refreshRichIfActive();
       });
       right.appendChild(raw);
     } else {
       var prev = document.createElement('div'); prev.className = 'qprev'; prev.contentEditable = 'true';
       prev.innerHTML = rec.html;
-      prev.addEventListener('input', function () { rec.html = prev.innerHTML; });   // 클릭해서 바로 수정
+      prev.addEventListener('input', function () { rec.html = prev.innerHTML; refreshRichIfActive(); });   // 클릭해서 바로 수정
       right.appendChild(prev);
       var hint = document.createElement('div'); hint.className = 'muted';
       hint.textContent = '발문·지문·선지를 클릭해 바로 고칠 수 있어요.';
@@ -1794,6 +1889,7 @@ function renderHtmlEditor() {
     card.appendChild(right);
     wrap.appendChild(card);
   });
+  refreshRichIfActive();   // [이미지로 되돌리기] 등 편집기 변경 → 편집칸·미리보기 즉시 반영
 }
 function typeLabel(t) {
   return t === 'choice' ? '선다형' : t === 'short' ? '단답형' : t === 'essay' ? '서술형' : '변환 실패';
