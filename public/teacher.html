@@ -504,7 +504,7 @@ function runSlicing() {
                   return { x: tx[4], y: tx[5], w: (it.width || 0) * scale, h: h, str: it.str || '' };
                 }).filter(function (t) { return (t.str || '').trim(); });
                 var det = detectSlicesForPage(items, canvas.width, canvas.height);
-                pages.push({ dataUrl: canvas.toDataURL('image/jpeg', 0.85), W: canvas.width, H: canvas.height, canvas: canvas, twoCol: det.twoCol, slices: det.starts });
+                pages.push({ dataUrl: canvas.toDataURL('image/jpeg', 0.85), W: canvas.width, H: canvas.height, canvas: canvas, twoCol: det.twoCol, slices: det.starts, suspects: det.suspects || [] });
               });
             });
           });
@@ -531,9 +531,11 @@ function runSlicing() {
 function detectSlicesForPage(items, W, H) {
   var twoCol = detectTwoCol(items, W);
   var mid = W / 2;
+  var bottomLimit = H * 0.95;   // ② 하단 5% = 페이지 쪽번호 영역 → 문항 번호 후보에서 제외
   var starts = [];
   function scanCol(colItems, col) {
     groupLinesX(colItems).forEach(function (l) {
+      if (l.y >= bottomLimit) return; // 쪽번호 오탐 방지: 하단 5% 숫자는 무시
       var m = l.text.match(/^\s*(\d{1,2})\s*[.)]\s+/) || l.text.match(/^\s*(\d{1,2})\s+\S/) || l.text.match(/^\s*(\d{1,2})\s*$/);
       if (!m) return;
       var num = parseInt(m[1], 10);
@@ -549,9 +551,17 @@ function detectSlicesForPage(items, W, H) {
   }
   starts.sort(function (a, b) { return a.col - b.col || a.y - b.y; });
   // 너무 가까운 중복 제거
-  var out = [];
-  starts.forEach(function (s) { var last = out[out.length - 1]; if (last && last.col === s.col && Math.abs(last.y - s.y) < H * 0.02) return; out.push(s); });
-  return { twoCol: twoCol, starts: out };
+  var dedup = [];
+  starts.forEach(function (s) { var last = dedup[dedup.length - 1]; if (last && last.col === s.col && Math.abs(last.y - s.y) < H * 0.02) return; dedup.push(s); });
+  // ② 번호가 직전보다 크게 역행(예: 8 다음 1)하면 자동 경계 생성 금지 → '의심'으로만 표시
+  var out = [], suspects = [], maxByCol = {};
+  dedup.forEach(function (s) {
+    var mx = maxByCol[s.col] || 0;
+    if (mx && s.num <= mx - 2) { suspects.push({ col: s.col, y: s.y, num: s.num }); return; }
+    maxByCol[s.col] = Math.max(mx, s.num);
+    out.push(s);
+  });
+  return { twoCol: twoCol, starts: out, suspects: suspects };
 }
 
 // 줄 단위로 묶으며 최소 x 를 함께 반환(컬럼 판정용)
@@ -578,7 +588,13 @@ function colorFor(idx) { return QCOLORS[idx % QCOLORS.length]; }
 function renderSliceEditor() {
   var wrap = document.getElementById('slicePages');
   wrap.innerHTML = '';
-  var colorIdx = 0;
+  // ① 색은 그룹 단위로 배정 — 같은 groupId 는 페이지를 넘어도 같은 색
+  var groupColor = {}, ci = 0;
+  allPageSlices().forEach(function (m) {
+    var gid = m.s.groupId;
+    if (gid) { if (!(gid in groupColor)) groupColor[gid] = colorFor(ci++); m.s.__color = groupColor[gid]; }
+    else { m.s.__color = colorFor(ci++); }
+  });
   sliceState.pages.forEach(function (pg) {
     var div = document.createElement('div'); div.className = 'slice-page';
     var img = document.createElement('img'); img.className = 'pageimg'; img.src = pg.dataUrl; div.appendChild(img);
@@ -601,9 +617,11 @@ function renderSliceEditor() {
       if (firstY > pg.H * 0.02) addGapBox(div, pg, col, 0, firstY, colSlices[0]);
       colSlices.forEach(function (s, i) {
         var yBottom = (i + 1 < colSlices.length) ? colSlices[i + 1].y : pg.H;
-        addQBox(div, pg, s, col, s.y, yBottom, colorFor(colorIdx++), i, colSlices);
+        addQBox(div, pg, s, col, s.y, yBottom, s.__color, i, colSlices);
       });
     });
+    // ② 역행/쪽번호 의심 후보 — 경계는 만들지 않고 '의심' 표시만
+    (pg.suspects || []).forEach(function (sus) { addSuspectMarker(div, pg, sus); });
     wrap.appendChild(div);
   });
   updateGapBadge();
@@ -619,7 +637,7 @@ function addQBox(div, pg, s, col, yTop, yBottom, color, i, colSlices) {
   box.style.left = cx.l + '%'; box.style.right = cx.r + '%';
   box.style.top = (yTop / pg.H * 100) + '%'; box.style.height = ((yBottom - yTop) / pg.H * 100) + '%';
   box.style.borderColor = color; box.style.background = hexA(color, 0.12);
-  var label = document.createElement('div'); label.className = 'qbox-label'; label.style.background = color; label.textContent = labelOf(pg, s) + '번';
+  var label = document.createElement('div'); label.className = 'qbox-label'; label.style.background = color; label.textContent = labelOf(s) + '번' + (isCrossPage(s) ? ' · 페이지 걸침' : '');
   box.appendChild(label);
   var del = document.createElement('div'); del.className = 'qbox-del badge'; del.textContent = '삭제';
   del.addEventListener('click', function (ev) { ev.stopPropagation(); var k = pg.slices.indexOf(s); if (k >= 0) pg.slices.splice(k, 1); sliceSel = sliceSel.filter(function (x) { return x !== s; }); renderSliceEditor(); });
@@ -664,6 +682,27 @@ function addGapBox(div, pg, col, yTop, yBottom, belowSlice) {
   div.appendChild(box);
 }
 
+// ② 의심 후보(쪽번호·번호 역행) 표시 — 자동 경계는 안 만들고, 교사가 원하면 [문항으로 추가]
+function addSuspectMarker(div, pg, sus) {
+  var cx = colX(pg, sus.col);
+  var m = document.createElement('div');
+  m.style.cssText = 'position:absolute;z-index:8;left:' + cx.l + '%;right:' + cx.r + '%;top:' + (sus.y / pg.H * 100) + '%;';
+  var badge = document.createElement('div');
+  badge.style.cssText = 'display:inline-flex;gap:6px;align-items:center;margin:2px 4px;padding:3px 8px;font-size:11px;font-weight:700;color:#744210;background:#fefcbf;border:1px dashed #d69e2e;border-radius:6px;box-shadow:0 1px 3px rgba(0,0,0,.2);';
+  badge.appendChild(document.createTextNode('❓ 의심: ' + sus.num + ' (쪽번호일 수 있음)'));
+  var add = document.createElement('button');
+  add.className = 'btn-blue btn-sm'; add.textContent = '문항으로 추가';
+  add.addEventListener('click', function (ev) {
+    ev.stopPropagation();
+    pg.slices.push({ col: sus.col, y: sus.y, num: sus.num });
+    pg.suspects = (pg.suspects || []).filter(function (x) { return x !== sus; });
+    renderSliceEditor();
+  });
+  badge.appendChild(add);
+  m.appendChild(badge);
+  div.appendChild(m);
+}
+
 function updateGapBadge() {
   var hasGap = false;
   sliceState.pages.forEach(function (pg) {
@@ -678,10 +717,15 @@ function updateGapBadge() {
 // 선택 묶기 버튼
 document.getElementById('sliceMergeBtn').addEventListener('click', function () {
   if (sliceSel.length < 2) return;
-  var pg = sliceState.pages.find(function (p) { return sliceSel.every(function (s) { return p.slices.indexOf(s) >= 0; }); });
-  if (!pg) { alert('같은 페이지의 문항끼리만 묶을 수 있어요.'); return; }
-  var gid = 'g' + (sliceGroupSeq++);
-  sliceSel.forEach(function (s) { s.groupId = gid; });
+  // ① 페이지를 걸친 선택도 허용 — 기존 그룹이 있으면 흡수, 없으면 새 그룹 생성
+  var gid = null;
+  sliceSel.forEach(function (s) { if (s.groupId) gid = s.groupId; });
+  if (!gid) gid = 'g' + (sliceGroupSeq++);
+  var absorb = {};
+  sliceSel.forEach(function (s) { if (s.groupId && s.groupId !== gid) absorb[s.groupId] = true; });
+  allPageSlices().forEach(function (m) {
+    if (sliceSel.indexOf(m.s) >= 0 || (m.s.groupId && absorb[m.s.groupId])) m.s.groupId = gid;
+  });
   sliceSel = [];
   renderSliceEditor();
 });
@@ -689,18 +733,17 @@ document.getElementById('sliceMergeBtn').addEventListener('click', function () {
 // 현재 문항이 잘려 나올 조각 미리보기
 function showSlicePreview(pg, s) {
   var acc = { images: {}, groups: {}, missing: [], count: 0 };
-  // 이 문항(그룹)만 임시로 크롭
-  var members = (s.groupId ? groupMembers(pg, s) : [s]);
-  var tmp = { W: pg.W, H: pg.H, twoCol: pg.twoCol, canvas: pg.canvas, slices: pg.slices };
-  cropOneGroup(tmp, members, acc);
+  // 이 문항(그룹)만 임시로 크롭 — 페이지를 걸친 묶음도 전역 멤버로 합성
+  var members = groupMembersGlobal(s);
+  cropGroupGlobal(members, acc);
   var body = document.getElementById('slicePreviewBody');
-  var nums = members.map(function (m) { return m.num; }).sort(function (a, b) { return a - b; });
+  var nums = members.map(function (m) { return m.s.num; }).sort(function (a, b) { return a - b; });
   var firstNum = nums[0];
-  var label = nums.length > 1 ? (nums[0] + '~' + nums[nums.length - 1]) : String(firstNum);
+  var label = (nums.length > 1 ? (nums[0] + '~' + nums[nums.length - 1]) : String(firstNum)) + '번' + (isCrossPage(s) ? ' · 페이지 걸침' : '');
   if (acc.images[firstNum]) {
-    body.innerHTML = '<div style="padding:8px 10px;font-weight:700;">' + label + '번 조각</div><img src="' + acc.images[firstNum] + '" />';
+    body.innerHTML = '<div style="padding:8px 10px;font-weight:700;">' + label + ' 조각</div><img src="' + acc.images[firstNum] + '" />';
   } else {
-    body.innerHTML = '<div style="padding:12px;color:#c53030;">' + label + '번: 영역이 비어 조각을 만들 수 없어요(경계를 조정하세요).</div>';
+    body.innerHTML = '<div style="padding:12px;color:#c53030;">' + label + ': 영역이 비어 조각을 만들 수 없어요(경계를 조정하세요).</div>';
   }
 }
 
@@ -712,6 +755,23 @@ function hexA(hex, a) {
 // ---- 묶음(그룹) 모델: 각 slice 는 자기 컬럼의 [y..다음경계] 영역을 가지며, 같은 groupId 끼리 한 조각으로 합성 ----
 var sliceGroupSeq = 1;
 function readingOrder(pg) { return pg.slices.slice().sort(function (a, b) { return (a.col - b.col) || (a.y - b.y); }); }
+// ① 전역(페이지 걸침) 그룹 모델: 모든 페이지의 slice 를 {pg, pi, s} 로 펼침
+function allPageSlices() {
+  var out = [];
+  sliceState.pages.forEach(function (pg, pi) { pg.slices.forEach(function (s) { out.push({ pg: pg, pi: pi, s: s }); }); });
+  return out;
+}
+// s 와 같은 groupId 를 가진 멤버들(페이지 무관). 그룹이 없으면 자기 자신만.
+function groupMembersGlobal(s) {
+  var all = allPageSlices();
+  if (!s.groupId) return all.filter(function (m) { return m.s === s; });
+  return all.filter(function (m) { return m.s.groupId === s.groupId; });
+}
+// 이 묶음이 두 페이지 이상에 걸쳐 있는가
+function isCrossPage(s) {
+  var pis = groupMembersGlobal(s).map(function (m) { return m.pi; });
+  return pis.length > 1 && Math.min.apply(null, pis) !== Math.max.apply(null, pis);
+}
 // 같은 컬럼에서 s 다음 경계 y (없으면 페이지 끝)
 function sameColNextY(pg, s) {
   var after = pg.slices.filter(function (x) { return x.col === s.col && x.y > s.y; }).sort(function (a, b) { return a.y - b.y; });
@@ -722,9 +782,9 @@ function groupMembers(pg, s) {
   if (!s.groupId) return [s];
   return pg.slices.filter(function (x) { return x.groupId === s.groupId; });
 }
-// 표시용 라벨: 그룹이면 최소~최대 번호, 아니면 번호
-function labelOf(pg, s) {
-  var m = groupMembers(pg, s).map(function (x) { return x.num; }).sort(function (a, b) { return a - b; });
+// 표시용 라벨: 그룹이면 최소~최대 번호(페이지 무관), 아니면 번호
+function labelOf(s) {
+  var m = groupMembersGlobal(s).map(function (x) { return x.s.num; }).sort(function (a, b) { return a - b; });
   return m.length > 1 ? (m[0] + '~' + m[m.length - 1]) : String(s.num);
 }
 
@@ -743,19 +803,19 @@ function mergeWithNext(pg, s) {
 }
 function unmerge(pg, s) { var gid = s.groupId; if (!gid) return; pg.slices.forEach(function (x) { if (x.groupId === gid) x.groupId = null; }); renderSliceEditor(); }
 
-// 한 페이지의 문항 조각 이미지 생성(그룹은 멤버 rect 를 세로로 합성). 반환 {images, groups, missing}
-// ①의 핵심: 크롭 = 묶인 모든 문항 영역의 합집합. 단을 걸치면 왼/오 조각을 세로로 이어붙임.
-// 한 그룹(멤버 slice 배열)의 rect 들을 세로 합성 → acc.images[firstNum]
-function cropOneGroup(pg, members, acc) {
-  var mid = pg.W / 2;
-  members = members.slice().sort(function (a, b) { return (a.col - b.col) || (a.y - b.y); });
-  var nums = members.map(function (m) { return m.num; }).sort(function (a, b) { return a - b; });
+// 문항 조각 이미지 생성(그룹은 멤버 rect 를 세로로 합성). 반환 {images, groups, missing}
+// ①의 핵심: 크롭 = 묶인 모든 문항 영역의 합집합. 단·페이지를 걸치면 각 조각을 세로로 이어붙임.
+// members = groupMembersGlobal(s) 형태의 [{pg, pi, s}] 배열
+function cropGroupGlobal(members, acc) {
+  members = members.slice().sort(function (a, b) { return (a.pi - b.pi) || (a.s.col - b.s.col) || (a.s.y - b.s.y); });
+  var nums = members.map(function (m) { return m.s.num; }).sort(function (a, b) { return a - b; });
   var firstNum = nums[0];
   var rects = members.map(function (m) {
-    var yTop = Math.round(m.y), yBottom = Math.round(sameColNextY(pg, m));
-    var x0 = pg.twoCol ? (m.col === 0 ? 0 : Math.round(mid)) : 0;
-    var x1 = pg.twoCol ? (m.col === 0 ? Math.round(mid) : pg.W) : pg.W;
-    return { x0: x0, y: yTop, w: x1 - x0, h: yBottom - yTop };
+    var pg = m.pg, s = m.s, mid = pg.W / 2;
+    var yTop = Math.round(s.y), yBottom = Math.round(sameColNextY(pg, s));
+    var x0 = pg.twoCol ? (s.col === 0 ? 0 : Math.round(mid)) : 0;
+    var x1 = pg.twoCol ? (s.col === 0 ? Math.round(mid) : pg.W) : pg.W;
+    return { canvas: pg.canvas, x0: x0, y: yTop, w: x1 - x0, h: yBottom - yTop };
   }).filter(function (r) { return r.w > 0 && r.h > 2; });
   if (!rects.length) { acc.missing.push(firstNum); return; }
   var W = Math.max.apply(null, rects.map(function (r) { return r.w; }));
@@ -763,25 +823,27 @@ function cropOneGroup(pg, members, acc) {
   var cc = document.createElement('canvas'); cc.width = W; cc.height = H;
   var ctx = cc.getContext('2d'); ctx.fillStyle = '#fff'; ctx.fillRect(0, 0, W, H);
   var yo = 0;
-  rects.forEach(function (r) { ctx.drawImage(pg.canvas, r.x0, r.y, r.w, r.h, 0, yo, r.w, r.h); yo += r.h; });
+  rects.forEach(function (r) { ctx.drawImage(r.canvas, r.x0, r.y, r.w, r.h, 0, yo, r.w, r.h); yo += r.h; });
   acc.images[firstNum] = cc.toDataURL('image/jpeg', 0.85);
-  if (nums.length > 1) acc.groups[firstNum] = nums[0] + '~' + nums[nums.length - 1];
+  var crossPage = members.length > 1 && members[0].pi !== members[members.length - 1].pi;
+  if (nums.length > 1) acc.groups[firstNum] = nums[0] + '~' + nums[nums.length - 1] + (crossPage ? ' · 페이지 걸침' : '');
   acc.count++;
 }
 
-function computeSliceImagesForPage(pg, acc) {
+// 전체 페이지를 통틀어 그룹 단위로 1회씩 크롭(페이지 걸친 그룹도 한 번만)
+function computeAllSliceImages(acc) {
   var seen = {};
-  readingOrder(pg).forEach(function (s) {
-    var gid = s.groupId || ('single-' + s.num);
+  allPageSlices().forEach(function (m) {
+    var gid = m.s.groupId || ('single-' + m.pi + '-' + m.s.col + '-' + m.s.num);
     if (seen[gid]) return; seen[gid] = true;
-    cropOneGroup(pg, (s.groupId ? groupMembers(pg, s) : [s]), acc);
+    cropGroupGlobal(m.s.groupId ? groupMembersGlobal(m.s) : [m], acc);
   });
 }
 
 function saveSlices() {
   if (!sliceState) return;
   var acc = { images: {}, groups: {}, missing: [], count: 0 };
-  sliceState.pages.forEach(function (pg) { computeSliceImagesForPage(pg, acc); });
+  computeAllSliceImages(acc);
   sliceImages = acc.images; sliceGroups = acc.groups;
   if (acc.count > 0) enableSingleMode();
   var msg = '✅ ' + acc.count + '개 문항 조각 저장됨 — [발행]/[수정 반영] 시 함께 저장됩니다.';
