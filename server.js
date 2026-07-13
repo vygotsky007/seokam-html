@@ -1012,7 +1012,11 @@ function renderStudentSinglePage(activity, questions) {
   .fontbar button.on { background: #2b6cb0; color: #fff; border-color: #2b6cb0; }
   .qhtml { line-height: 1.6; }
   .qhtml .stem { font-weight: 700; margin: 0 0 10px; }
-  .qhtml .passage { border: 1px solid #cbd5e1; border-radius: 8px; padding: 10px 12px; background: #f7fafc; margin: 10px 0; }
+  .qhtml .passage { border: 1px solid #cbd5e1; border-radius: 8px; padding: 10px 12px; background: #f7fafc; margin: 10px 0; position: sticky; top: 0; max-height: 45vh; overflow-y: auto; }
+  .qhtml .passage.folded { display: none; }
+  .psg-toggle { display: inline-block; margin: 2px 0 0; padding: 4px 10px; font-size: 12px; font-weight: 700; color: #4a5568; background: #fff; border: 1px solid #cbd5e1; border-radius: 6px; cursor: pointer; }
+  .qhtml .subq { border-top: 1px dashed #e2e8f0; margin-top: 14px; padding-top: 10px; }
+  .qhtml .subnum { font-weight: 800; color: #2b6cb0; margin-bottom: 6px; }
   .qhtml ol.choices { list-style: none; padding: 0; margin: 10px 0 0; }
   .qhtml ol.choices li { padding: 7px 10px; border: 1px solid #e2e8f0; border-radius: 8px; margin-bottom: 6px; background: #fff; }
   .qhtml img { width: auto; max-width: 100%; margin: 8px 0; }
@@ -1157,6 +1161,20 @@ function renderStudentSinglePage(activity, questions) {
     el.querySelectorAll('.fontbar button').forEach(function (b) {
       b.addEventListener('click', function () { setFont(b.getAttribute('data-f')); });
     });
+    // 묶음 문항의 공통 지문: 폰에서 길면 스크롤 부담이 크니 접을 수 있게 한다
+    var psg = el.querySelector('.qhtml .passage');
+    if (psg) {
+      var t = document.createElement('button');
+      t.className = 'psg-toggle';
+      var folded = false;
+      t.textContent = '지문 접기 ▲';
+      t.onclick = function () {
+        folded = !folded;
+        psg.classList.toggle('folded', folded);
+        t.textContent = folded ? '지문 펼치기 ▼' : '지문 접기 ▲';
+      };
+      psg.parentNode.insertBefore(t, psg);
+    }
     // 나중에 다시 버튼 상태(현재 슬라이드 첫 문항 기준)
     var laterOn = curNums.some(function (n) { return later[n]; });
     document.getElementById('laterBtn').classList.toggle('on', laterOn);
