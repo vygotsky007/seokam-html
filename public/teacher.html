@@ -504,7 +504,7 @@ function runSlicing() {
                   return { x: tx[4], y: tx[5], w: (it.width || 0) * scale, h: h, str: it.str || '' };
                 }).filter(function (t) { return (t.str || '').trim(); });
                 var det = detectSlicesForPage(items, canvas.width, canvas.height);
-                pages.push({ dataUrl: canvas.toDataURL('image/jpeg', 0.85), W: canvas.width, H: canvas.height, canvas: canvas, twoCol: det.twoCol, slices: det.starts, suspects: det.suspects || [] });
+                pages.push({ dataUrl: canvas.toDataURL('image/jpeg', 0.85), W: canvas.width, H: canvas.height, canvas: canvas, twoCol: det.twoCol, mid: det.mid, slices: det.starts, suspects: det.suspects || [] });
               });
             });
           });
@@ -529,9 +529,11 @@ function runSlicing() {
 // 문항 번호 패턴("1" "1." "1)")의 y 를 찾아 경계 후보 생성 (순수 함수)
 // ※ 2단이면 컬럼별로 나눈 뒤 줄을 묶어야 좌/우 같은 y 줄이 섞이지 않는다.
 function detectSlicesForPage(items, W, H) {
-  var twoCol = detectTwoCol(items, W);
-  var mid = W / 2;
   var bottomLimit = H * 0.95;   // ② 하단 5% = 페이지 쪽번호 영역 → 문항 번호 후보에서 제외
+  // 단 경계는 본문(상·하단 furniture 제외) 텍스트 x분포로 산출 → 쪽번호가 경계 추정을 흐리지 않음
+  var body = items.filter(function (t) { return t.y > H * 0.05 && t.y < bottomLimit; });
+  var col = detectColumns(body.length >= 8 ? body : items, W);
+  var twoCol = col.twoCol, mid = col.mid;
   var starts = [];
   function scanCol(colItems, col) {
     groupLinesX(colItems).forEach(function (l) {
@@ -561,7 +563,7 @@ function detectSlicesForPage(items, W, H) {
     maxByCol[s.col] = Math.max(mx, s.num);
     out.push(s);
   });
-  return { twoCol: twoCol, starts: out, suspects: suspects };
+  return { twoCol: twoCol, mid: mid, starts: out, suspects: suspects };
 }
 
 // 줄 단위로 묶으며 최소 x 를 함께 반환(컬럼 판정용)
@@ -598,11 +600,11 @@ function renderSliceEditor() {
   sliceState.pages.forEach(function (pg) {
     var div = document.createElement('div'); div.className = 'slice-page';
     var img = document.createElement('img'); img.className = 'pageimg'; img.src = pg.dataUrl; div.appendChild(img);
-    if (pg.twoCol) { var g = document.createElement('div'); g.className = 'slice-gutter'; div.appendChild(g); }
+    if (pg.twoCol) { var g = document.createElement('div'); g.className = 'slice-gutter'; g.style.left = midPct(pg) + '%'; div.appendChild(g); }
     // 클릭한 위치에 경계 추가(빈 곳)
     img.addEventListener('dblclick', function (e) {
       var rect = img.getBoundingClientRect();
-      var col = pg.twoCol ? ((e.clientX - rect.left) / rect.width < 0.5 ? 0 : 1) : 0;
+      var col = pg.twoCol ? ((e.clientX - rect.left) / rect.width < midPct(pg) / 100 ? 0 : 1) : 0;
       var maxNum = 0; sliceState.pages.forEach(function (p) { p.slices.forEach(function (s) { maxNum = Math.max(maxNum, s.num); }); });
       pg.slices.push({ col: col, y: ((e.clientY - rect.top) / rect.height) * pg.H, num: maxNum + 1 });
       renderSliceEditor();
@@ -628,7 +630,13 @@ function renderSliceEditor() {
   document.getElementById('sliceMergeBtn').disabled = sliceSel.length < 2;
 }
 
-function colX(pg, col) { return pg.twoCol ? (col === 0 ? { l: 0, r: 50 } : { l: 50, r: 0 }) : { l: 0, r: 0 }; }
+// 단(칼럼)의 좌우 % 범위 — 실제 산출된 거터(pg.mid) 기준. 전체 폭 띠 금지.
+function midPct(pg) { return ((pg.mid != null ? pg.mid : pg.W / 2) / pg.W) * 100; }
+function colX(pg, col) {
+  if (!pg.twoCol) return { l: 0, r: 0 };
+  var mp = midPct(pg);
+  return col === 0 ? { l: 0, r: 100 - mp } : { l: mp, r: 0 };
+}
 
 function addQBox(div, pg, s, col, yTop, yBottom, color, i, colSlices) {
   var cx = colX(pg, col);
@@ -811,7 +819,7 @@ function cropGroupGlobal(members, acc) {
   var nums = members.map(function (m) { return m.s.num; }).sort(function (a, b) { return a - b; });
   var firstNum = nums[0];
   var rects = members.map(function (m) {
-    var pg = m.pg, s = m.s, mid = pg.W / 2;
+    var pg = m.pg, s = m.s, mid = (pg.mid != null ? pg.mid : pg.W / 2);
     var yTop = Math.round(s.y), yBottom = Math.round(sameColNextY(pg, s));
     var x0 = pg.twoCol ? (s.col === 0 ? 0 : Math.round(mid)) : 0;
     var x1 = pg.twoCol ? (s.col === 0 ? Math.round(mid) : pg.W) : pg.W;
@@ -1027,16 +1035,27 @@ function orderPageElements(textItems, images, W) {
   return out.join('\n');
 }
 
-// 두 단 레이아웃 감지: 중앙 거터를 사이에 두고 좌·우 양쪽에 텍스트가 충분한가
-function detectTwoCol(textItems, W) {
-  if (!textItems || textItems.length < 8) return false;
-  var mid = W / 2, left = 0, right = 0, cross = 0;
-  textItems.forEach(function (t) {
-    if (t.x + t.w <= mid * 1.02) left++;
-    else if (t.x >= mid * 0.98) right++;
-    else cross++;
-  });
-  return left >= 4 && right >= 4 && cross <= (left + right) * 0.18;
+// 두 단 레이아웃 감지 + 단 경계(거터) x좌표 산출.
+// 중앙부(0.40~0.60W)를 훑어 '실제로 글자를 가로지르는' 후보선이 가장 적은 위치를 거터로 본다.
+// → 중앙선이 W/2 에 고정되지 않고 실제 빈 띠를 따라가므로 좌우 비대칭·머리글에도 견고.
+function detectColumns(textItems, W) {
+  if (!textItems || textItems.length < 8) return { twoCol: false, mid: W / 2 };
+  var best = null;
+  for (var c = W * 0.40; c <= W * 0.60; c += W * 0.01) {
+    var crossing = 0, left = 0, right = 0, leftMaxX1 = 0, rightMinX0 = W;
+    textItems.forEach(function (t) {
+      var x0 = t.x, x1 = t.x + t.w, cx = x0 + t.w / 2;
+      if (x0 < c && x1 > c) { crossing++; return; }      // 이 선을 실제로 관통하는 글자
+      if (cx <= c) { left++; if (x1 > leftMaxX1) leftMaxX1 = x1; }
+      else { right++; if (x0 < rightMinX0) rightMinX0 = x0; }
+    });
+    if (!best || crossing < best.crossing) best = { c: c, crossing: crossing, left: left, right: right, leftMaxX1: leftMaxX1, rightMinX0: rightMinX0 };
+  }
+  var total = textItems.length;
+  var twoCol = best.left >= total * 0.25 && best.right >= total * 0.25 && best.crossing <= total * 0.12;
+  // 거터는 실제 좌단 오른끝과 우단 왼끝 사이 빈 띠의 중앙으로 보정(대칭 아닌 편집본 대비)
+  var mid = (twoCol && best.rightMinX0 > best.leftMaxX1) ? (best.leftMaxX1 + best.rightMinX0) / 2 : best.c;
+  return { twoCol: twoCol, mid: mid };
 }
 
 // 같은 y 의 조각을 한 줄로 묶고, x 근접도로 글자 조각(HWP 쪼개짐)을 합침
