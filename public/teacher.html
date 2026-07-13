@@ -93,11 +93,36 @@
   .slice-page img.pageimg { display: block; width: 100%; }
   .slice-gutter { position: absolute; top: 0; bottom: 0; left: 50%; border-left: 2px dashed #90cdf4; z-index: 3; pointer-events: none; }
   /* 문항 영역 박스 */
-  .qbox { position: absolute; box-sizing: border-box; border: 2px solid; border-radius: 4px; z-index: 5; cursor: pointer; overflow: hidden; }
-  .qbox.selected { outline: 3px solid #2b6cb0; outline-offset: -1px; }
-  .qbox-label { position: absolute; top: 2px; left: 2px; font-size: 12px; font-weight: 800; color: #fff; padding: 1px 7px; border-radius: 5px; z-index: 6; white-space: nowrap; }
+  .qbox { position: absolute; box-sizing: border-box; border: 2px solid; border-radius: 4px; z-index: 5; cursor: pointer; }
+  .qbox.selected { outline: 3px solid #2b6cb0; outline-offset: -1px; z-index: 9; }
+  .qbox.outcol { border-style: dashed; border-width: 3px; }
+  /* 번호 라벨: 시험지에 인쇄된 원래 번호를 가리지 않게 박스 바깥 위로 뺀다 */
+  .qbox-label { position: absolute; font-size: 12px; font-weight: 800; color: #fff; padding: 1px 7px; border-radius: 5px; z-index: 6; white-space: nowrap; cursor: text; box-shadow: 0 1px 3px rgba(0,0,0,.25); }
+  .qbox-label.above { left: -2px; top: -17px; }
+  .qbox-label.inright { right: 2px; top: 2px; }
+  .qbox-warn { position: absolute; left: 2px; bottom: 2px; font-size: 10px; font-weight: 800; color: #975a16; background: #fefcbf; border: 1px dashed #d69e2e; border-radius: 4px; padding: 0 5px; z-index: 6; }
   .qbox-handle { position: absolute; left: 0; right: 0; bottom: -1px; height: 12px; cursor: ns-resize; z-index: 7; display: flex; align-items: center; justify-content: center; color: #fff; font-size: 11px; background: rgba(0,0,0,.35); }
-  .qbox-del { position: absolute; top: 2px; right: 2px; font-size: 10px; padding: 1px 5px; z-index: 7; background: var(--red); border-radius: 4px; }
+  .qbox-del { position: absolute; top: 2px; right: 2px; font-size: 10px; padding: 1px 5px; z-index: 8; background: var(--red); border-radius: 4px; color: #fff; }
+  .qbox-del.unmerge { right: 44px; background: #4a5568; }
+  /* 8방향 리사이즈 핸들(선택된 박스에만) */
+  .rz { position: absolute; z-index: 9; background: #2b6cb0; border: 1px solid #fff; border-radius: 2px; width: 10px; height: 10px; }
+  .rz-n { top: -5px; left: 50%; margin-left: -5px; cursor: ns-resize; }
+  .rz-s { bottom: -5px; left: 50%; margin-left: -5px; cursor: ns-resize; }
+  .rz-e { right: -5px; top: 50%; margin-top: -5px; cursor: ew-resize; }
+  .rz-w { left: -5px; top: 50%; margin-top: -5px; cursor: ew-resize; }
+  .rz-ne { right: -5px; top: -5px; cursor: nesw-resize; }
+  .rz-nw { left: -5px; top: -5px; cursor: nwse-resize; }
+  .rz-se { right: -5px; bottom: -5px; cursor: nwse-resize; }
+  .rz-sw { left: -5px; bottom: -5px; cursor: nesw-resize; }
+  /* 의심 후보: 세로 공간을 차지하지 않는 작은 회색 점선 — 호버해야 [문항으로 추가] 가 나온다 */
+  .suspect { position: absolute; z-index: 8; display: flex; align-items: center; gap: 4px; }
+  .suspect-dot { font-size: 10px; font-weight: 700; color: #718096; background: rgba(255,255,255,.85); border: 1px dashed #a0aec0; border-radius: 4px; padding: 0 4px; line-height: 15px; }
+  .suspect-add { display: none; font-size: 10px; padding: 1px 6px; border-radius: 4px; background: var(--blue); color: #fff; }
+  .suspect:hover .suspect-add { display: inline-flex; }
+  /* 조용히 제외한 쪽번호 요약 */
+  .dropsum { font-size: 12.5px; color: var(--gray); background: #f7fafc; border: 1px solid var(--line); border-radius: 8px; padding: 6px 10px; }
+  .dropsum summary { cursor: pointer; font-weight: 700; }
+  .dropsum .droplist { margin-top: 6px; font-size: 12px; color: var(--ink); }
   .gapbox { position: absolute; box-sizing: border-box; border: 2px dashed #e53e3e; background: rgba(229,62,62,.08); z-index: 4; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 4px; }
   .gapbox .gaplbl { font-size: 11px; font-weight: 800; color: #c53030; background: #fff; padding: 1px 6px; border-radius: 4px; }
   .gapbox button { font-size: 10px; padding: 2px 6px; border-radius: 4px; }
@@ -242,6 +267,7 @@
         <button class="btn-gray btn-sm" id="sliceCloseBtn">닫기</button>
       </div>
     </div>
+    <div id="sliceDropInfo" style="display:none; margin:8px 0;"></div>
     <div class="muted" id="sliceHelp" style="margin:8px 0;">각 문항이 색 박스로 표시됩니다(번호는 <b>시험지에 인쇄된 번호</b> 그대로, 순서는 왼단 위→아래 → 오른단 위→아래). 번호가 잘못 읽혔으면 <b>번호 라벨을 클릭</b>해 고치세요. 박스 <b>아래 손잡이(⇕)</b>를 끌어 끝(=다음 문항 시작)을 조절하고, 박스를 <b>클릭</b>해 여러 개 선택 후 [선택 묶기]로 공통 지문 문항을 합치세요(<b>페이지·단을 걸친 묶기는 [읽기 순서] 뷰</b>에서 나란히 놓고 하면 쉽습니다). 선택 해제는 <b>Esc</b>, 실수는 <b>Ctrl+Z</b>로 되돌립니다. 빨간 점선은 <b>빈 영역</b>입니다.</div>
     <div class="slice-editor">
       <div id="slicePages" class="slice-pages"></div>
@@ -557,6 +583,7 @@ function runSlicing() {
       ? '⚠ 문항 번호를 자동으로 못 찾았어요. 각 페이지 이미지를 더블클릭해 경계를 직접 추가하세요. [단 판정: ' + colInfo + ']'
       : '✅ ' + total + '개 문항 인식 · 단 판정: ' + colInfo + ' · 박스 조정 후 [이대로 저장]'
         + (bad.length ? ' ⚠ 인쇄 번호가 읽기 순서와 어긋남: ' + bad.join(', ') + '번 — 라벨을 클릭해 수정하세요.' : '');
+    renderDropSummary(pages);   // 조용히 제외한 쪽번호는 상단 한 줄 요약으로만
     renderSliceEditor();
     var card = document.getElementById('sliceCard');
     card.style.display = 'block';
@@ -581,27 +608,32 @@ function detectSlicesForPage(items, W, H) {
     //    본문 문항 번호는 단의 좌측 기준선에 붙어 있어(중앙 아님) 여기 절대 안 걸린다.
     //    ※ 기준선 계산보다 먼저 해야 한다 — 가운데 찍힌 쪽번호가 '번호줄 최좌단'을 왼쪽으로 끌어내리면
     //      정작 진짜 문항 번호가 '들여쓴 숫자'로 오판돼 통째로 사라진다.
-    var numbered = [];
+    var numLines = [];
     lines.forEach(function (l, li) {
       var num = matchQNum(l.text);
-      if (num == null) return;
-      var y = Math.max(0, l.y - l.h);
-      if (isPageNumberLine(l, li, lines, cols, W, H, medH)) {
-        cands.push({ col: ci, y: y, x: l.x, num: num, reason: 'page', drop: true });
-        return;
-      }
-      numbered.push({ l: l, li: li, num: num, y: y });
+      if (num != null) numLines.push({ l: l, li: li, num: num });
     });
-    if (!numbered.length) return;
+    if (!numLines.length) return;
     // 좌측 기준선: 본문 15퍼센타일과 '문항 번호줄 최좌단' 중 오른쪽.
     // 표·그림이 본문보다 왼쪽에서 시작하면 본문 기준선이 왼쪽으로 끌려가 진짜 문항이 탈락하므로,
-    // 번호줄 자신의 최좌단을 하한으로 함께 쓴다.
-    var margin = Math.max(leftMarginOf(lines), Math.min.apply(null, numbered.map(function (o) { return o.l.x; })));
+    // 번호줄 자신의 최좌단을 하한으로 함께 쓴다. 최하단 띠(쪽번호는 가운데 찍힘)는 기준선 계산에서 제외.
+    var body = numLines.filter(function (o) { return o.l.y < H * 0.95; });
+    var anchorX = Math.min.apply(null, (body.length ? body : numLines).map(function (o) { return o.l.x; }));
+    var margin = Math.max(leftMarginOf(lines), anchorX);
     var tol = Math.max(12, W * 0.02);        // 기준선 허용 오차(들여쓰기 없는 번호만 통과)
-    numbered.forEach(function (o) {
-      // ② 도표·그래프 축·<보기> 속 숫자: 단 좌측 기준선에서 들여쓰여 있음 → 문항 번호 아님
-      if (o.l.x > margin + tol) return;
-      cands.push({ col: ci, y: o.y, x: o.l.x, num: o.num, group: null });
+    var prevNum = null;                      // ④ '같은 단의 직전 문항 번호보다 작음' 판정용
+    numLines.forEach(function (o) {
+      var l = o.l, y = Math.max(0, l.y - l.h);
+      // 단 좌측 기준선에 붙은 번호만 진짜 문항 번호 후보(들여쓴 <보기>·도표 숫자는 prevNum 도 오염시키면 안 된다)
+      var anchored = l.x <= margin + tol;
+      var f = pageNumberFlags(l, o.li, lines, cols, W, H, medH, prevNum);
+      // 4조건 모두 → 확정 쪽번호: 화면에 아무 표시 없이 조용히 제외(상단에 개수만 요약)
+      if (f.score >= 4) { cands.push({ col: ci, y: y, x: l.x, num: o.num, reason: 'page', drop: true, silent: true }); return; }
+      // 3개만 → 애매: 작은 점선 표시로만 알리고 교사가 원하면 [문항으로 추가]
+      if (f.score === 3) { cands.push({ col: ci, y: y, x: l.x, num: o.num, reason: 'page-maybe', drop: true }); return; }
+      if (!anchored) return;                 // 도표·그래프 축·<보기> 속 숫자 → 문항 번호 아님
+      cands.push({ col: ci, y: y, x: l.x, num: o.num, group: null });
+      prevNum = o.num;
     });
   }
   cols.forEach(function (c, ci) { scanCol(colItemsOf(items, cols, ci), ci); });
@@ -697,23 +729,32 @@ function medianOf(arr) {
   return a[Math.floor(a.length / 2)];
 }
 
-// 쪽번호 = 페이지 최하단(≥94%) + 가로 중앙 부근 + 고립(아래에 본문 없음·위와 한 줄 이상 떨어짐)된 단독 숫자.
-// 셋 다 만족해야만 제외 → 본문 중간의 진짜 문항 번호(단 좌측에 붙어 있음)는 절대 걸리지 않는다.
-// ※ 가로 2-up(4단) 시트는 반쪽마다 쪽번호가 찍히므로 '반쪽 가운데(W/4·3W/4)'도 중앙으로 인정한다.
-function isPageNumberLine(l, li, lines, cols, W, H, medH) {
-  if (!/^\s*\d{1,3}\s*[.)]?\s*$/.test(l.text)) return false;   // 단독 숫자만
-  if (l.y < H * 0.94) return false;                    // 최하단 띠
-  for (var i = li + 1; i < lines.length; i++) {        // 같은 단에서 아래에 본문이 더 있으면 쪽번호 아님
-    if (lines[i].y > l.y + 1) return false;
-  }
-  for (var j = li - 1; j >= 0; j--) {                  // 바로 윗줄과 붙어 있으면(본문 일부) 쪽번호 아님
-    if (lines[j].y < l.y - 1) { if ((l.y - lines[j].y) < medH * 1.5) return false; break; }
-  }
+// 쪽번호 판정 4조건 — 모두 충족하면 '확정 쪽번호'(조용히 제외), 3개면 '애매'(작은 점선 표시).
+//   ① 페이지 세로 하단 5% 이내
+//   ② 가로 중앙 부근(가로 2-up 시트는 반쪽 가운데 W/4·3W/4 도 중앙으로 인정)
+//   ③ 주변에 다른 텍스트가 없는 고립된 1~3자리 숫자(아래에 본문 없음 + 윗줄과 한 줄 이상 떨어짐)
+//   ④ 같은 단의 직전 문항 번호보다 작음(쪽번호는 1,2,3… 으로 되돌아간다)
+// 본문 중간의 진짜 문항 번호는 ①②③④ 어느 것도 만족하지 않아 절대 걸리지 않는다.
+function pageNumberFlags(l, li, lines, cols, W, H, medH, prevNum) {
+  var lone = /^\s*\d{1,3}\s*[.)]?\s*$/.test(l.text);
+  if (!lone) return { score: 0 };                       // 숫자 뒤에 본문이 붙으면 애초에 쪽번호가 아니다
+  var bottom = l.y >= H * 0.95;                         // ①
   var cx = l.x + (l.w || 0) / 2;
   var centers = [W / 2];
   if (cols.length >= 3) centers.push(W / 4, W * 3 / 4);
-  var tol = W * 0.08;
-  return centers.some(function (c) { return Math.abs(cx - c) <= tol; });
+  var center = centers.some(function (c) { return Math.abs(cx - c) <= W * 0.08; });   // ②
+  var isolated = true;                                  // ③
+  for (var i = li + 1; i < lines.length; i++) if (lines[i].y > l.y + 1) { isolated = false; break; }
+  if (isolated) {
+    for (var j = li - 1; j >= 0; j--) {
+      if (lines[j].y < l.y - 1) { if ((l.y - lines[j].y) < medH * 1.5) isolated = false; break; }
+    }
+  }
+  var backward = prevNum != null && parseInt(l.text, 10) < prevNum;                    // ④
+  return {
+    score: (bottom ? 1 : 0) + (center ? 1 : 0) + (isolated ? 1 : 0) + (backward ? 1 : 0),
+    bottom: bottom, center: center, isolated: isolated, backward: backward
+  };
 }
 
 // 단(칼럼) 경계 산출 — x 투영에서 '글자가 거의 없는 세로 띠(거터)'로 쪼갠다.
@@ -787,10 +828,12 @@ function leftMarginOf(lines) {
 // 한 단 안에서 위→아래로 오름차순인 최장 체인만 경계로 채택하고, 빠진 후보는 '의심' 표시만 한다.
 function resolveNumbering(pages) {
   pages.forEach(function (pg) {
-    pg.slices = []; pg.suspects = [];
+    pg.slices = []; pg.suspects = []; pg.dropped = [];
     var byCol = {};
     (pg.cands || []).forEach(function (c) {
-      if (c.drop) { pg.suspects.push({ col: c.col, y: c.y, num: c.num, reason: 'page' }); return; }
+      // 확정 쪽번호는 화면에 표시하지 않고 조용히 제외(상단 요약에만 개수로 집계)
+      if (c.silent) { pg.dropped.push({ col: c.col, y: c.y, num: c.num, reason: 'page' }); return; }
+      if (c.drop) { pg.suspects.push({ col: c.col, y: c.y, num: c.num, reason: c.reason || 'page-maybe' }); return; }
       (byCol[c.col] = byCol[c.col] || []).push(c);
     });
     Object.keys(byCol).forEach(function (k) {
@@ -874,7 +917,9 @@ var undoStack = [], redoStack = [], UNDO_MAX = 20;
 function snapshotSlices() {
   return sliceState.pages.map(function (pg) {
     return {
-      slices: pg.slices.map(function (s) { return { col: s.col, y: s.y, num: s.num, groupId: s.groupId || null }; }),
+      slices: pg.slices.map(function (s) {
+        return { col: s.col, y: s.y, num: s.num, groupId: s.groupId || null, x0: s.x0, x1: s.x1, yEnd: s.yEnd };
+      }),
       suspects: (pg.suspects || []).map(function (s) { return { col: s.col, y: s.y, num: s.num, reason: s.reason }; })
     };
   });
@@ -882,7 +927,9 @@ function snapshotSlices() {
 function applySnapshot(snap) {
   sliceState.pages.forEach(function (pg, i) {
     var s = snap[i] || { slices: [], suspects: [] };
-    pg.slices = s.slices.map(function (x) { return { col: x.col, y: x.y, num: x.num, groupId: x.groupId }; });
+    pg.slices = s.slices.map(function (x) {
+      return { col: x.col, y: x.y, num: x.num, groupId: x.groupId, x0: x.x0, x1: x.x1, yEnd: x.yEnd };
+    });
     pg.suspects = s.suspects.map(function (x) { return { col: x.col, y: x.y, num: x.num, reason: x.reason }; });
   });
   sliceSel = [];   // 복원하면 slice 객체가 새로 만들어지므로 선택은 비운다
@@ -1158,30 +1205,49 @@ function colX(pg, col) {
   return { l: c.x0 / pg.W * 100, r: 100 - (c.x1 / pg.W * 100) };
 }
 
+var MIN_W = 40, MIN_H = 20;   // 최소 박스 크기(페이지 px)
+var RESIZE_DIRS = ['n', 's', 'e', 'w', 'ne', 'nw', 'se', 'sw'];
+
 function addQBox(div, pg, s, col, yTop, yBottom, color, i, colSlices) {
-  var cx = colX(pg, col);
-  var box = document.createElement('div'); box.className = 'qbox' + (sliceSel.indexOf(s) >= 0 ? ' selected' : '');
+  var r = sliceRect(pg, s);
+  var selected = sliceSel.indexOf(s) >= 0;
+  var box = document.createElement('div');
+  box.className = 'qbox' + (selected ? ' selected' : '') + (outOfColumn(pg, s) ? ' outcol' : '');
   box.setAttribute('data-num', s.num);
-  box.style.left = cx.l + '%'; box.style.right = cx.r + '%';
-  box.style.top = (yTop / pg.H * 100) + '%'; box.style.height = ((yBottom - yTop) / pg.H * 100) + '%';
+  box.style.left = (r.x0 / pg.W * 100) + '%';
+  box.style.width = ((r.x1 - r.x0) / pg.W * 100) + '%';
+  box.style.top = (r.y0 / pg.H * 100) + '%';
+  box.style.height = ((r.y1 - r.y0) / pg.H * 100) + '%';
   box.style.borderColor = color; box.style.background = hexA(color, 0.12);
-  var label = document.createElement('div'); label.className = 'qbox-label'; label.style.background = color; label.textContent = labelOf(s) + '번' + (isCrossPage(s) ? ' · 페이지 걸침' : '');
+
+  // 번호 라벨: 인쇄된 원래 번호(박스 좌상단)를 가리지 않게 박스 '바깥 위'로 뺀다.
+  // 페이지 맨 위라 바깥 위에 자리가 없으면 오른쪽 위 안쪽으로 붙인다.
+  var above = r.y0 > pg.H * 0.03;
+  var label = document.createElement('div');
+  label.className = 'qbox-label' + (above ? ' above' : ' inright');
+  label.style.background = color;
+  label.textContent = labelOf(s) + '번' + (isCrossPage(s) ? ' · 페이지 걸침' : '');
   label.title = '클릭해서 번호 수정';
-  label.style.cursor = 'text';
-  // 인쇄 번호가 잘못 읽혔을 때 교사가 라벨을 눌러 직접 고친다
   label.addEventListener('click', function (ev) { ev.stopPropagation(); editSliceNum(s); });
   box.appendChild(label);
+
   var del = document.createElement('div'); del.className = 'qbox-del badge'; del.textContent = '삭제';
+  if (!above) del.style.top = '22px';
   del.addEventListener('click', function (ev) { ev.stopPropagation(); deleteSlices([s]); });
   box.appendChild(del);
   // 묶음이면 해제 버튼 — 잘못 묶었을 때 개별 문항으로 되돌린다(읽기 순서 뷰와 동일)
   if (s.groupId) {
     var un = document.createElement('div');
-    un.className = 'qbox-del badge'; un.textContent = '✕ 해제';
-    un.style.cssText += 'right:44px; background:#4a5568;';
+    un.className = 'qbox-del badge unmerge'; un.textContent = '✕ 해제';
+    if (!above) un.style.top = '22px';
     un.title = '묶기 해제';
     un.addEventListener('click', function (ev) { ev.stopPropagation(); unmergeGlobal(s); });
     box.appendChild(un);
+  }
+  if (outOfColumn(pg, s)) {
+    var warn = document.createElement('div'); warn.className = 'qbox-warn';
+    warn.textContent = '↔ 단을 벗어남';
+    box.appendChild(warn);
   }
   // 클릭 = 선택 토글 + 미리보기
   box.addEventListener('click', function (ev) {
@@ -1190,24 +1256,63 @@ function addQBox(div, pg, s, col, yTop, yBottom, color, i, colSlices) {
     showSlicePreview(pg, s);
     renderSliceEditor();
   });
-  // 하단 손잡이: 드래그로 다음 문항 시작(=이 문항 끝) 조절
-  var next = (i + 1 < colSlices.length) ? colSlices[i + 1] : null;
-  var handle = document.createElement('div'); handle.className = 'qbox-handle'; handle.textContent = '⇕';
-  handle.addEventListener('pointerdown', function (e) {
-    e.preventDefault(); e.stopPropagation();
-    pushUndo();   // 드래그 1회 = 되돌리기 1단계
-    var rect = div.getBoundingClientRect();
-    function mv(ev) {
-      var y = Math.max(0, Math.min(pg.H, ((ev.clientY - rect.top) / rect.height) * pg.H));
-      if (next) { next.y = Math.max(s.y + 4, y); } // 다음 문항 시작 이동(경계 연동)
-      else { /* 마지막 문항: 끝=페이지 하단 고정 */ }
-      renderSliceEditor(); showSlicePreview(pg, s);
-    }
-    function up() { document.removeEventListener('pointermove', mv); document.removeEventListener('pointerup', up); }
-    document.addEventListener('pointermove', mv); document.addEventListener('pointerup', up);
-  });
-  box.appendChild(handle);
+  // 선택된 박스에만 8방향 리사이즈 핸들(네 변 + 네 모서리)
+  if (selected) {
+    RESIZE_DIRS.forEach(function (dir) {
+      var h = document.createElement('div');
+      h.className = 'rz rz-' + dir;
+      h.setAttribute('data-dir', dir);
+      h.addEventListener('pointerdown', function (e) { startResize(e, div, pg, s, dir); });
+      box.appendChild(h);
+    });
+  } else {
+    // 선택 전에도 아랫변은 바로 끌 수 있게 기존 ⇕ 손잡이 유지
+    var handle = document.createElement('div'); handle.className = 'qbox-handle'; handle.textContent = '⇕';
+    handle.addEventListener('pointerdown', function (e) { startResize(e, div, pg, s, 's'); });
+    box.appendChild(handle);
+  }
   div.appendChild(box);
+}
+
+// 8방향 리사이즈 — 아랫변은 다음 문항 시작점과, 윗변은 이전 문항 끝점과 연동(겹침·빈틈 방지).
+// 좌우는 단 경계를 넘어도 허용(그림이 단 폭을 넘는 문항). Shift 드래그 = 비율 유지.
+function startResize(e, pageDiv, pg, s, dir) {
+  e.preventDefault(); e.stopPropagation();
+  pushUndo();   // 드래그 1회 = 되돌리기 1단계
+  var start = sliceRect(pg, s);
+  var prev = sameColPrev(pg, s), next = sameColNext(pg, s);
+  var pageRect = pageDiv.getBoundingClientRect();
+  var ratio = (start.x1 - start.x0) / Math.max(1, start.y1 - start.y0);
+  var sx = e.clientX, sy = e.clientY;
+
+  function mv(ev) {
+    var dx = (ev.clientX - sx) / pageRect.width * pg.W;
+    var dy = (ev.clientY - sy) / pageRect.height * pg.H;
+    var x0 = start.x0, x1 = start.x1, y0 = start.y0, y1 = start.y1;
+    if (dir.indexOf('w') >= 0) x0 = Math.min(Math.max(0, start.x0 + dx), start.x1 - MIN_W);
+    if (dir.indexOf('e') >= 0) x1 = Math.max(Math.min(pg.W, start.x1 + dx), start.x0 + MIN_W);
+    if (dir.indexOf('n') >= 0) {
+      var topLimit = prev ? prev.y + MIN_H : 0;                    // 이전 문항이 최소 높이는 유지
+      y0 = Math.min(Math.max(topLimit, start.y0 + dy), start.y1 - MIN_H);
+    }
+    if (dir.indexOf('s') >= 0) {
+      var botLimit = next ? sameColNextY(pg, next) - MIN_H : pg.H; // 다음 문항이 최소 높이는 유지
+      y1 = Math.max(Math.min(botLimit, start.y1 + dy), start.y0 + MIN_H);
+    }
+    if (ev.shiftKey && dir.length === 2) {                          // 모서리 + Shift = 비율 유지
+      var w = x1 - x0, h = w / Math.max(0.01, ratio);
+      if (dir.indexOf('n') >= 0) y0 = Math.min(y1 - MIN_H, y1 - h); else y1 = Math.max(y0 + MIN_H, y0 + h);
+    }
+    if (s.x0 != null || x0 !== start.x0 || x1 !== start.x1) { s.x0 = x0; s.x1 = x1; }
+    if (y0 !== start.y0) { s.y = y0; }                              // 윗변 → 이전 문항 끝이 따라온다
+    if (y1 !== start.y1) {
+      if (next) next.y = y1;                                        // 아랫변 → 다음 문항 시작이 따라온다
+      else s.yEnd = y1;
+    }
+    renderSliceEditor(); showSlicePreview(pg, s);
+  }
+  function up() { document.removeEventListener('pointermove', mv); document.removeEventListener('pointerup', up); }
+  document.addEventListener('pointermove', mv); document.addEventListener('pointerup', up);
 }
 
 function addGapBox(div, pg, col, yTop, yBottom, belowSlice) {
@@ -1224,16 +1329,33 @@ function addGapBox(div, pg, col, yTop, yBottom, belowSlice) {
   div.appendChild(box);
 }
 
-// ② 의심 후보(쪽번호·번호 역행) 표시 — 자동 경계는 안 만들고, 교사가 원하면 [문항으로 추가]
+// 확정 쪽번호(조용히 제외)는 상단에 개수만 — 펼치면 목록
+function renderDropSummary(pages) {
+  var box = document.getElementById('sliceDropInfo');
+  var all = [];
+  pages.forEach(function (pg, pi) {
+    (pg.dropped || []).forEach(function (d) { all.push({ pi: pi, num: d.num }); });
+  });
+  if (!all.length) { box.style.display = 'none'; box.innerHTML = ''; return; }
+  box.style.display = 'block';
+  box.innerHTML = '<details class="dropsum"><summary>🗑 쪽번호 ' + all.length + '개 제외됨</summary><div class="droplist">'
+    + all.map(function (d) { return (d.pi + 1) + '페이지 하단 “' + d.num + '”'; }).join(' · ') + '</div></details>';
+}
+
+// 의심 후보(애매한 쪽번호·번호 역행) — 세로 공간을 차지하지 않는 작은 회색 점선 표시.
+// 호버할 때만 [문항으로 추가] 링크가 나온다(확정 쪽번호는 아예 표시하지 않는다).
 function addSuspectMarker(div, pg, sus) {
   var cx = colX(pg, sus.col);
   var m = document.createElement('div');
-  m.style.cssText = 'position:absolute;z-index:8;left:' + cx.l + '%;right:' + cx.r + '%;top:' + (sus.y / pg.H * 100) + '%;';
-  var badge = document.createElement('div');
-  badge.style.cssText = 'display:inline-flex;gap:6px;align-items:center;margin:2px 4px;padding:3px 8px;font-size:11px;font-weight:700;color:#744210;background:#fefcbf;border:1px dashed #d69e2e;border-radius:6px;box-shadow:0 1px 3px rgba(0,0,0,.2);';
-  badge.appendChild(document.createTextNode('❓ 의심: ' + sus.num + (sus.reason === 'order' ? ' (번호 중복·순서 어긋남)' : ' (쪽번호일 수 있음)')));
+  m.className = 'suspect';
+  m.style.cssText = 'left:' + cx.l + '%; top:' + (sus.y / pg.H * 100) + '%;';
+  m.title = sus.reason === 'order'
+    ? sus.num + '번: 같은 단에서 번호가 되돌아감(중복·순서 어긋남)'
+    : sus.num + '번: 쪽번호일 수 있음';
+  var dot = document.createElement('span'); dot.className = 'suspect-dot'; dot.textContent = '❓' + sus.num;
+  m.appendChild(dot);
   var add = document.createElement('button');
-  add.className = 'btn-blue btn-sm'; add.textContent = '문항으로 추가';
+  add.className = 'suspect-add'; add.textContent = '문항으로 추가';
   add.addEventListener('click', function (ev) {
     ev.stopPropagation();
     pushUndo();
@@ -1241,8 +1363,7 @@ function addSuspectMarker(div, pg, sus) {
     pg.suspects = (pg.suspects || []).filter(function (x) { return x !== sus; });
     renderSliceEditor();
   });
-  badge.appendChild(add);
-  m.appendChild(badge);
+  m.appendChild(add);
   div.appendChild(m);
 }
 
@@ -1316,10 +1437,38 @@ function isCrossPage(s) {
   var pis = groupMembersGlobal(s).map(function (m) { return m.pi; });
   return pis.length > 1 && Math.min.apply(null, pis) !== Math.max.apply(null, pis);
 }
-// 같은 컬럼에서 s 다음 경계 y (없으면 페이지 끝)
-function sameColNextY(pg, s) {
+// 같은 컬럼에서 s 바로 다음 문항(없으면 null) / 다음 경계 y(없으면 페이지 끝)
+function sameColNext(pg, s) {
   var after = pg.slices.filter(function (x) { return x.col === s.col && x.y > s.y; }).sort(function (a, b) { return a.y - b.y; });
-  return after.length ? after[0].y : pg.H;
+  return after.length ? after[0] : null;
+}
+function sameColPrev(pg, s) {
+  var before = pg.slices.filter(function (x) { return x.col === s.col && x.y < s.y; }).sort(function (a, b) { return b.y - a.y; });
+  return before.length ? before[0] : null;
+}
+function sameColNextY(pg, s) {
+  var n = sameColNext(pg, s);
+  return n ? n.y : pg.H;
+}
+
+// 문항 박스의 실제 사각형(페이지 px). 교사가 8방향 핸들로 늘린 좌표(x0·x1·yEnd)를 그대로 쓰고,
+// 없으면 단 경계와 다음 문항 시작점에서 유도한다. 크롭·썸네일·미리보기가 모두 이 함수를 쓴다.
+// ※ 아래에 다음 문항이 있으면 끝 = 다음 문항 시작(연동) → 겹침·빈틈이 생기지 않는다.
+function sliceRect(pg, s) {
+  var cs = pgCols(pg), c = cs[Math.min(s.col, cs.length - 1)];
+  var next = sameColNext(pg, s);
+  return {
+    x0: (s.x0 != null ? s.x0 : c.x0),
+    x1: (s.x1 != null ? s.x1 : c.x1),
+    y0: s.y,
+    y1: next ? next.y : (s.yEnd != null ? s.yEnd : pg.H)
+  };
+}
+// 박스가 단 경계를 벗어났는가(그림이 단 폭을 넘는 문항 → 점선 경고)
+function outOfColumn(pg, s) {
+  var cs = pgCols(pg), c = cs[Math.min(s.col, cs.length - 1)];
+  var r = sliceRect(pg, s);
+  return r.x0 < c.x0 - 1 || r.x1 > c.x1 + 1;
 }
 // s 의 그룹 멤버들(같은 groupId), 없으면 [s]
 function groupMembers(pg, s) {
@@ -1355,9 +1504,9 @@ function cropGroupGlobal(members, acc) {
   var nums = members.map(function (m) { return m.s.num; }).sort(function (a, b) { return a - b; });
   var firstNum = nums[0];
   var rects = members.map(function (m) {
-    var pg = m.pg, s = m.s, c = pgCols(pg)[Math.min(s.col, pgCols(pg).length - 1)];
-    var yTop = Math.round(s.y), yBottom = Math.round(sameColNextY(pg, s));
-    var x0 = Math.round(c.x0), x1 = Math.round(c.x1);
+    var pg = m.pg, r = sliceRect(pg, m.s);   // 교사가 늘린 박스 좌표 그대로 크롭
+    var x0 = Math.round(Math.max(0, r.x0)), x1 = Math.round(Math.min(pg.W, r.x1));
+    var yTop = Math.round(Math.max(0, r.y0)), yBottom = Math.round(Math.min(pg.H, r.y1));
     return { canvas: pg.canvas, x0: x0, y: yTop, w: x1 - x0, h: yBottom - yTop };
   }).filter(function (r) { return r.w > 0 && r.h > 2; });
   if (!rects.length) { acc.missing.push(firstNum); return; }
