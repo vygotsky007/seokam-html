@@ -218,7 +218,7 @@
         <button class="btn-gray btn-sm" id="sliceCloseBtn">닫기</button>
       </div>
     </div>
-    <div class="muted" id="sliceHelp" style="margin:8px 0;">각 문항이 색 박스로 표시됩니다. 박스 <b>아래 손잡이(⇕)</b>를 끌어 끝(=다음 문항 시작)을 조절하고, 박스를 <b>클릭</b>해 여러 개 선택 후 [선택 묶기]로 공통 지문 문항을 합치세요. 빨간 점선은 <b>빈 영역</b>입니다.</div>
+    <div class="muted" id="sliceHelp" style="margin:8px 0;">각 문항이 색 박스로 표시됩니다(번호는 <b>시험지에 인쇄된 번호</b> 그대로, 순서는 왼단 위→아래 → 오른단 위→아래). 번호가 잘못 읽혔으면 <b>번호 라벨을 클릭</b>해 고치세요. 박스 <b>아래 손잡이(⇕)</b>를 끌어 끝(=다음 문항 시작)을 조절하고, 박스를 <b>클릭</b>해 여러 개 선택 후 [선택 묶기]로 공통 지문 문항을 합치세요. 빨간 점선은 <b>빈 영역</b>입니다.</div>
     <div class="slice-editor">
       <div id="slicePages" class="slice-pages"></div>
       <div class="slice-preview">
@@ -513,9 +513,9 @@ function runSlicing() {
     }
     return chain;
   }).then(function () {
-    resolveNumbering(pages);   // 읽기 순서(페이지→단→y)로 인쇄 번호를 확정하고, 어긋나는 후보만 '의심'으로
+    resolveNumbering(pages);   // 읽기 순서(페이지→단→y)로 영역 생성 + 같은 단 안에서만 역행 판정
     pages.forEach(function (pg, i) {
-      console.info('[slice v4] page', i + 1, pg.cols.length + '단',
+      console.info('[slice v5] page', i + 1, pg.cols.length + '단',
         'cols=', pg.cols.map(function (c) { return Math.round(c.x0 / pg.W * 100) + '~' + Math.round(c.x1 / pg.W * 100) + '%'; }),
         'starts=', pg.slices.map(function (s) { return s.col + ':' + s.num; }),
         'suspects=', pg.suspects.map(function (s) { return s.num + '(' + s.reason + ')'; }));
@@ -525,9 +525,12 @@ function runSlicing() {
     var total = pages.reduce(function (a, pg) { return a + pg.slices.length; }, 0);
     // 진단 표식: 실화면이 새 코드(단 판정)로 도는지 한눈에 — 2단이면 거터%, 아니면 1단
     var colInfo = pages.map(function (pg) { return pg.cols.length + '단'; }).join(' · ');
+    // 인쇄 번호를 그대로 쓰되, 읽기 순서와 어긋나면 교사에게 알려 라벨 클릭으로 고치게 한다(자동 재번호 금지)
+    var bad = outOfOrderNums(pages);
     status.textContent = total === 0
       ? '⚠ 문항 번호를 자동으로 못 찾았어요. 각 페이지 이미지를 더블클릭해 경계를 직접 추가하세요. [단 판정: ' + colInfo + ']'
-      : '✅ ' + total + '개 문항 인식 · 단 판정: ' + colInfo + ' · 박스 조정 후 [이대로 저장]';
+      : '✅ ' + total + '개 문항 인식 · 단 판정: ' + colInfo + ' · 박스 조정 후 [이대로 저장]'
+        + (bad.length ? ' ⚠ 인쇄 번호가 읽기 순서와 어긋남: ' + bad.join(', ') + '번 — 라벨을 클릭해 수정하세요.' : '');
     renderSliceEditor();
     var card = document.getElementById('sliceCard');
     card.style.display = 'block';
@@ -541,35 +544,41 @@ function detectSlicesForPage(items, W, H) {
   // 단 경계는 본문(상·하단 furniture 제외) 텍스트 x분포로 산출 → 쪽번호가 경계 추정을 흐리지 않음
   var body = items.filter(function (t) { return t.y > H * 0.05 && t.y < H * 0.95; });
   var cols = detectColumnBounds(body.length >= 8 ? body : items, W);
+  var medH = medianOf(items.map(function (t) { return t.h; })) || 10;
+  // 표·전면 폭 문장이 거터를 덮으면 두 단이 한 단으로 뭉개지고, 그 안에서 번호가 y 로 뒤섞인다
+  // (왼단 1,2,3 … 오른단 8,9 가 한 단에 섞여 보이던 원인). 문항 번호 x 군집으로 단을 되살린다.
+  cols = repairColumnsByNumbers(items, cols, W, H, medH);
   var cands = [];
   function scanCol(colItems, ci) {
-    var lines = groupLinesX(colItems);
-    var margin = leftMarginOf(lines);        // 이 단의 본문 좌측 기준선
-    var tol = Math.max(12, W * 0.02);        // 기준선 허용 오차(들여쓰기 없는 번호만 통과)
-    lines.forEach(function (l) {
-      var m = l.text.match(/^\s*(\d{1,2})\s*[.)]\s*\S/) || l.text.match(/^\s*(\d{1,2})\s+\S/) || l.text.match(/^\s*(\d{1,2})\s*$/);
-      if (!m) return;
-      var num = parseInt(m[1], 10);
-      if (num < 1 || num > 99) return;
-      var lone = /^\s*\d{1,2}\s*$/.test(l.text);
+    var lines = groupLinesX(colItems).sort(function (a, b) { return a.y - b.y; }); // 위→아래
+    // ① 쪽번호부터 가려낸다: '페이지 최하단 + 가로 중앙 부근 + 고립된 단독 숫자' 3조건을 모두 만족할 때만.
+    //    본문 문항 번호는 단의 좌측 기준선에 붙어 있어(중앙 아님) 여기 절대 안 걸린다.
+    //    ※ 기준선 계산보다 먼저 해야 한다 — 가운데 찍힌 쪽번호가 '번호줄 최좌단'을 왼쪽으로 끌어내리면
+    //      정작 진짜 문항 번호가 '들여쓴 숫자'로 오판돼 통째로 사라진다.
+    var numbered = [];
+    lines.forEach(function (l, li) {
+      var num = matchQNum(l.text);
+      if (num == null) return;
       var y = Math.max(0, l.y - l.h);
-      // ① 쪽번호: '페이지 최하단(5%) + 단독 숫자' 일 때만 의심. 본문 중간 번호는 절대 여기 안 걸림
-      // ※ 가로 2-up 시트는 쪽번호가 반쪽마다 찍혀 페이지 가로중앙이 아니므로 중앙 조건은 쓰지 않는다
-      if (lone && l.y >= H * 0.95) {
-        cands.push({ col: ci, y: y, num: num, reason: 'page', drop: true });
+      if (isPageNumberLine(l, li, lines, cols, W, H, medH)) {
+        cands.push({ col: ci, y: y, x: l.x, num: num, reason: 'page', drop: true });
         return;
       }
-      // ② 도표·그래프 축·<보기> 속 숫자: 단 본문 좌측 기준선에서 들여쓰여 있음 → 문항 번호 아님
-      if (l.x > margin + tol) return;
-      cands.push({ col: ci, y: y, num: num, group: null });
+      numbered.push({ l: l, li: li, num: num, y: y });
+    });
+    if (!numbered.length) return;
+    // 좌측 기준선: 본문 15퍼센타일과 '문항 번호줄 최좌단' 중 오른쪽.
+    // 표·그림이 본문보다 왼쪽에서 시작하면 본문 기준선이 왼쪽으로 끌려가 진짜 문항이 탈락하므로,
+    // 번호줄 자신의 최좌단을 하한으로 함께 쓴다.
+    var margin = Math.max(leftMarginOf(lines), Math.min.apply(null, numbered.map(function (o) { return o.l.x; })));
+    var tol = Math.max(12, W * 0.02);        // 기준선 허용 오차(들여쓰기 없는 번호만 통과)
+    numbered.forEach(function (o) {
+      // ② 도표·그래프 축·<보기> 속 숫자: 단 좌측 기준선에서 들여쓰여 있음 → 문항 번호 아님
+      if (o.l.x > margin + tol) return;
+      cands.push({ col: ci, y: o.y, x: o.l.x, num: o.num, group: null });
     });
   }
-  cols.forEach(function (c, ci) {
-    scanCol(items.filter(function (t) {
-      var cx = t.x + t.w / 2;
-      return cx >= c.x0 && (ci === cols.length - 1 ? true : cx < c.x1);
-    }), ci);
-  });
+  cols.forEach(function (c, ci) { scanCol(colItemsOf(items, cols, ci), ci); });
   cands.sort(function (a, b) { return a.col - b.col || a.y - b.y; });
   // 너무 가까운 중복 제거(같은 단 안에서만)
   var dedup = [];
@@ -579,6 +588,106 @@ function detectSlicesForPage(items, W, H) {
     dedup.push(s);
   });
   return { cols: cols, cands: dedup };
+}
+
+// 한 단에 속한 텍스트 items (마지막 단은 오른쪽 끝까지)
+function colItemsOf(items, cols, ci) {
+  var c = cols[ci];
+  return items.filter(function (t) {
+    var cx = t.x + t.w / 2;
+    return cx >= c.x0 && (ci === cols.length - 1 ? true : cx < c.x1);
+  });
+}
+
+// 뭉개진 단 되살리기 — 거터가 표·전면 폭 문장에 덮여 두 단이 한 단으로 잡히면, 줄 묶기가
+// 좌·우 문항 줄을 한 줄로 합쳐 오른단 번호가 왼단 번호에 삼켜진다. 그 결과 왼단 박스가
+// 1,2,3 … 8,9 처럼 뒤섞여 보인다. → 줄로 묶기 전의 텍스트 항목 x 로 단을 되살린다.
+// 문항 번호의 x 는 각 단 좌측에 붙어 있어 단 개수를 가장 정직하게 알려주는 신호다.
+// 한 단 안의 번호 x 가 뚜렷이 두 군집으로 갈리고, 쪼갰을 때만 각 군집이 위→아래 오름차순이 되면 나눈다.
+// (이미 읽기 순서와 맞는 단은 절대 건드리지 않는다 → 1단·정상 2단·4단 회귀 없음)
+function repairColumnsByNumbers(items, cols, W, H, medH) {
+  var tolX = Math.max(12, W * 0.02);
+  for (var pass = 0; pass < 4; pass++) {
+    var split = false;
+    for (var ci = 0; ci < cols.length && !split; ci++) {
+      var nums = [];
+      colItemsOf(items, cols, ci).forEach(function (t) {
+        if (t.y >= H * 0.94) return;                 // 최하단 띠(쪽번호)는 단 판정에서 제외
+        var num = matchQNum(t.str);
+        if (num != null) nums.push({ x: t.x, y: t.y, num: num });
+      });
+      if (nums.length < 4) continue;
+      var xs = nums.map(function (o) { return o.x; }).sort(function (a, b) { return a - b; });
+      var gap = 0, at = -1;
+      for (var i = 1; i < xs.length; i++) if (xs[i] - xs[i - 1] > gap) { gap = xs[i] - xs[i - 1]; at = i; }
+      if (at < 0 || gap < Math.max(W * 0.08, medH * 6)) continue;   // 단 사이라 하기엔 번호들이 너무 붙어 있음
+      var rightMin = xs[at], mid = (xs[at - 1] + xs[at]) / 2;
+      // 각 군집에서 '좌측 기준선에 붙은' 번호만 본다 → 들여쓴 <보기>·도표 숫자는 판단에서 제외
+      var left = anchoredNums(nums.filter(function (o) { return o.x < mid; }), tolX);
+      var right = anchoredNums(nums.filter(function (o) { return o.x >= mid; }), tolX);
+      if (left.length < 2 || right.length < 2) continue;
+      if (!ascendingByY(left) || !ascendingByY(right)) continue;    // 쪼개도 읽기 순서가 안 맞으면 단이 아님
+      if (ascendingByY(left.concat(right))) continue;               // 안 쪼개도 읽기 순서가 맞으면 그대로 둔다
+      // 경계선: 왼단 본문의 오른쪽 끝과 오른단 번호 사이 한가운데(거터를 덮은 전면 폭 문장은 제외)
+      var ends = items.filter(function (t) { return t.x >= cols[ci].x0 && (t.x + t.w) <= rightMin; })
+        .map(function (t) { return t.x + t.w; });
+      var bx = ends.length ? (Math.max.apply(null, ends) + rightMin) / 2 : mid;
+      bx = Math.min(Math.max(bx, cols[ci].x0 + W * 0.05), rightMin - 1);
+      var c = cols[ci];
+      cols.splice(ci, 1, { x0: c.x0, x1: bx }, { x0: bx, x1: c.x1 });
+      split = true;
+    }
+    if (!split) break;
+  }
+  return cols;
+}
+
+// 군집의 최좌단에 붙은 번호들(들여쓴 숫자 제외)
+function anchoredNums(g, tolX) {
+  if (!g.length) return g;
+  var m = Math.min.apply(null, g.map(function (o) { return o.x; }));
+  return g.filter(function (o) { return o.x <= m + tolX; });
+}
+
+// 위→아래 순으로 번호가 오름차순인가(읽기 순서 판정)
+function ascendingByY(nums) {
+  var a = nums.slice().sort(function (p, q) { return p.y - q.y; });
+  for (var i = 1; i < a.length; i++) if (a[i].num <= a[i - 1].num) return false;
+  return true;
+}
+
+// 줄(또는 텍스트 항목) 앞머리의 문항 번호("1" "1." "1)") → 번호, 아니면 null
+// ※ 번호가 본문과 다른 텍스트 런으로 찍히는 PDF 가 흔해 "1." "1)" 단독도 받는다.
+function matchQNum(text) {
+  var m = text.match(/^\s*(\d{1,2})\s*[.)]\s*\S/) || text.match(/^\s*(\d{1,2})\s+\S/) || text.match(/^\s*(\d{1,3})\s*[.)]?\s*$/);
+  if (!m) return null;
+  var num = parseInt(m[1], 10);
+  return (num >= 1 && num <= 99) ? num : null;
+}
+
+function medianOf(arr) {
+  if (!arr || !arr.length) return 0;
+  var a = arr.slice().sort(function (x, y) { return x - y; });
+  return a[Math.floor(a.length / 2)];
+}
+
+// 쪽번호 = 페이지 최하단(≥94%) + 가로 중앙 부근 + 고립(아래에 본문 없음·위와 한 줄 이상 떨어짐)된 단독 숫자.
+// 셋 다 만족해야만 제외 → 본문 중간의 진짜 문항 번호(단 좌측에 붙어 있음)는 절대 걸리지 않는다.
+// ※ 가로 2-up(4단) 시트는 반쪽마다 쪽번호가 찍히므로 '반쪽 가운데(W/4·3W/4)'도 중앙으로 인정한다.
+function isPageNumberLine(l, li, lines, cols, W, H, medH) {
+  if (!/^\s*\d{1,3}\s*[.)]?\s*$/.test(l.text)) return false;   // 단독 숫자만
+  if (l.y < H * 0.94) return false;                    // 최하단 띠
+  for (var i = li + 1; i < lines.length; i++) {        // 같은 단에서 아래에 본문이 더 있으면 쪽번호 아님
+    if (lines[i].y > l.y + 1) return false;
+  }
+  for (var j = li - 1; j >= 0; j--) {                  // 바로 윗줄과 붙어 있으면(본문 일부) 쪽번호 아님
+    if (lines[j].y < l.y - 1) { if ((l.y - lines[j].y) < medH * 1.5) return false; break; }
+  }
+  var cx = l.x + (l.w || 0) / 2;
+  var centers = [W / 2];
+  if (cols.length >= 3) centers.push(W / 4, W * 3 / 4);
+  var tol = W * 0.08;
+  return centers.some(function (c) { return Math.abs(cx - c) <= tol; });
 }
 
 // 단(칼럼) 경계 산출 — x 투영에서 '글자가 거의 없는 세로 띠(거터)'로 쪼갠다.
@@ -646,39 +755,58 @@ function leftMarginOf(lines) {
   return xs[Math.floor(xs.length * 0.15)];
 }
 
-// 인쇄된 번호를 그대로 문항 번호로 쓰되, 읽기 순서(페이지→단→y)에서 오름차순으로 이어지는
-// 최장 일관 체인만 경계로 채택. 체인에서 빠진 후보는 '의심'으로만 표시(교사가 클릭해 추가).
-// ※ 역행 판정은 전체 읽기 순서 기준이라 '왼단 5 → 오른단 10' 같은 정상 진행을 오판하지 않는다.
+// 인쇄된 번호를 그대로 문항 번호로 쓰고, 영역은 읽기 순서(페이지 → 단 → y)로 만든다.
+// 역행(번호 되돌아감) 판정은 '같은 단 안에서만' — 단이 바뀌면 y 는 다시 위로 올라가는 게 정상이라
+// 단을 무시하고 y 만 보면 '왼단 5 → 오른단 6' 같은 정상 진행이 역행으로 오판된다.
+// 한 단 안에서 위→아래로 오름차순인 최장 체인만 경계로 채택하고, 빠진 후보는 '의심' 표시만 한다.
 function resolveNumbering(pages) {
-  var seq = [];
-  pages.forEach(function (pg, pi) {
+  pages.forEach(function (pg) {
     pg.slices = []; pg.suspects = [];
+    var byCol = {};
     (pg.cands || []).forEach(function (c) {
       if (c.drop) { pg.suspects.push({ col: c.col, y: c.y, num: c.num, reason: 'page' }); return; }
-      seq.push({ pi: pi, c: c });
+      (byCol[c.col] = byCol[c.col] || []).push(c);
     });
+    Object.keys(byCol).forEach(function (k) {
+      var col = byCol[k].sort(function (a, b) { return a.y - b.y; });   // 단 안에서 위 → 아래
+      var keep = longestAscendingByNum(col);
+      col.forEach(function (c, i) {
+        if (keep[i]) pg.slices.push(c);
+        else pg.suspects.push({ col: c.col, y: c.y, num: c.num, reason: 'order' });
+      });
+    });
+    pg.slices.sort(function (a, b) { return a.col - b.col || a.y - b.y; }); // 읽기 순서
   });
-  seq.sort(function (a, b) { return a.pi - b.pi || a.c.col - b.c.col || a.c.y - b.c.y; });
-  // 최장 증가 부분수열(O(n²)) — 길이가 같으면 번호 간격 합이 작은 쪽(더 촘촘히 이어지는 쪽) 선택
-  var n = seq.length, dp = [], parent = [];
+  return pages;
+}
+
+// 최장 증가 부분수열(O(n²)) — 길이가 같으면 번호 간격 합이 작은 쪽(더 촘촘히 이어지는 쪽) 선택
+function longestAscendingByNum(seq) {
+  var n = seq.length, dp = [], parent = [], keep = [];
   for (var i = 0; i < n; i++) {
-    dp[i] = { len: 1, gap: 0 }; parent[i] = -1;
+    dp[i] = { len: 1, gap: 0 }; parent[i] = -1; keep[i] = false;
     for (var j = 0; j < i; j++) {
-      if (seq[j].c.num >= seq[i].c.num) continue;
-      var len = dp[j].len + 1, gap = dp[j].gap + (seq[i].c.num - seq[j].c.num - 1);
+      if (seq[j].num >= seq[i].num) continue;
+      var len = dp[j].len + 1, gap = dp[j].gap + (seq[i].num - seq[j].num - 1);
       if (len > dp[i].len || (len === dp[i].len && gap < dp[i].gap)) { dp[i] = { len: len, gap: gap }; parent[i] = j; }
     }
   }
   var bi = -1;
   for (var k = 0; k < n; k++) if (bi < 0 || dp[k].len > dp[bi].len || (dp[k].len === dp[bi].len && dp[k].gap < dp[bi].gap)) bi = k;
-  var keep = {};
   for (var t = bi; t >= 0; t = parent[t]) keep[t] = true;
-  seq.forEach(function (e, idx) {
-    if (keep[idx]) pages[e.pi].slices.push(e.c);
-    else pages[e.pi].suspects.push({ col: e.c.col, y: e.c.y, num: e.c.num, reason: 'order' });
+  return keep;
+}
+
+// 읽기 순서(페이지 → 단 → y)로 펼친 문항 번호들 — 인쇄 번호가 읽기 순서와 어긋나는지 점검용
+function outOfOrderNums(pages) {
+  var nums = [];
+  pages.forEach(function (pg) {
+    pg.slices.slice().sort(function (a, b) { return a.col - b.col || a.y - b.y; })
+      .forEach(function (s) { nums.push(s.num); });
   });
-  pages.forEach(function (pg) { pg.slices.sort(function (a, b) { return a.col - b.col || a.y - b.y; }); });
-  return pages;
+  var bad = [], max = 0;
+  nums.forEach(function (n) { if (n < max) bad.push(n); else max = n; });
+  return bad;
 }
 
 // 줄 단위로 묶으며 최소 x 를 함께 반환(컬럼 판정용)
