@@ -3,6 +3,7 @@ const express = require('express');
 const router = express.Router();
 const supabase = require('../db');
 const { grade } = require('../grade');
+const { sanitizeHtml } = require('../lib/sanitize');
 
 // (C) html_body 답칸(name="q…") 개수와 채점 문항 수 불일치 경고
 function mismatchWarning(html_body, questions) {
@@ -70,6 +71,8 @@ router.post('/activities', async (req, res) => {
       graded: q.graded === false ? false : true,
       slice_image: q.slice_image ?? null,
       group_label: q.group_label ?? null,
+      // 문항 HTML화 결과 — 저장 시점에 정제(허용 태그만). 없으면 null → 학생 화면은 이미지로 폴백
+      html_content: q.html_content ? sanitizeHtml(q.html_content) : null,
     }));
 
     const { error: qErr } = await supabase.from('questions').insert(rows);
@@ -323,6 +326,8 @@ router.put('/activities/:id', async (req, res) => {
       graded: q.graded === false ? false : true,
       slice_image: q.slice_image ?? null,
       group_label: q.group_label ?? null,
+      // 문항 HTML화 결과 — 저장 시점에 정제(허용 태그만). 없으면 null → 학생 화면은 이미지로 폴백
+      html_content: q.html_content ? sanitizeHtml(q.html_content) : null,
     }));
     const { error: insErr } = await supabase.from('questions').insert(rows);
     if (insErr) {

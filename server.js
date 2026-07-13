@@ -7,6 +7,7 @@ const path = require('path');
 const supabase = require('./db');
 const submitRouter = require('./routes/submit');
 const activitiesRouter = require('./routes/activities');
+const { sanitizeHtml } = require('./lib/sanitize');
 
 const app = express();
 const PORT = process.env.PORT || 4002;
@@ -17,6 +18,7 @@ const APP_NAME = '문제샘';
 app.use(cors()); // 학생 HTML이 다른 출처에서 fetch 가능하도록 허용
 app.use(express.json({ limit: '2mb' })); // 교사가 붙여넣는 HTML 대비 여유
 app.use(express.static(path.join(__dirname, 'public')));
+app.use('/lib', express.static(path.join(__dirname, 'lib')));   // 교사 화면과 서버가 같은 sanitize 를 쓴다
 
 // 배포 확인용
 app.get('/api/health', (req, res) => {
@@ -45,12 +47,12 @@ app.get('/go/:id', async (req, res) => {
   if (activity.view_mode === 'single') {
     const { data: questions } = await supabase
       .from('questions')
-      .select('num, type, slice_image, group_label')
+      .select('num, type, slice_image, group_label, html_content')
       .eq('activity_id', id)
       .order('num', { ascending: true });
     const qs = (questions || []).filter((q) => q); // 안전
-    // slice_image 가 하나라도 있으면 single 화면, 없으면 기존 전체 화면으로 폴백
-    if (qs.some((q) => q.slice_image)) {
+    // 조각 이미지나 변환된 HTML 이 하나라도 있으면 single 화면, 없으면 기존 전체 화면으로 폴백
+    if (qs.some((q) => q.slice_image || q.html_content)) {
       return res.type('html').send(renderStudentSinglePage(activity, qs));
     }
   }
@@ -974,6 +976,8 @@ function renderStudentSinglePage(activity, questions) {
   const qData = (questions || []).map((q) => ({
     num: q.num, type: q.type || 'short',
     slice_image: q.slice_image || null, group_label: q.group_label || null,
+    // 변환된 HTML 이 있으면 이걸로 렌더(확대해도 안 깨짐). 없으면 조각 이미지로 폴백.
+    html_content: q.html_content ? sanitizeHtml(q.html_content) : null,
   }));
 
   return `<!doctype html>
@@ -1002,6 +1006,16 @@ function renderStudentSinglePage(activity, questions) {
   .slide .grouptag { display: inline-block; font-size: 12px; background: #ebf8ff; color: #2b6cb0; font-weight: 700; padding: 2px 10px; border-radius: 999px; margin-bottom: 8px; }
   .slide img { width: 100%; height: auto; border: 1px solid #e2e8f0; border-radius: 8px; }
   .slide .noimg { padding: 30px; text-align: center; color: #a0aec0; }
+  /* HTML 로 변환된 문항 */
+  .fontbar { display: flex; align-items: center; gap: 6px; font-size: 12px; color: #718096; margin-bottom: 10px; }
+  .fontbar button { padding: 4px 10px; font-size: 12px; font-weight: 700; border: 1px solid #cbd5e1; background: #fff; color: #4a5568; border-radius: 6px; cursor: pointer; }
+  .fontbar button.on { background: #2b6cb0; color: #fff; border-color: #2b6cb0; }
+  .qhtml { line-height: 1.6; }
+  .qhtml .stem { font-weight: 700; margin: 0 0 10px; }
+  .qhtml .passage { border: 1px solid #cbd5e1; border-radius: 8px; padding: 10px 12px; background: #f7fafc; margin: 10px 0; }
+  .qhtml ol.choices { list-style: none; padding: 0; margin: 10px 0 0; }
+  .qhtml ol.choices li { padding: 7px 10px; border: 1px solid #e2e8f0; border-radius: 8px; margin-bottom: 6px; background: #fff; }
+  .qhtml img { width: auto; max-width: 100%; margin: 8px 0; }
   .answers { margin-top: 12px; }
   .arow { display: flex; align-items: center; gap: 10px; margin-bottom: 8px; }
   .arow label { flex: 0 0 46px; font-weight: 800; }
@@ -1061,20 +1075,31 @@ function renderStudentSinglePage(activity, questions) {
     var covered = {}, out = [];
     qs.forEach(function (q) {
       if (covered[q.num]) return;
-      if (q.slice_image) {
+      if (q.slice_image || q.html_content) {
         var nums = q.group_label ? parseRange(q.group_label) : [q.num];
         if (!nums.length) nums = [q.num];
         // 실제 존재하는 문항 번호만
         nums = nums.filter(function (n) { return qs.some(function (x) { return x.num === n; }); });
         if (!nums.length) nums = [q.num];
         nums.forEach(function (n) { covered[n] = true; });
-        out.push({ image: q.slice_image, nums: nums, group: q.group_label || null });
+        out.push({ image: q.slice_image || null, html: q.html_content || null, nums: nums, group: q.group_label || null });
       } else {
         covered[q.num] = true;
-        out.push({ image: null, nums: [q.num], group: null });
+        out.push({ image: null, html: null, nums: [q.num], group: null });
       }
     });
     return out;
+  }
+
+  // 글자 크기(HTML 문항일 때만 의미 있음) — 이미지와 달리 확대해도 안 깨지는 게 HTML 화의 핵심 이점
+  var FONT_STEPS = { small: 15, normal: 18, large: 23 };
+  var fontSize = 'normal';
+  try { fontSize = localStorage.getItem('qFont') || 'normal'; } catch (e) { }
+  if (!FONT_STEPS[fontSize]) fontSize = 'normal';
+  function setFont(k) {
+    fontSize = k;
+    try { localStorage.setItem('qFont', k); } catch (e) { }
+    render();
   }
 
   function allNums() { return QUESTIONS.map(function (q) { return q.num; }); }
@@ -1106,7 +1131,18 @@ function renderStudentSinglePage(activity, questions) {
     var s = slides[cur]; var el = document.getElementById('slide');
     var html = '';
     if (s.group) html += '<span class="grouptag">묶음 ' + escapeHtml(s.group) + '</span>';
-    html += s.image ? '<img alt="문항" src="' + s.image + '" />' : '<div class="noimg" style="color:#e11d48;">🙏 문항 이미지를 불러올 수 없어요</div>';
+    if (s.html) {
+      // HTML 로 변환된 문항 — 글자 크기 조절 가능
+      html += '<div class="fontbar">글자 크기' +
+        '<button data-f="small" class="' + (fontSize === 'small' ? 'on' : '') + '">작게</button>' +
+        '<button data-f="normal" class="' + (fontSize === 'normal' ? 'on' : '') + '">보통</button>' +
+        '<button data-f="large" class="' + (fontSize === 'large' ? 'on' : '') + '">크게</button></div>';
+      html += '<div class="qhtml" style="font-size:' + FONT_STEPS[fontSize] + 'px;">' + s.html + '</div>';
+    } else if (s.image) {
+      html += '<img alt="문항" src="' + s.image + '" />';
+    } else {
+      html += '<div class="noimg" style="color:#e11d48;">🙏 문항을 불러올 수 없어요</div>';
+    }
     html += '<div class="answers">';
     s.nums.forEach(function (n) {
       var q = QUESTIONS.filter(function (x) { return x.num === n; })[0] || { type: 'short' };
@@ -1117,6 +1153,9 @@ function renderStudentSinglePage(activity, questions) {
     el.innerHTML = html;
     el.querySelectorAll('input[data-num]').forEach(function (inp) {
       inp.addEventListener('input', function () { answers['q' + inp.getAttribute('data-num')] = inp.value; render(); });
+    });
+    el.querySelectorAll('.fontbar button').forEach(function (b) {
+      b.addEventListener('click', function () { setFont(b.getAttribute('data-f')); });
     });
     // 나중에 다시 버튼 상태(현재 슬라이드 첫 문항 기준)
     var laterOn = curNums.some(function (n) { return later[n]; });

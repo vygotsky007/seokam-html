@@ -7,6 +7,8 @@
 <!-- 브라우저에서 PDF → 페이지 이미지 변환(서버 부담 0) + QR 생성 -->
 <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
+<!-- 서버와 같은 정제 규칙(허용 태그만) — 저장 전에 교사 화면에서도 한 번 거른다 -->
+<script src="/lib/sanitize.js"></script>
 <style>
   :root { --blue: #2b6cb0; --green: #2f855a; --red: #c53030; --gray: #718096; --line: #e5e9f0; --bg: #f4f6f9; --ink: #1a202c; }
   * { box-sizing: border-box; }
@@ -126,6 +128,27 @@
   .gapbox { position: absolute; box-sizing: border-box; border: 2px dashed #e53e3e; background: rgba(229,62,62,.08); z-index: 4; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 4px; }
   .gapbox .gaplbl { font-size: 11px; font-weight: 800; color: #c53030; background: #fff; padding: 1px 6px; border-radius: 4px; }
   .gapbox button { font-size: 10px; padding: 2px 6px; border-radius: 4px; }
+  /* 문항 HTML화 편집기 */
+  .qcard { display: flex; gap: 14px; align-items: flex-start; border: 1px solid var(--line); border-radius: 12px; padding: 12px; margin-bottom: 12px; background: #fff; }
+  .qcard.unparsed { border-color: #f6ad55; background: #fffaf0; }
+  .qcard.asimage { background: #f7fafc; }
+  .qcard-src { flex: 0 0 34%; }
+  .qcard-src img { width: 100%; border: 1px solid var(--line); border-radius: 8px; display: block; }
+  .qcard-out { flex: 1; min-width: 0; }
+  .qcard-head { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; }
+  .qcard-head .qtype { font-size: 11px; font-weight: 700; color: #2c7a7b; background: #e6fffa; padding: 2px 8px; border-radius: 999px; }
+  .qcard.unparsed .qtype { color: #975a16; background: #fefcbf; }
+  .qcard-head button { margin-left: auto; }
+  .qwarn { font-size: 12.5px; font-weight: 700; color: #975a16; margin-bottom: 8px; }
+  .qraw { width: 100%; min-height: 90px; font-size: 13px; }
+  .qprev { border: 1px dashed #cbd5e1; border-radius: 8px; padding: 10px 12px; background: #fbfdff; line-height: 1.55; }
+  .qprev:focus { outline: 2px solid var(--blue); }
+  .qprev .stem { font-weight: 700; margin: 0 0 8px; }
+  .qprev .passage { border: 1px solid var(--line); border-radius: 8px; padding: 8px 10px; background: #fff; margin: 8px 0; }
+  .qprev ol.choices { list-style: none; padding: 0; margin: 8px 0 0; }
+  .qprev ol.choices li { padding: 5px 8px; border: 1px solid var(--line); border-radius: 6px; margin-bottom: 5px; background: #fff; }
+  .qprev img { max-width: 100%; margin: 6px 0; border: 1px solid var(--line); border-radius: 6px; }
+
   /* 뷰 토글 */
   .viewtoggle { display: inline-flex; border: 1px solid var(--line); border-radius: 8px; overflow: hidden; background: #fff; }
   .viewtoggle button { background: #fff; color: var(--gray); border: 0; padding: 6px 11px; font-size: 12.5px; font-weight: 700; border-radius: 0; }
@@ -184,6 +207,7 @@
         <div class="row" style="margin-top:6px;">
           <button class="btn-gray btn-sm" id="revertImageBtn" style="display:none;">🖼 그림 모드로 되돌리기</button>
           <button class="btn-blue btn-sm" id="sliceBtn" style="display:none;">✂️ 문항 나누기</button>
+          <button class="btn-green btn-sm" id="toHtmlBtn" style="display:none;">🔤 HTML로 변환</button>
           <span class="muted" id="sliceStatus"></span>
         </div>
 
@@ -277,6 +301,19 @@
         <div id="slicePreviewBody" class="muted" style="padding:12px;">문항 박스를 클릭하면 잘려 나올 조각이 여기 보여요.</div>
       </div>
     </div>
+  </div>
+
+  <!-- 문항 HTML화 편집기 -->
+  <div class="card" id="htmlCard" style="display:none;">
+    <div class="row" style="justify-content:space-between; flex-wrap:wrap;">
+      <h2 style="margin:0;">🔤 문항 HTML화 — 텍스트는 텍스트로, 그림은 이미지로</h2>
+      <div class="row" style="gap:6px;">
+        <span class="badge open" id="htmlSummary">—</span>
+        <button class="btn-gray btn-sm" id="htmlCloseBtn">닫기</button>
+      </div>
+    </div>
+    <div class="muted" style="margin:8px 0;">왼쪽이 원본 조각, 오른쪽이 변환 결과입니다. 변환된 문항은 학생 화면에서 <b>글자 크기 조절</b>이 되고 확대해도 깨지지 않아요. 결과가 나쁘면 문항별로 [이미지로 되돌리기]를 누르세요(원본 조각 이미지는 그대로 함께 저장됩니다).</div>
+    <div id="htmlCards"></div>
   </div>
 
   <h2>진행 중인 활동</h2>
@@ -555,7 +592,8 @@ function runSlicing() {
                   return { x: tx[4], y: tx[5], w: (it.width || 0) * scale, h: h, str: it.str || '' };
                 }).filter(function (t) { return (t.str || '').trim(); });
                 var det = detectSlicesForPage(items, canvas.width, canvas.height);
-                pages.push({ dataUrl: canvas.toDataURL('image/jpeg', 0.85), W: canvas.width, H: canvas.height, canvas: canvas, cols: det.cols, cands: det.cands, slices: [], suspects: [] });
+                // items 는 HTML 화(텍스트 레이어 재사용)에 다시 쓰므로 페이지에 보관한다
+                pages.push({ dataUrl: canvas.toDataURL('image/jpeg', 0.85), W: canvas.width, H: canvas.height, canvas: canvas, items: items, cols: det.cols, cands: det.cands, slices: [], suspects: [] });
               });
             });
           });
@@ -1144,7 +1182,7 @@ function flowGapCard(en) {
 
 // 썸네일: 저장 때와 같은 합성기(cropGroupGlobal)로 만들어 '보이는 것 = 저장되는 것'
 function flowThumb(members) {
-  var acc = { images: {}, groups: {}, missing: [], count: 0 };
+  var acc = newSliceAcc();
   cropGroupGlobal(members, acc);
   var nums = members.map(function (m) { return m.s.num; }).sort(function (a, b) { return a - b; });
   return acc.images[nums[0]] || null;
@@ -1397,7 +1435,7 @@ document.getElementById('sliceMergeBtn').addEventListener('click', function () {
 
 // 현재 문항이 잘려 나올 조각 미리보기
 function showSlicePreview(pg, s) {
-  var acc = { images: {}, groups: {}, missing: [], count: 0 };
+  var acc = newSliceAcc();
   // 이 문항(그룹)만 임시로 크롭 — 페이지를 걸친 묶음도 전역 멤버로 합성
   var members = groupMembersGlobal(s);
   cropGroupGlobal(members, acc);
@@ -1496,7 +1534,10 @@ function mergeWithNext(pg, s) {
 }
 function unmerge(pg, s) { unmergeGlobal(s); }   // 페이지를 걸친 묶음까지 전부 해제
 
-// 문항 조각 이미지 생성(그룹은 멤버 rect 를 세로로 합성). 반환 {images, groups, missing}
+// 조각 크롭 결과 누적자 — images(번호→dataURL), groups(묶음 라벨), parts(원본 페이지·좌표: HTML화용), missing
+function newSliceAcc() { return { images: {}, groups: {}, parts: {}, nums: {}, missing: [], count: 0 }; }
+
+// 문항 조각 이미지 생성(그룹은 멤버 rect 를 세로로 합성)
 // ①의 핵심: 크롭 = 묶인 모든 문항 영역의 합집합. 단·페이지를 걸치면 각 조각을 세로로 이어붙임.
 // members = groupMembersGlobal(s) 형태의 [{pg, pi, s}] 배열
 function cropGroupGlobal(members, acc) {
@@ -1519,6 +1560,9 @@ function cropGroupGlobal(members, acc) {
   acc.images[firstNum] = cc.toDataURL('image/jpeg', 0.85);
   var crossPage = members.length > 1 && members[0].pi !== members[members.length - 1].pi;
   if (nums.length > 1) acc.groups[firstNum] = nums[0] + '~' + nums[nums.length - 1] + (crossPage ? ' · 페이지 걸침' : '');
+  // HTML 화에서 이 조각의 텍스트·그림을 다시 찾으려면 원래 페이지와 좌표가 필요하다
+  acc.parts[firstNum] = members.map(function (m) { return { pg: m.pg, rect: sliceRect(m.pg, m.s) }; });
+  acc.nums[firstNum] = nums;
   acc.count++;
 }
 
@@ -1534,9 +1578,10 @@ function computeAllSliceImages(acc) {
 
 function saveSlices() {
   if (!sliceState) return;
-  var acc = { images: {}, groups: {}, missing: [], count: 0 };
+  var acc = newSliceAcc();
   computeAllSliceImages(acc);
   sliceImages = acc.images; sliceGroups = acc.groups;
+  sliceParts = acc.parts; sliceNums = acc.nums;   // HTML 화가 쓸 원본 좌표
   if (acc.count > 0) enableSingleMode();
   var msg = '✅ ' + acc.count + '개 문항 조각 저장됨 — [발행]/[수정 반영] 시 함께 저장됩니다.';
   if (acc.missing.length) msg += ' ⚠ 영역이 비어 저장 못한 문항: ' + acc.missing.join(', ') + '번(경계를 조정하세요).';
@@ -1544,7 +1589,218 @@ function saveSlices() {
   clearUndo();   // 되돌리기 스택은 저장 전까지만 유효
   sliceSel = [];
   document.getElementById('sliceCard').style.display = 'none';
+  document.getElementById('toHtmlBtn').style.display = acc.count ? 'inline-flex' : 'none';
 }
+
+// ================= 문항 HTML화 (텍스트 + 그림 하이브리드) =================
+// 원본이 텍스트 PDF 이므로 OCR 없이 pdf.js 텍스트 레이어를 그대로 쓴다.
+// 텍스트는 텍스트로, 그림·도해·표는 그 영역만 잘라 <img> 로 남긴다.
+var sliceParts = {};    // { 문항번호: [{pg, rect}] }  — 조각의 원본 페이지·좌표
+var sliceNums = {};     // { 문항번호: [묶인 번호들] }
+var qHtml = {};         // { 문항번호: {html, parsed, useImage} }
+
+document.getElementById('toHtmlBtn').addEventListener('click', convertSlicesToHtml);
+
+// 조각 좌표 안의 텍스트 아이템 → 읽기 순서 줄 목록
+function linesInRect(pg, rect) {
+  var inside = (pg.items || []).filter(function (t) {
+    var cx = t.x + (t.w || 0) / 2, cy = t.y - (t.h || 0) / 2;
+    return cx >= rect.x0 - 2 && cx <= rect.x1 + 2 && cy >= rect.y0 - 2 && cy <= rect.y1 + 2;
+  });
+  return groupLinesX(inside).sort(function (a, b) { return a.y - b.y; })
+    // 마지막 문항 박스는 페이지 하단까지 이어져 쪽번호를 삼킨다 → 본문에서 제외(영역 인식과 같은 기준)
+    .filter(function (l) { return !(l.y >= pg.H * 0.95 && /^\s*\d{1,3}\s*[.)]?\s*$/.test(l.text)); });
+}
+
+// 텍스트가 없는 띠에 잉크(그림·도해·표)가 있으면 그 부분만 크롭 → <img>
+function figuresInRect(pg, rect, lines) {
+  var figs = [], bands = [];
+  var top = rect.y0;
+  lines.forEach(function (l) {
+    var lineTop = l.y - l.h * 1.2;
+    if (lineTop - top > 24) bands.push({ y0: top, y1: lineTop });   // 줄과 줄 사이 빈 띠
+    top = Math.max(top, l.y + l.h * 0.4);
+  });
+  if (rect.y1 - top > 24) bands.push({ y0: top, y1: rect.y1 });
+  bands.forEach(function (b) {
+    var img = cropIfInked(pg, rect.x0, b.y0, rect.x1, b.y1);
+    if (img) figs.push({ src: img, y: b.y0 });
+  });
+  return figs;
+}
+// 흰 여백이면 null, 잉크가 있으면 그 사각형의 dataURL
+function cropIfInked(pg, x0, y0, x1, y1) {
+  var w = Math.round(x1 - x0), h = Math.round(y1 - y0);
+  if (w < 20 || h < 20) return null;
+  var ctx = pg.canvas.getContext('2d');
+  var data;
+  try { data = ctx.getImageData(Math.round(x0), Math.round(y0), w, h).data; } catch (e) { return null; }
+  var ink = 0, total = 0;
+  for (var i = 0; i < data.length; i += 4 * 7) {          // 7픽셀마다 표본
+    total++;
+    if (data[i] < 230 || data[i + 1] < 230 || data[i + 2] < 230) ink++;
+  }
+  if (!total || ink / total < 0.005) return null;          // 사실상 빈 여백
+  var cc = document.createElement('canvas'); cc.width = w; cc.height = h;
+  cc.getContext('2d').drawImage(pg.canvas, Math.round(x0), Math.round(y0), w, h, 0, 0, w, h);
+  return cc.toDataURL('image/jpeg', 0.85);
+}
+
+var CHOICE_RE = /[①②③④⑤⑥⑦⑧⑨⑩]/;
+var PASSAGE_RE = /^\s*(<\s*보\s*기\s*>|\[\s*보\s*기\s*\]|보\s*기|※)/;
+var ESSAY_RE = /(서술|설명하|논하|이유를|까닭을).{0,6}(시오|보시오|쓰시오|하시오)|서술형/;
+
+// 조각 하나 → 구조화된 문항 { number, stem, passage, choices, images, type, raw_text }
+function parseSliceToQuestion(num, parts) {
+  var lines = [], figs = [];
+  parts.forEach(function (p) {
+    var ls = linesInRect(p.pg, p.rect);
+    lines = lines.concat(ls);
+    figs = figs.concat(figuresInRect(p.pg, p.rect, ls));
+  });
+  var raw = lines.map(function (l) { return l.text; }).join('\n');
+  var q = { number: num, stem: '', passage: '', choices: [], images: [], type: 'unparsed', raw_text: raw };
+  if (!lines.length) { q.images = figs.map(function (f) { return { src: f.src, position: 'stem' }; }); return q; }
+
+  // 선지: ①②③… 로 시작하는 줄(한 줄에 여러 개면 쪼갠다)
+  var firstChoiceY = null, lastChoiceY = null;
+  var stemLines = [], passageLines = [], inPassage = false;
+  lines.forEach(function (l) {
+    var t = l.text.trim();
+    if (CHOICE_RE.test(t)) {
+      var parts2 = t.split(/(?=[①②③④⑤⑥⑦⑧⑨⑩])/).map(function (x) { return x.trim(); }).filter(Boolean);
+      parts2.forEach(function (c) { if (CHOICE_RE.test(c[0])) q.choices.push(c.replace(/^[①②③④⑤⑥⑦⑧⑨⑩]\s*/, '').trim()); });
+      if (firstChoiceY == null) firstChoiceY = l.y;
+      lastChoiceY = l.y;
+      inPassage = false;
+      return;
+    }
+    if (firstChoiceY != null) { stemLines.push(t); return; }   // 선지 뒤 꼬리말은 발문에 붙인다
+    if (PASSAGE_RE.test(t)) { inPassage = true; return; }       // <보 기> 표시줄 자체는 버린다
+    (inPassage ? passageLines : stemLines).push(t);
+  });
+
+  // 발문 첫 줄의 인쇄 번호는 떼어낸다(번호는 number 필드로 따로 간다)
+  if (stemLines.length) stemLines[0] = stemLines[0].replace(/^\s*\d{1,2}\s*[.)]?\s*/, '');
+  q.stem = stemLines.join(' ').replace(/\s+/g, ' ').trim();
+  q.passage = passageLines.join(' ').replace(/\s+/g, ' ').trim();
+  q.images = figs.map(function (f) {
+    var pos = 'stem';
+    if (lastChoiceY != null && f.y > lastChoiceY) pos = 'after_choices';
+    else if (q.passage && inPassageBand(f.y, lines)) pos = 'passage';
+    return { src: f.src, position: pos };
+  });
+
+  if (q.choices.length >= 2) q.type = 'choice';
+  else if (ESSAY_RE.test(q.stem)) q.type = 'essay';
+  else if (q.stem) q.type = 'short';
+  else q.type = 'unparsed';                                     // 번호만 있고 본문이 없다 → 교사가 직접
+  return q;
+}
+function inPassageBand(y, lines) {
+  var mk = lines.filter(function (l) { return PASSAGE_RE.test(l.text.trim()); })[0];
+  return !!mk && y > mk.y;
+}
+
+// 구조 → HTML(허용 태그만)
+function questionToHtml(q) {
+  var imgs = function (pos) {
+    return q.images.filter(function (im) { return im.position === pos; })
+      .map(function (im) { return '<img src="' + im.src + '" alt="문항 그림" />'; }).join('');
+  };
+  var h = '<div class="q">';
+  if (q.stem) h += '<p class="stem">' + escapeHtmlText(q.stem) + '</p>';
+  h += imgs('stem');
+  if (q.passage) h += '<div class="passage">' + escapeHtmlText(q.passage) + imgs('passage') + '</div>';
+  if (q.choices.length) {
+    h += '<ol class="choices">' + q.choices.map(function (c) { return '<li>' + escapeHtmlText(c) + '</li>'; }).join('') + '</ol>';
+  }
+  h += imgs('after_choices');
+  h += '</div>';
+  return h;
+}
+function escapeHtmlText(s) {
+  return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+}
+
+function convertSlicesToHtml() {
+  var nums = Object.keys(sliceParts).map(Number).sort(function (a, b) { return a - b; });
+  if (!nums.length) { alert('먼저 문항 나누기에서 [이대로 저장]을 하세요.'); return; }
+  nums.forEach(function (num) {
+    var q = parseSliceToQuestion(num, sliceParts[num]);
+    var prev = qHtml[num];
+    qHtml[num] = { parsed: q, html: questionToHtml(q), useImage: prev ? prev.useImage : (q.type === 'unparsed') };
+  });
+  renderHtmlEditor();
+  var card = document.getElementById('htmlCard');
+  card.style.display = 'block';
+  card.scrollIntoView({ behavior: 'smooth' });
+}
+
+function renderHtmlEditor() {
+  var wrap = document.getElementById('htmlCards');
+  wrap.innerHTML = '';
+  var nums = Object.keys(qHtml).map(Number).sort(function (a, b) { return a - b; });
+  var okCount = nums.filter(function (n) { return qHtml[n].parsed.type !== 'unparsed'; }).length;
+  document.getElementById('htmlSummary').textContent =
+    nums.length + '개 중 ' + okCount + '개 변환 성공' + (okCount < nums.length ? ' · ' + (nums.length - okCount) + '개는 직접 확인 필요' : '');
+
+  nums.forEach(function (num) {
+    var rec = qHtml[num], q = rec.parsed;
+    var card = document.createElement('div');
+    card.className = 'qcard' + (q.type === 'unparsed' ? ' unparsed' : '') + (rec.useImage ? ' asimage' : '');
+    card.setAttribute('data-num', num);
+
+    var left = document.createElement('div'); left.className = 'qcard-src';
+    var im = document.createElement('img'); im.src = sliceImages[num] || ''; left.appendChild(im);
+    card.appendChild(left);
+
+    var right = document.createElement('div'); right.className = 'qcard-out';
+    var head = document.createElement('div'); head.className = 'qcard-head';
+    var label = (sliceNums[num] && sliceNums[num].length > 1)
+      ? (sliceNums[num][0] + '~' + sliceNums[num][sliceNums[num].length - 1] + '번') : (num + '번');
+    head.innerHTML = '<b>' + label + '</b> <span class="qtype">' + typeLabel(q.type) + '</span>';
+    var toggle = document.createElement('button');
+    toggle.className = 'btn-outline btn-sm';
+    toggle.textContent = rec.useImage ? '↩ HTML 로 쓰기' : '🖼 이미지로 되돌리기';
+    toggle.addEventListener('click', function () { rec.useImage = !rec.useImage; renderHtmlEditor(); });
+    head.appendChild(toggle);
+    right.appendChild(head);
+
+    if (rec.useImage) {
+      var note = document.createElement('div'); note.className = 'muted';
+      note.textContent = '이 문항은 변환하지 않고 원본 조각 이미지를 그대로 씁니다.';
+      right.appendChild(note);
+    } else if (q.type === 'unparsed') {
+      var warn = document.createElement('div'); warn.className = 'qwarn';
+      warn.textContent = '⚠ 자동 변환 실패 — 원문을 그대로 두었습니다. 아래에 직접 입력하거나 [이미지로 되돌리기]를 누르세요.';
+      right.appendChild(warn);
+      var raw = document.createElement('textarea'); raw.className = 'qraw';
+      raw.value = q.raw_text || '';
+      raw.placeholder = '문항 내용을 직접 입력하세요.';
+      raw.addEventListener('input', function () {
+        rec.html = '<div class="q"><p class="stem">' + escapeHtmlText(raw.value) + '</p></div>';
+      });
+      right.appendChild(raw);
+    } else {
+      var prev = document.createElement('div'); prev.className = 'qprev'; prev.contentEditable = 'true';
+      prev.innerHTML = rec.html;
+      prev.addEventListener('input', function () { rec.html = prev.innerHTML; });   // 클릭해서 바로 수정
+      right.appendChild(prev);
+      var hint = document.createElement('div'); hint.className = 'muted';
+      hint.textContent = '발문·지문·선지를 클릭해 바로 고칠 수 있어요.';
+      right.appendChild(hint);
+    }
+    card.appendChild(right);
+    wrap.appendChild(card);
+  });
+}
+function typeLabel(t) {
+  return t === 'choice' ? '선다형' : t === 'short' ? '단답형' : t === 'essay' ? '서술형' : '변환 실패';
+}
+document.getElementById('htmlCloseBtn').addEventListener('click', function () {
+  document.getElementById('htmlCard').style.display = 'none';
+});
 
 // 각 페이지 텍스트를 위치정보로 줄·단락 복원 → 단락 문자열 배열
 function extractAllText(pdf, hint, fname) {
@@ -1870,6 +2126,11 @@ function collectQuestions() {
     // 문항 나누기로 만든 조각 이미지가 있으면 함께 저장
     if (sliceImages[num]) q.slice_image = sliceImages[num];
     if (sliceGroups[num]) q.group_label = sliceGroups[num];
+    // HTML 화 결과 — [이미지로 되돌리기] 한 문항은 보내지 않는다(학생 화면이 이미지로 폴백)
+    var rec = qHtml[num];
+    if (rec && !rec.useImage && rec.html) {
+      q.html_content = window.sanitizeHtml ? window.sanitizeHtml(rec.html) : rec.html;
+    }
     questions.push(q);
   });
   return questions;
@@ -1971,6 +2232,8 @@ function enterEditMode(id) {
           if (g) g.checked = q.graded !== false;
           // 이미 저장된 조각 이미지는 재사용(수정 후 발행 시 유지)
           if (q.slice_image) { sliceImages[q.num] = q.slice_image; if (q.group_label) sliceGroups[q.num] = q.group_label; }
+          // 이미 변환된 HTML 도 재사용(수정 후 다시 발행해도 유지)
+          if (q.html_content) qHtml[q.num] = { parsed: { type: q.type || 'choice' }, html: q.html_content, useImage: false };
         });
       }
       // 응시 방식 복원 + 조각 있으면 '한 문제씩' 활성화
@@ -1991,7 +2254,9 @@ function exitEditMode() { editingId = null; document.getElementById('publishBtn'
 function resetForm() {
   document.getElementById('title').value = ''; document.getElementById('htmlBody').value = '';
   document.getElementById('fileHint').textContent = '.html 은 그대로 불러오고, .pdf 는 브라우저에서 페이지 이미지로 변환합니다.';
-  sliceImages = {}; sliceGroups = {};
+  sliceImages = {}; sliceGroups = {}; sliceParts = {}; sliceNums = {}; qHtml = {};
+  document.getElementById('toHtmlBtn').style.display = 'none';
+  document.getElementById('htmlCard').style.display = 'none';
   var vs = document.getElementById('viewSingle'); if (vs) { vs.disabled = true; }
   document.querySelector('input[name="viewMode"][value="all"]').checked = true;
   var h = document.getElementById('viewModeHint'); if (h) h.innerHTML = '‘한 문제씩’은 <b>문항 나누기</b>를 먼저 해야 선택할 수 있어요.';
