@@ -101,6 +101,24 @@
   .gapbox { position: absolute; box-sizing: border-box; border: 2px dashed #e53e3e; background: rgba(229,62,62,.08); z-index: 4; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 4px; }
   .gapbox .gaplbl { font-size: 11px; font-weight: 800; color: #c53030; background: #fff; padding: 1px 6px; border-radius: 4px; }
   .gapbox button { font-size: 10px; padding: 2px 6px; border-radius: 4px; }
+  /* 뷰 토글 */
+  .viewtoggle { display: inline-flex; border: 1px solid var(--line); border-radius: 8px; overflow: hidden; background: #fff; }
+  .viewtoggle button { background: #fff; color: var(--gray); border: 0; padding: 6px 11px; font-size: 12.5px; font-weight: 700; border-radius: 0; }
+  .viewtoggle button.on { background: var(--blue); color: #fff; }
+
+  /* 읽기 순서(흐름) 뷰 */
+  .slice-flow { flex: 1 1 60%; min-width: 0; }
+  .flow-cap { display: flex; align-items: center; gap: 8px; margin: 14px 0 8px; font-size: 12px; font-weight: 800; color: var(--gray); }
+  .flow-cap::after { content: ''; flex: 1; border-top: 1px solid var(--line); }
+  .flow-cap .pin { background: #edf2f7; padding: 2px 8px; border-radius: 999px; }
+  .flow-item { display: flex; gap: 10px; align-items: flex-start; padding: 8px; margin-bottom: 8px; border: 2px solid; border-radius: 10px; background: #fff; cursor: pointer; }
+  .flow-item.selected { outline: 3px solid #2b6cb0; outline-offset: 1px; }
+  .flow-item img { width: 190px; max-width: 42%; border: 1px solid var(--line); border-radius: 6px; display: block; background: #fff; }
+  .flow-meta { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 6px; }
+  .flow-num { align-self: flex-start; font-size: 12.5px; font-weight: 800; color: #fff; padding: 2px 9px; border-radius: 6px; cursor: text; }
+  .flow-actions { display: flex; gap: 6px; flex-wrap: wrap; }
+  .flow-item.gap { border-style: dashed; border-color: #e53e3e; background: rgba(229,62,62,.06); }
+  .flow-item.gap .flow-num { background: #fff; color: #c53030; border: 1px dashed #e53e3e; cursor: default; }
   @media (max-width: 860px) { .slice-editor { flex-direction: column; } .slice-preview { position: static; width: 100%; } }
 </style>
 </head>
@@ -212,15 +230,22 @@
     <div class="row" style="justify-content:space-between; flex-wrap:wrap;">
       <h2 style="margin:0;">✂️ 문항 나누기 — 영역 조정</h2>
       <div class="row" style="gap:6px;">
+        <div class="viewtoggle" id="sliceViewToggle">
+          <button type="button" class="on" id="viewGridBtn" data-view="grid">🗂 원본 배치</button>
+          <button type="button" id="viewFlowBtn" data-view="flow">↕ 읽기 순서</button>
+        </div>
+        <button class="btn-outline btn-sm" id="sliceUndoBtn" disabled title="되돌리기 (Ctrl+Z)">↶ 되돌리기</button>
+        <button class="btn-outline btn-sm" id="sliceRedoBtn" disabled title="다시 실행 (Ctrl+Shift+Z)">↷ 다시 실행</button>
         <button class="btn-blue btn-sm" id="sliceMergeBtn" disabled>선택 묶기</button>
         <span class="badge draft" id="sliceGapBadge" style="display:none;">⚠ 빈 영역 있음</span>
         <button class="btn-green btn-sm" id="sliceSaveBtn">이대로 저장</button>
         <button class="btn-gray btn-sm" id="sliceCloseBtn">닫기</button>
       </div>
     </div>
-    <div class="muted" id="sliceHelp" style="margin:8px 0;">각 문항이 색 박스로 표시됩니다(번호는 <b>시험지에 인쇄된 번호</b> 그대로, 순서는 왼단 위→아래 → 오른단 위→아래). 번호가 잘못 읽혔으면 <b>번호 라벨을 클릭</b>해 고치세요. 박스 <b>아래 손잡이(⇕)</b>를 끌어 끝(=다음 문항 시작)을 조절하고, 박스를 <b>클릭</b>해 여러 개 선택 후 [선택 묶기]로 공통 지문 문항을 합치세요. 빨간 점선은 <b>빈 영역</b>입니다.</div>
+    <div class="muted" id="sliceHelp" style="margin:8px 0;">각 문항이 색 박스로 표시됩니다(번호는 <b>시험지에 인쇄된 번호</b> 그대로, 순서는 왼단 위→아래 → 오른단 위→아래). 번호가 잘못 읽혔으면 <b>번호 라벨을 클릭</b>해 고치세요. 박스 <b>아래 손잡이(⇕)</b>를 끌어 끝(=다음 문항 시작)을 조절하고, 박스를 <b>클릭</b>해 여러 개 선택 후 [선택 묶기]로 공통 지문 문항을 합치세요(<b>페이지·단을 걸친 묶기는 [읽기 순서] 뷰</b>에서 나란히 놓고 하면 쉽습니다). 선택 해제는 <b>Esc</b>, 실수는 <b>Ctrl+Z</b>로 되돌립니다. 빨간 점선은 <b>빈 영역</b>입니다.</div>
     <div class="slice-editor">
       <div id="slicePages" class="slice-pages"></div>
+      <div id="sliceFlow" class="slice-flow" style="display:none;"></div>
       <div class="slice-preview">
         <div class="slice-preview-head">🔍 조각 미리보기</div>
         <div id="slicePreviewBody" class="muted" style="padding:12px;">문항 박스를 클릭하면 잘려 나올 조각이 여기 보여요.</div>
@@ -522,6 +547,7 @@ function runSlicing() {
     });
     sliceState = { pages: pages };
     sliceSel = [];
+    clearUndo();
     var total = pages.reduce(function (a, pg) { return a + pg.slices.length; }, 0);
     // 진단 표식: 실화면이 새 코드(단 판정)로 도는지 한눈에 — 2단이면 거터%, 아니면 1단
     var colInfo = pages.map(function (pg) { return pg.cols.length + '단'; }).join(' · ');
@@ -831,16 +857,104 @@ var QCOLORS = ['#e53e3e', '#3182ce', '#38a169', '#d69e2e', '#805ad5', '#dd6b20',
 var sliceSel = [];   // 묶기용 선택된 slice 들
 function colorFor(idx) { return QCOLORS[idx % QCOLORS.length]; }
 
+// 뷰 모드: 'grid'(원본 배치) | 'flow'(읽기 순서) — 두 뷰는 같은 sliceState 를 본다
+var sliceView = 'grid';
+try { sliceView = sessionStorage.getItem('sliceView') === 'flow' ? 'flow' : 'grid'; } catch (e) { }
+
+document.getElementById('sliceViewToggle').addEventListener('click', function (e) {
+  var b = e.target.closest('button[data-view]');
+  if (!b) return;
+  sliceView = b.getAttribute('data-view');
+  try { sessionStorage.setItem('sliceView', sliceView); } catch (err) { }
+  if (sliceState) renderSliceEditor();
+});
+
+// ---- 되돌리기/다시 실행: slice 상태 스냅샷 스택(저장 전까지 유효) ----
+var undoStack = [], redoStack = [], UNDO_MAX = 20;
+function snapshotSlices() {
+  return sliceState.pages.map(function (pg) {
+    return {
+      slices: pg.slices.map(function (s) { return { col: s.col, y: s.y, num: s.num, groupId: s.groupId || null }; }),
+      suspects: (pg.suspects || []).map(function (s) { return { col: s.col, y: s.y, num: s.num, reason: s.reason }; })
+    };
+  });
+}
+function applySnapshot(snap) {
+  sliceState.pages.forEach(function (pg, i) {
+    var s = snap[i] || { slices: [], suspects: [] };
+    pg.slices = s.slices.map(function (x) { return { col: x.col, y: x.y, num: x.num, groupId: x.groupId }; });
+    pg.suspects = s.suspects.map(function (x) { return { col: x.col, y: x.y, num: x.num, reason: x.reason }; });
+  });
+  sliceSel = [];   // 복원하면 slice 객체가 새로 만들어지므로 선택은 비운다
+}
+// 상태를 바꾸는 모든 동작(묶기·해제·삭제·번호수정·빈영역 붙이기·경계 조정) 직전에 호출
+function pushUndo() {
+  if (!sliceState) return;
+  undoStack.push(snapshotSlices());
+  if (undoStack.length > UNDO_MAX) undoStack.shift();
+  redoStack = [];
+  syncUndoButtons();
+}
+function undoSlice() {
+  if (!undoStack.length) return;
+  redoStack.push(snapshotSlices());
+  applySnapshot(undoStack.pop());
+  renderSliceEditor();
+}
+function redoSlice() {
+  if (!redoStack.length) return;
+  undoStack.push(snapshotSlices());
+  applySnapshot(redoStack.pop());
+  renderSliceEditor();
+}
+function clearUndo() { undoStack = []; redoStack = []; syncUndoButtons(); }
+function syncUndoButtons() {
+  document.getElementById('sliceUndoBtn').disabled = !undoStack.length;
+  document.getElementById('sliceRedoBtn').disabled = !redoStack.length;
+}
+document.getElementById('sliceUndoBtn').addEventListener('click', undoSlice);
+document.getElementById('sliceRedoBtn').addEventListener('click', redoSlice);
+// 빈 곳(카드 사이) 클릭 = 선택 전체 해제 — 렌더마다 붙이지 않도록 컨테이너에 한 번만
+document.getElementById('sliceFlow').addEventListener('click', function (e) {
+  if (e.target === this) clearSel();
+});
+document.addEventListener('keydown', function (e) {
+  var card = document.getElementById('sliceCard');
+  if (!sliceState || card.style.display === 'none') return;
+  if (e.key === 'Escape') { clearSel(); return; }
+  var z = (e.key === 'z' || e.key === 'Z');
+  if (!z || !(e.ctrlKey || e.metaKey)) return;
+  e.preventDefault();
+  if (e.shiftKey) redoSlice(); else undoSlice();
+});
+function clearSel() {
+  if (!sliceSel.length) return;
+  sliceSel = [];
+  renderSliceEditor();
+}
+
 function renderSliceEditor() {
-  var wrap = document.getElementById('slicePages');
-  wrap.innerHTML = '';
-  // ① 색은 그룹 단위로 배정 — 같은 groupId 는 페이지를 넘어도 같은 색
+  // 색은 그룹 단위로 배정 — 같은 groupId 는 페이지를 넘어도 같은 색(두 뷰가 같은 색을 쓴다)
   var groupColor = {}, ci = 0;
   allPageSlices().forEach(function (m) {
     var gid = m.s.groupId;
     if (gid) { if (!(gid in groupColor)) groupColor[gid] = colorFor(ci++); m.s.__color = groupColor[gid]; }
     else { m.s.__color = colorFor(ci++); }
   });
+  var pagesEl = document.getElementById('slicePages'), flowEl = document.getElementById('sliceFlow');
+  document.getElementById('viewGridBtn').classList.toggle('on', sliceView !== 'flow');
+  document.getElementById('viewFlowBtn').classList.toggle('on', sliceView === 'flow');
+  pagesEl.style.display = sliceView === 'flow' ? 'none' : 'block';
+  flowEl.style.display = sliceView === 'flow' ? 'block' : 'none';
+  if (sliceView === 'flow') renderFlowView(flowEl); else renderGridView(pagesEl);
+  updateGapBadge();
+  syncUndoButtons();
+  document.getElementById('sliceMergeBtn').disabled = sliceSel.length < 2;
+}
+
+// ---- 뷰 ①: 원본 배치(페이지·단 격자) ----
+function renderGridView(wrap) {
+  wrap.innerHTML = '';
   sliceState.pages.forEach(function (pg) {
     var div = document.createElement('div'); div.className = 'slice-page';
     var img = document.createElement('img'); img.className = 'pageimg'; img.src = pg.dataUrl; div.appendChild(img);
@@ -849,11 +963,13 @@ function renderSliceEditor() {
       if (i === 0) return;
       var g = document.createElement('div'); g.className = 'slice-gutter'; g.style.left = (c.x0 / pg.W * 100) + '%'; div.appendChild(g);
     });
+    img.addEventListener('click', clearSel);   // 빈 곳 클릭 = 선택 해제
     // 클릭한 위치에 경계 추가(빈 곳)
     img.addEventListener('dblclick', function (e) {
       var rect = img.getBoundingClientRect();
       var col = colAt(pg, (e.clientX - rect.left) / rect.width * pg.W);
       var maxNum = 0; sliceState.pages.forEach(function (p) { p.slices.forEach(function (s) { maxNum = Math.max(maxNum, s.num); }); });
+      pushUndo();
       pg.slices.push({ col: col, y: ((e.clientY - rect.top) / rect.height) * pg.H, num: maxNum + 1 });
       renderSliceEditor();
     });
@@ -870,12 +986,162 @@ function renderSliceEditor() {
         addQBox(div, pg, s, col, s.y, yBottom, s.__color, i, colSlices);
       });
     });
-    // ② 역행/쪽번호 의심 후보 — 경계는 만들지 않고 '의심' 표시만
+    // 역행/쪽번호 의심 후보 — 경계는 만들지 않고 '의심' 표시만
     (pg.suspects || []).forEach(function (sus) { addSuspectMarker(div, pg, sus); });
     wrap.appendChild(div);
   });
-  updateGapBadge();
-  document.getElementById('sliceMergeBtn').disabled = sliceSel.length < 2;
+}
+
+// ---- 뷰 ②: 읽기 순서 — 페이지·단 격자를 펴서 (페이지 → 단 → y) 한 줄로 ----
+// 페이지를 걸친 묶기(1p 오른단 끝 ↔ 2p 왼단 처음)가 격자에서는 대각선 반대편이라 손대기 어렵다.
+// 여기서는 두 항목이 바로 위아래로 붙어 나오므로 클릭 두 번으로 묶을 수 있다.
+function readingOrderEntries() {
+  var entries = [], seenGid = {};
+  sliceState.pages.forEach(function (pg, pi) {
+    pgCols(pg).forEach(function (_c, col) {
+      var cs = pg.slices.filter(function (s) { return s.col === col; }).sort(function (a, b) { return a.y - b.y; });
+      if (!cs.length) return;
+      if (cs[0].y > pg.H * 0.02) entries.push({ type: 'gap', pg: pg, pi: pi, col: col, yTop: 0, yBottom: cs[0].y, below: cs[0] });
+      cs.forEach(function (s) {
+        if (s.groupId) { if (seenGid[s.groupId]) return; seenGid[s.groupId] = true; }  // 묶음은 첫 멤버 자리에 카드 하나로
+        entries.push({ type: 'q', pg: pg, pi: pi, col: col, s: s });
+      });
+    });
+  });
+  return entries;
+}
+function colCaption(pg, col) {
+  var n = pgCols(pg).length;
+  if (n <= 1) return '한 단(전체 폭)';
+  if (n === 2) return col === 0 ? '왼쪽 단' : '오른쪽 단';
+  return (col + 1) + '번째 단';
+}
+
+function renderFlowView(wrap) {
+  wrap.innerHTML = '';
+  var entries = readingOrderEntries();
+  if (!entries.length) { wrap.innerHTML = '<div class="muted">문항 영역이 없습니다.</div>'; return; }
+  var prevPi = -1, prevCol = -1;
+  entries.forEach(function (en) {
+    if (en.pi !== prevPi) { wrap.appendChild(flowCaption('📄 ' + (en.pi + 1) + '페이지')); prevPi = en.pi; prevCol = -1; }
+    if (en.col !== prevCol) { wrap.appendChild(flowCaption(colCaption(en.pg, en.col))); prevCol = en.col; }
+    wrap.appendChild(en.type === 'gap' ? flowGapCard(en) : flowQCard(en));
+  });
+}
+function flowCaption(text) {
+  var d = document.createElement('div'); d.className = 'flow-cap';
+  var p = document.createElement('span'); p.className = 'pin'; p.textContent = text;
+  d.appendChild(p);
+  return d;
+}
+
+// 문항(묶음) 카드 — 잘려 나올 조각 썸네일 + 번호 라벨 + 묶기 해제 + 삭제
+function flowQCard(en) {
+  var s = en.s, color = s.__color || colorFor(0);
+  var members = groupMembersGlobal(s);
+  var card = document.createElement('div');
+  card.className = 'flow-item' + (sliceSel.indexOf(s) >= 0 ? ' selected' : '');
+  card.style.borderColor = color;
+  card.setAttribute('data-num', s.num);
+  var img = document.createElement('img');
+  var src = flowThumb(members);
+  if (src) img.src = src; else img.alt = '빈 영역';
+  card.appendChild(img);
+
+  var meta = document.createElement('div'); meta.className = 'flow-meta';
+  var num = document.createElement('span'); num.className = 'flow-num'; num.style.background = color;
+  num.textContent = labelOf(s) + '번' + (isCrossPage(s) ? ' · 페이지 걸침' : '');
+  num.title = '클릭해서 번호 수정';
+  num.addEventListener('click', function (ev) { ev.stopPropagation(); editSliceNum(s); });
+  meta.appendChild(num);
+
+  var acts = document.createElement('div'); acts.className = 'flow-actions';
+  if (s.groupId) {
+    var un = document.createElement('button'); un.className = 'btn-gray btn-sm'; un.textContent = '✕ 묶기 해제';
+    un.addEventListener('click', function (ev) { ev.stopPropagation(); unmergeGlobal(s); });
+    acts.appendChild(un);
+  }
+  var del = document.createElement('button'); del.className = 'btn-red btn-sm'; del.textContent = '삭제';
+  del.addEventListener('click', function (ev) { ev.stopPropagation(); deleteSlices(members.map(function (m) { return m.s; })); });
+  acts.appendChild(del);
+  meta.appendChild(acts);
+  card.appendChild(meta);
+
+  card.addEventListener('click', function () { toggleSel(s); showSlicePreview(en.pg, s); renderSliceEditor(); });
+  return card;
+}
+
+// 빈 영역 카드 — 격자 뷰의 gapbox 와 동일 동작
+function flowGapCard(en) {
+  var card = document.createElement('div'); card.className = 'flow-item gap';
+  var img = document.createElement('img');
+  var src = cropRectImage(en.pg, en.col, en.yTop, en.yBottom);
+  if (src) img.src = src;
+  card.appendChild(img);
+  var meta = document.createElement('div'); meta.className = 'flow-meta';
+  var lbl = document.createElement('span'); lbl.className = 'flow-num'; lbl.textContent = '빈 영역(지문·그림)';
+  meta.appendChild(lbl);
+  var acts = document.createElement('div'); acts.className = 'flow-actions';
+  var down = document.createElement('button'); down.className = 'btn-blue btn-sm'; down.textContent = '↓ 아래 문항에 붙이기';
+  down.addEventListener('click', function (ev) {
+    ev.stopPropagation();
+    pushUndo();
+    en.below.y = en.yTop;
+    renderSliceEditor();
+  });
+  acts.appendChild(down);
+  meta.appendChild(acts);
+  card.appendChild(meta);
+  return card;
+}
+
+// 썸네일: 저장 때와 같은 합성기(cropGroupGlobal)로 만들어 '보이는 것 = 저장되는 것'
+function flowThumb(members) {
+  var acc = { images: {}, groups: {}, missing: [], count: 0 };
+  cropGroupGlobal(members, acc);
+  var nums = members.map(function (m) { return m.s.num; }).sort(function (a, b) { return a - b; });
+  return acc.images[nums[0]] || null;
+}
+// 임의 사각형(빈 영역) 크롭
+function cropRectImage(pg, col, yTop, yBottom) {
+  var c = pgCols(pg)[Math.min(col, pgCols(pg).length - 1)];
+  var w = Math.round(c.x1 - c.x0), h = Math.round(yBottom - yTop);
+  if (w <= 0 || h <= 2) return null;
+  var cc = document.createElement('canvas'); cc.width = w; cc.height = h;
+  cc.getContext('2d').drawImage(pg.canvas, Math.round(c.x0), Math.round(yTop), w, h, 0, 0, w, h);
+  return cc.toDataURL('image/jpeg', 0.8);
+}
+
+function toggleSel(s) {
+  var idx = sliceSel.indexOf(s);
+  if (idx >= 0) sliceSel.splice(idx, 1); else sliceSel.push(s);
+}
+// 번호 수정(두 뷰 공용)
+function editSliceNum(s) {
+  var v = prompt('문항 번호', String(s.num));
+  if (v == null) return;
+  var n = parseInt(String(v).trim(), 10);
+  if (!(n >= 1 && n <= 99)) { alert('1~99 사이의 번호를 입력하세요.'); return; }
+  pushUndo();
+  s.num = n;
+  renderSliceEditor();
+}
+// 삭제(두 뷰 공용) — 묶음이면 멤버 전체
+function deleteSlices(list) {
+  pushUndo();
+  sliceState.pages.forEach(function (pg) {
+    pg.slices = pg.slices.filter(function (x) { return list.indexOf(x) < 0; });
+  });
+  sliceSel = sliceSel.filter(function (x) { return list.indexOf(x) < 0; });
+  renderSliceEditor();
+}
+// 묶기 해제(두 뷰 공용) — 페이지를 걸친 묶음도 전부 개별 문항으로 되돌린다
+function unmergeGlobal(s) {
+  var gid = s.groupId;
+  if (!gid) return;
+  pushUndo();
+  allPageSlices().forEach(function (m) { if (m.s.groupId === gid) m.s.groupId = null; });
+  renderSliceEditor();
 }
 
 // 단(칼럼) 목록 — 없으면 1단으로 간주
@@ -903,23 +1169,24 @@ function addQBox(div, pg, s, col, yTop, yBottom, color, i, colSlices) {
   label.title = '클릭해서 번호 수정';
   label.style.cursor = 'text';
   // 인쇄 번호가 잘못 읽혔을 때 교사가 라벨을 눌러 직접 고친다
-  label.addEventListener('click', function (ev) {
-    ev.stopPropagation();
-    var v = prompt('문항 번호', String(s.num));
-    if (v == null) return;
-    var n = parseInt(String(v).trim(), 10);
-    if (!(n >= 1 && n <= 99)) { alert('1~99 사이의 번호를 입력하세요.'); return; }
-    s.num = n;
-    renderSliceEditor();
-  });
+  label.addEventListener('click', function (ev) { ev.stopPropagation(); editSliceNum(s); });
   box.appendChild(label);
   var del = document.createElement('div'); del.className = 'qbox-del badge'; del.textContent = '삭제';
-  del.addEventListener('click', function (ev) { ev.stopPropagation(); var k = pg.slices.indexOf(s); if (k >= 0) pg.slices.splice(k, 1); sliceSel = sliceSel.filter(function (x) { return x !== s; }); renderSliceEditor(); });
+  del.addEventListener('click', function (ev) { ev.stopPropagation(); deleteSlices([s]); });
   box.appendChild(del);
+  // 묶음이면 해제 버튼 — 잘못 묶었을 때 개별 문항으로 되돌린다(읽기 순서 뷰와 동일)
+  if (s.groupId) {
+    var un = document.createElement('div');
+    un.className = 'qbox-del badge'; un.textContent = '✕ 해제';
+    un.style.cssText += 'right:44px; background:#4a5568;';
+    un.title = '묶기 해제';
+    un.addEventListener('click', function (ev) { ev.stopPropagation(); unmergeGlobal(s); });
+    box.appendChild(un);
+  }
   // 클릭 = 선택 토글 + 미리보기
-  box.addEventListener('click', function () {
-    var idx = sliceSel.indexOf(s);
-    if (idx >= 0) sliceSel.splice(idx, 1); else sliceSel.push(s);
+  box.addEventListener('click', function (ev) {
+    ev.stopPropagation();
+    toggleSel(s);
     showSlicePreview(pg, s);
     renderSliceEditor();
   });
@@ -928,6 +1195,7 @@ function addQBox(div, pg, s, col, yTop, yBottom, color, i, colSlices) {
   var handle = document.createElement('div'); handle.className = 'qbox-handle'; handle.textContent = '⇕';
   handle.addEventListener('pointerdown', function (e) {
     e.preventDefault(); e.stopPropagation();
+    pushUndo();   // 드래그 1회 = 되돌리기 1단계
     var rect = div.getBoundingClientRect();
     function mv(ev) {
       var y = Math.max(0, Math.min(pg.H, ((ev.clientY - rect.top) / rect.height) * pg.H));
@@ -950,7 +1218,7 @@ function addGapBox(div, pg, col, yTop, yBottom, belowSlice) {
   var lbl = document.createElement('div'); lbl.className = 'gaplbl'; lbl.textContent = '빈 영역(지문·그림)'; box.appendChild(lbl);
   if (belowSlice) {
     var down = document.createElement('button'); down.className = 'btn-blue'; down.textContent = '↓ 아래 문항에 붙이기';
-    down.addEventListener('click', function (ev) { ev.stopPropagation(); belowSlice.y = yTop; renderSliceEditor(); });
+    down.addEventListener('click', function (ev) { ev.stopPropagation(); pushUndo(); belowSlice.y = yTop; renderSliceEditor(); });
     box.appendChild(down);
   }
   div.appendChild(box);
@@ -968,6 +1236,7 @@ function addSuspectMarker(div, pg, sus) {
   add.className = 'btn-blue btn-sm'; add.textContent = '문항으로 추가';
   add.addEventListener('click', function (ev) {
     ev.stopPropagation();
+    pushUndo();
     pg.slices.push({ col: sus.col, y: sus.y, num: sus.num });
     pg.suspects = (pg.suspects || []).filter(function (x) { return x !== sus; });
     renderSliceEditor();
@@ -991,6 +1260,7 @@ function updateGapBadge() {
 // 선택 묶기 버튼
 document.getElementById('sliceMergeBtn').addEventListener('click', function () {
   if (sliceSel.length < 2) return;
+  pushUndo();
   // ① 페이지를 걸친 선택도 허용 — 기존 그룹이 있으면 흡수, 없으면 새 그룹 생성
   var gid = null;
   sliceSel.forEach(function (s) { if (s.groupId) gid = s.groupId; });
@@ -1075,7 +1345,7 @@ function mergeWithNext(pg, s) {
   pg.slices.forEach(function (x) { if (x === next || (oldNext && x.groupId === oldNext)) x.groupId = gid; });
   renderSliceEditor();
 }
-function unmerge(pg, s) { var gid = s.groupId; if (!gid) return; pg.slices.forEach(function (x) { if (x.groupId === gid) x.groupId = null; }); renderSliceEditor(); }
+function unmerge(pg, s) { unmergeGlobal(s); }   // 페이지를 걸친 묶음까지 전부 해제
 
 // 문항 조각 이미지 생성(그룹은 멤버 rect 를 세로로 합성). 반환 {images, groups, missing}
 // ①의 핵심: 크롭 = 묶인 모든 문항 영역의 합집합. 단·페이지를 걸치면 각 조각을 세로로 이어붙임.
@@ -1122,6 +1392,8 @@ function saveSlices() {
   var msg = '✅ ' + acc.count + '개 문항 조각 저장됨 — [발행]/[수정 반영] 시 함께 저장됩니다.';
   if (acc.missing.length) msg += ' ⚠ 영역이 비어 저장 못한 문항: ' + acc.missing.join(', ') + '번(경계를 조정하세요).';
   document.getElementById('sliceStatus').textContent = msg;
+  clearUndo();   // 되돌리기 스택은 저장 전까지만 유효
+  sliceSel = [];
   document.getElementById('sliceCard').style.display = 'none';
 }
 
