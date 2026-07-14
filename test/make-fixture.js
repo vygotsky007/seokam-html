@@ -143,6 +143,19 @@ const W = (t, opt) => Object.assign({ t }, opt || {});
     ry2 -= 30;
   }
 
+  // ================= 3페이지: 수학 — 보기가 발문에 인라인으로 붙은 문항(㉠㉡㉢) =================
+  // 실물에서 "기호를 쓰세요. ㉠ … ㉡ … ㉢ …" 가 한 줄로 뭉쳐 단답형으로 잡히던 자리.
+  const p3 = doc.addPage([595, 842]);
+  drawLine(p3, [
+    W('21.'), W('계산'), W('순서가'), W('다른'), W('것의'), W('기호를'), W('쓰세요.'),
+    W('㉠'), W('28-17+6'), W('㉡'), W('28-(17+6)'), W('㉢'), W('(28-17)+6'),
+  ], 50, 780, fonts);
+
+  // 회귀용: 같은 페이지에 (1)(2)(3) 꼴 보기도 하나
+  drawLine(p3, [W('22.'), W('알맞은'), W('것을'), W('고르세요.')], 50, 730, fonts);
+  drawLine(p3, [W('(1)'), W('참')], 56, 708, fonts);
+  drawLine(p3, [W('(2)'), W('거짓')], 56, 686, fonts);
+
   fs.mkdirSync(path.dirname(OUT), { recursive: true });
   fs.writeFileSync(OUT, await doc.save());
   console.log('✅ 픽스처 생성:', OUT);

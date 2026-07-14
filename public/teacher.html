@@ -145,8 +145,10 @@
   .qprev:focus { outline: 2px solid var(--blue); }
   .qprev .stem { font-weight: 700; margin: 0 0 8px; }
   .qprev .passage { border: 1px solid var(--line); border-radius: 8px; padding: 8px 10px; background: #fff; margin: 8px 0; }
-  /* 선지 마커(①②③) — 원본과 대조할 수 있게 선지 앞에 그대로 보인다 */
+  /* 선지 마커(①②③ ㉠㉡㉢) — 원본과 대조할 수 있게 선지 앞에 그대로 보인다 */
   .cmark { font-weight: 800; color: #2b6cb0; margin-right: 6px; }
+  .qtype-sel { margin-left: 8px; padding: 4px 8px; font-size: 13px; font-weight: 700; border: 1px solid var(--line); border-radius: 7px; background: #fff; }
+  .qprev .opts p { margin: 4px 0; }
   /* 직접 그리기 모드 */
   .slice-page.drawing { cursor: crosshair; }
   .slice-page.drawing img.pageimg { pointer-events: none; }
@@ -2062,7 +2064,7 @@ function cropIfInked(pg, x0, y0, x1, y1) {
   return cc.toDataURL('image/jpeg', 0.85);
 }
 
-var CHOICE_RE = /[①②③④⑤⑥⑦⑧⑨⑩]/;
+// (선지 마커 판정은 아래 isChoiceLine/markerHits 가 담당한다 — ①~⑩ 외에 ㉠~㉭·(1)·1) 도 선지다)
 var PASSAGE_RE = /^\s*(<\s*보\s*기\s*>|\[\s*보\s*기\s*\]|보\s*기|※)/;
 var ESSAY_RE = /(서술|설명하|논하|이유를|까닭을).{0,6}(시오|보시오|쓰시오|하시오)|서술형/;
 
@@ -2084,13 +2086,53 @@ function parseSliceToQuestion(num, parts, nums) {
 // 원문 마커(①②③…)를 순서 정보로 흡수해 버리지 않고 그대로 보존한다 —
 // 학생 화면·정답표·통계가 모두 이 마커를 그대로 쓴다.
 var MARKERS = ['①', '②', '③', '④', '⑤', '⑥', '⑦', '⑧', '⑨', '⑩'];
+
+// 마커 종류
+//  · 숫자 원문자 ①~⑩        — 어디에 나오든 선지다
+//  · 한글 원문자 ㉠~㉭, ㈀~㈎, ㉮~㉻ — 보기(지문) 항목으로도 쓰이므로 '지문 밖'에서만 선지로 본다
+//  · (1)(2)(3) · 1) 2) 3)   — 최소 2개가 이어질 때만 선지로 본다(문항 번호 "16)" 오인 방지)
+var DIGIT_MARK = '①②③④⑤⑥⑦⑧⑨⑩';
+var HANGUL_MARK = '㉠-㉭㈀-㈎㉮-㉻';
+var MARK_TOKEN_RE = new RegExp('[' + DIGIT_MARK + HANGUL_MARK + ']|\\(\\d{1,2}\\)|(?:^|\\s)\\d{1,2}\\)', 'g');
+var DIGIT_START_RE = new RegExp('^\\s*(?:[' + DIGIT_MARK + ']|\\(\\d{1,2}\\)|\\d{1,2}\\))');
+var HANGUL_START_RE = new RegExp('^\\s*[' + HANGUL_MARK + ']');
+
+// 텍스트에서 마커 위치를 훑는다 → [{marker, at, len}]
+function markerHits(text) {
+  var hits = [], m;
+  MARK_TOKEN_RE.lastIndex = 0;
+  while ((m = MARK_TOKEN_RE.exec(text)) !== null) {
+    var tok = m[0].trim();                       // "\n1)" 처럼 앞 공백이 붙어 나온다
+    hits.push({ marker: tok, at: m.index + m[0].indexOf(tok), len: tok.length });
+  }
+  return hits;
+}
+// 이 줄이 선지 줄인가 — 한글 원문자는 지문 안(㉠ 보기 항목)에서는 선지가 아니다
+function isChoiceLine(text, inPassage) {
+  if (DIGIT_START_RE.test(text)) return true;
+  return !inPassage && HANGUL_START_RE.test(text);
+}
+// 선지 줄 → 선지 배열(한 줄에 여러 개면 쪼갠다)
 function splitChoices(text) {
-  return text.split(/(?=[①②③④⑤⑥⑦⑧⑨⑩])/)
-    .map(function (x) { return x.trim(); })
-    .filter(function (c) { return c && CHOICE_RE.test(c[0]); })
-    .map(function (c) {
-      return { marker: c[0], text: tidyText(c.slice(1).trim()) };
-    });
+  var hits = markerHits(text);
+  if (!hits.length) return [];
+  return hits.map(function (h, i) {
+    var from = h.at + h.len;
+    var to = (i + 1 < hits.length) ? hits[i + 1].at : text.length;
+    return { marker: h.marker, text: tidyText(text.slice(from, to).trim()) };
+  }).filter(function (c) { return c.marker; });
+}
+// 발문 안에 보기가 인라인으로 붙은 문항(수학에 흔하다):
+//   "계산 순서가 다른 것의 기호를 쓰세요. ㉠ 28-17+6 ㉡ 28-(17+6) ㉢ (28-17)+6"
+// 마커가 2개 이상 이어지면 첫 마커부터 뒤를 선지로 떼어낸다.
+function inlineChoiceSplit(text, inPassage) {
+  if (inPassage) return null;
+  var hits = markerHits(text);
+  if (hits.length < 2) return null;
+  if (hits[0].at === 0) return null;                  // 줄 자체가 선지로 시작 → 여기서 다룰 일이 아니다
+  var head = tidyText(text.slice(0, hits[0].at).trim());
+  if (!head) return null;                             // 앞에 발문이 없으면 그냥 선지 줄이다
+  return { stem: head, choices: splitChoices(text.slice(hits[0].at)) };
 }
 // 마커가 없던 선지(다른 조판)는 순서대로 ①②③… 을 부여한다
 function normalizeChoices(choices) {
@@ -2134,7 +2176,7 @@ function parseSingleItem(num, lines, figs, raw) {
   var stemLines = [], passageLines = [], inPassage = false;
   lines.forEach(function (l) {
     var t = l.text.trim();
-    if (CHOICE_RE.test(t)) {
+    if (isChoiceLine(t, inPassage)) {                          // 선지 줄(줄 자체가 마커로 시작)
       splitChoices(t).forEach(function (c) { q.choices.push(c); });
       if (firstChoiceY == null) firstChoiceY = l.y;
       lastChoiceY = l.y; inPassage = false;
@@ -2142,6 +2184,15 @@ function parseSingleItem(num, lines, figs, raw) {
     }
     if (firstChoiceY != null) { stemLines.push(l); return; }   // 선지 뒤 꼬리말은 발문에 붙인다
     if (PASSAGE_RE.test(t)) { inPassage = true; passageY = l.y; return; }   // 표시줄 자체는 버린다
+    // 발문 뒤에 보기가 인라인으로 붙은 줄("… 기호를 쓰세요. ㉠ … ㉡ … ㉢ …")은 여기서 갈라낸다
+    var inl = firstChoiceY == null ? inlineChoiceSplit(t, inPassage) : null;
+    if (inl && inl.choices.length >= 2) {
+      stemLines.push({ y: l.y, h: l.h, x: l.x, w: l.w, pg: l.pg, parts: null, text: inl.stem });
+      inl.choices.forEach(function (c) { q.choices.push(c); });
+      if (firstChoiceY == null) firstChoiceY = l.y;
+      lastChoiceY = l.y;
+      return;
+    }
     (inPassage ? passageLines : stemLines).push(l);
   });
 
@@ -2185,7 +2236,7 @@ function lineHtml(l) { return l.parts ? markupLine(l) : escapeHtmlText(l.text ||
 // 마지막 선지(없으면 마지막 줄) 뒤에 나오는 지문 표시줄 위치 — 여기부터는 다음 문항 몫이다
 function trailingPassageStart(lines) {
   var lastChoice = -1;
-  lines.forEach(function (l, i) { if (CHOICE_RE.test(l.text.trim())) lastChoice = i; });
+  lines.forEach(function (l, i) { if (isChoiceLine(l.text.trim(), false)) lastChoice = i; });
   for (var i = lastChoice + 1; i < lines.length; i++) {
     if (PASSAGE_RE.test(lines[i].text.trim())) return i;
   }
@@ -2256,14 +2307,25 @@ function questionToHtml(q) {
     return q.images.filter(function (im) { return im.position === pos; })
       .map(function (im) { return '<img src="' + im.src + '" alt="문항 그림" />'; }).join('');
   };
+  // 유형이 선다형이 아니면 선지를 '누를 수 있는 목록'으로 내보내지 않는다 —
+  // 학생 화면은 li[data-marker] 의 존재로 클릭 답변을 켜기 때문에, 교사가 단답형으로 바꾸면
+  // 보기 글은 남기되(내용 손실 금지) 클릭은 꺼져야 한다.
+  var asChoice = q.type === 'choice' && q.choices.length;
   var h = '<div class="q" data-num="' + q.number + '">';
   if (q.stem) h += '<p class="stem">' + richText(q.stemHtml, q.stem) + '</p>';
   h += imgs('stem');
   if (q.passage) h += '<div class="passage">' + richText(q.passageHtml, q.passage) + imgs('passage') + '</div>';
-  if (q.choices.length) h += choicesToHtml(q.choices);
+  if (asChoice) h += choicesToHtml(q.choices);
+  else if (q.choices.length) h += plainChoicesToHtml(q.choices);
   h += imgs('after_choices');
   h += '</div>';
   return h;
+}
+// 선다형이 아닌 문항의 보기 — 마커는 그대로 보이되 클릭 대상이 아니다(data-marker 를 달지 않는다)
+function plainChoicesToHtml(choices) {
+  return '<div class="opts">' + normalizeChoices(choices).map(function (c) {
+    return '<p><span class="cmark">' + escapeHtmlText(c.marker) + '</span>' + escapeHtmlText(c.text) + '</p>';
+  }).join('') + '</div>';
 }
 // 묶음 → 공통 지문 한 번 + 하위 문항 블록들(각각 자기 번호·발문·선지)
 function groupToHtml(g) {
@@ -2277,7 +2339,7 @@ function groupToHtml(g) {
     h += '<div class="subq" data-num="' + sub.number + '"><div class="subnum">' + sub.number + '번</div>';
     if (sub.stem) h += '<p class="stem">' + richText(sub.stemHtml, sub.stem) + '</p>';
     (sub.images || []).forEach(function (im) { h += '<img src="' + im.src + '" alt="문항 그림" />'; });
-    if (sub.choices.length) h += choicesToHtml(sub.choices);
+    if (sub.choices.length) h += (sub.type === 'choice' ? choicesToHtml(sub.choices) : plainChoicesToHtml(sub.choices));
     h += '</div>';
   });
   return h + '</div>';
@@ -2325,6 +2387,22 @@ function renderHtmlEditor() {
       ? (sliceNums[num][0] + '~' + sliceNums[num][sliceNums[num].length - 1] + '번 (지문 공유)')
       : (num + '번');
     head.innerHTML = '<b>' + label + '</b> <span class="qtype">' + typeLabel(q.type) + '</span>';
+
+    // 유형 수동 전환 — 파서가 틀렸을 때(보기를 못 찾아 단답형이 됐다 등) 교사가 바로잡는 최후 수단
+    if (!(q.isGroup && q.type === 'group')) {
+      var sel = document.createElement('select');
+      sel.className = 'qtype-sel';
+      sel.title = '문항 유형 바꾸기';
+      [['choice', '선다형'], ['short', '단답형'], ['essay', '서술형']].forEach(function (o) {
+        var op = document.createElement('option');
+        op.value = o[0]; op.textContent = o[1];
+        if (q.type === o[0]) op.selected = true;
+        sel.appendChild(op);
+      });
+      sel.addEventListener('change', function () { setQuestionType(num, sel.value); });
+      head.appendChild(sel);
+    }
+
     var toggle = document.createElement('button');
     toggle.className = 'btn-outline btn-sm';
     toggle.textContent = rec.useImage ? '↩ HTML 로 쓰기' : '🖼 이미지로 되돌리기';
@@ -2367,6 +2445,29 @@ function renderHtmlEditor() {
     wrap.appendChild(card);
   });
   refreshRichIfActive();   // [이미지로 되돌리기] 등 편집기 변경 → 편집칸·미리보기 즉시 반영
+}
+// 교사가 유형을 바꾸면 HTML 도 그 유형에 맞게 다시 만든다.
+// 선다형으로 바꿨는데 선지가 없으면 발문 안의 마커(㉠ ① (1) …)를 다시 훑어 떼어낸다.
+function setQuestionType(num, type) {
+  var rec = qHtml[num];
+  if (!rec) return;
+  var q = rec.parsed;
+  if (type === 'choice' && !q.choices.length) {
+    var got = splitChoices(q.stem);
+    if (got.length >= 2) {
+      var hits = markerHits(q.stem);
+      q.stem = tidyText(q.stem.slice(0, hits[0].at));
+      q.stemHtml = '';                       // 발문이 바뀌었으니 서식 HTML 은 버리고 평문으로 다시 만든다
+      q.choices = normalizeChoices(got);
+    } else {
+      alert('발문에서 보기(㉠ ① (1) …)를 찾지 못했어요. 미리보기에서 직접 고쳐 주세요.');
+      renderHtmlEditor();
+      return;
+    }
+  }
+  q.type = type;
+  rec.html = questionToHtml(q);
+  renderHtmlEditor();
 }
 function typeLabel(t) {
   return t === 'choice' ? '선다형' : t === 'short' ? '단답형' : t === 'essay' ? '서술형'

@@ -1065,6 +1065,19 @@ function renderStudentSinglePage(activity, questions) {
   .autonext { display: flex; align-items: center; gap: 6px; font-size: 12px; color: #4a5568; margin-top: 6px; }
   .autonext button { padding: 4px 10px; font-size: 12px; font-weight: 700; border: 1px solid #cbd5e1; background: #fff; color: #4a5568; border-radius: 999px; cursor: pointer; }
   .autonext button.on { background: #2b6cb0; color: #fff; border-color: #2b6cb0; }
+  .qhtml .opts p { margin: 4px 0; }
+  /* 연습장(스케치패드) — 답이 아니라 학생이 끄적이는 자리. 서버로 보내지 않는다. */
+  .padbar { margin-top: 12px; }
+  .padbtn { padding: 9px 14px; font-size: 14px; font-weight: 800; border: 1px solid #cbd5e1; background: #fff; border-radius: 10px; cursor: pointer; min-height: 44px; }
+  .padbtn.on { background: #2b6cb0; color: #fff; border-color: #2b6cb0; }
+  .pad { margin-top: 8px; border: 1px solid #cbd5e1; border-radius: 10px; background: #fff; overflow: hidden; }
+  .padtools { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; padding: 8px; border-bottom: 1px solid #e2e8f0; background: #f7fafc; }
+  .padtools button { min-width: 44px; min-height: 44px; padding: 6px 10px; font-size: 13px; font-weight: 700; border: 1px solid #cbd5e1; background: #fff; border-radius: 8px; cursor: pointer; }
+  .padtools button.on { outline: 3px solid #bee3f8; border-color: #2b6cb0; }
+  .padtools .dot { width: 18px; height: 18px; border-radius: 50%; display: inline-block; }
+  .padtools .sp { flex: 1; }
+  /* touch-action:none — 폰에서 그리는 동안 화면이 딸려 스크롤되면 연습장을 쓸 수 없다 */
+  .pad canvas { display: block; width: 100%; touch-action: none; background: #fff; cursor: crosshair; }
   .donehint { margin-top: 10px; padding: 10px 12px; background: #f0fff4; border: 1px solid #9ae6b4; border-radius: 8px; font-weight: 700; color: #22543d; }
   .donehint button { margin-left: 8px; padding: 8px 14px; font-size: 14px; font-weight: 800; border: 0; border-radius: 8px; background: #2f855a; color: #fff; cursor: pointer; }
   .misslist { display: flex; flex-wrap: wrap; gap: 6px; justify-content: center; margin: 0 0 16px; }
@@ -1280,6 +1293,119 @@ function renderStudentSinglePage(activity, questions) {
     });
   }
 
+  // ================= 연습장(스케치패드) =================
+  // 문항마다 따로 보관한다(3번에서 그린 게 4번에 나오면 안 된다). 메모리에만 두고 제출과 무관하다.
+  // 화면을 다시 그릴 때마다 캔버스는 새로 만들어지므로, 그림은 dataURL 스냅샷으로 복원한다.
+  var padInk = {};      // { 문항키: dataURL }        — 현재 그림
+  var padUndo = {};     // { 문항키: [dataURL...] }   — 실행취소 스택(획 하나 = 한 단계)
+  var padOpen = {};     // { 문항키: true }           — 펼침 상태
+  var padBig = {};      // { 문항키: true }           — 480px 확장
+  var padTool = { mode: 'pen', color: '#1a202c' };
+  var PAD_UNDO_MAX = 20;
+
+  function padKey(s) { return s.nums.join('_'); }
+  // 추후 확장(제출·저장) 대비 — 지금은 아무도 부르지 않는다. 연습장은 서버로 보내지 않는다.
+  function extractSketch(num) {
+    var hit = Object.keys(padInk).filter(function (k) { return k.split('_').indexOf(String(num)) >= 0; })[0];
+    return hit ? padInk[hit] : null;
+  }
+
+  function mountPad(el, s) {
+    var key = padKey(s);
+    var btn = el.querySelector('#padToggle');
+    var host = el.querySelector('#padHost');
+    btn.classList.toggle('on', !!padOpen[key]);
+    btn.textContent = padOpen[key] ? '✏️ 연습장 접기' : '✏️ 연습장';
+    btn.onclick = function () { padOpen[key] = !padOpen[key]; mountPad(el, s); };
+    if (!padOpen[key]) { host.innerHTML = ''; return; }
+
+    host.innerHTML =
+      '<div class="pad"><div class="padtools">' +
+      '<button data-pen="#1a202c" title="검정"><span class="dot" style="background:#1a202c"></span></button>' +
+      '<button data-pen="#2b6cb0" title="파랑"><span class="dot" style="background:#2b6cb0"></span></button>' +
+      '<button data-pen="#e53e3e" title="빨강"><span class="dot" style="background:#e53e3e"></span></button>' +
+      '<button data-eraser="1">지우개</button>' +
+      '<span class="sp"></span>' +
+      '<button data-undo="1">↶ 실행취소</button>' +
+      '<button data-clear="1">전체 지우기</button>' +
+      '<button data-big="1">' + (padBig[key] ? '작게' : '더 크게') + '</button>' +
+      '</div><canvas id="padCanvas"></canvas></div>';
+
+    var cv = host.querySelector('#padCanvas');
+    var h = padBig[key] ? 480 : 240;
+    var dpr = window.devicePixelRatio || 1;
+    var w = Math.max(200, Math.round(cv.clientWidth || host.clientWidth));
+    cv.style.height = h + 'px';
+    cv.width = Math.round(w * dpr); cv.height = Math.round(h * dpr);
+    var ctx = cv.getContext('2d');
+    ctx.scale(dpr, dpr);
+    ctx.lineCap = 'round'; ctx.lineJoin = 'round';
+
+    if (padInk[key]) {                                   // 이전 그림 복원
+      var img = new Image();
+      img.onload = function () { ctx.drawImage(img, 0, 0, w, h); };
+      img.src = padInk[key];
+    }
+
+    host.querySelectorAll('[data-pen]').forEach(function (b) {
+      b.classList.toggle('on', padTool.mode === 'pen' && padTool.color === b.getAttribute('data-pen'));
+      b.onclick = function () { padTool = { mode: 'pen', color: b.getAttribute('data-pen') }; mountPad(el, s); };
+    });
+    var er = host.querySelector('[data-eraser]');
+    er.classList.toggle('on', padTool.mode === 'eraser');
+    er.onclick = function () { padTool = { mode: 'eraser', color: padTool.color }; mountPad(el, s); };
+    host.querySelector('[data-clear]').onclick = function () {
+      pushPadUndo(key);
+      ctx.clearRect(0, 0, w, h);
+      padInk[key] = cv.toDataURL('image/png');
+    };
+    host.querySelector('[data-undo]').onclick = function () {
+      var stack = padUndo[key] || [];
+      if (!stack.length) return;
+      padInk[key] = stack.pop();
+      mountPad(el, s);
+    };
+    host.querySelector('[data-big]').onclick = function () { padBig[key] = !padBig[key]; mountPad(el, s); };
+
+    // ---- 그리기(터치·마우스·펜슬 공통: pointer 이벤트) ----
+    var drawing = false;
+    function pos(e) {
+      var r = cv.getBoundingClientRect();
+      return { x: (e.clientX - r.left) * (w / r.width), y: (e.clientY - r.top) * (h / r.height) };
+    }
+    cv.addEventListener('pointerdown', function (e) {
+      e.preventDefault();                               // 폰에서 그리다 화면이 스크롤되지 않게
+      pushPadUndo(key);
+      drawing = true;
+      cv.setPointerCapture(e.pointerId);
+      var p = pos(e);
+      ctx.globalCompositeOperation = padTool.mode === 'eraser' ? 'destination-out' : 'source-over';
+      ctx.strokeStyle = padTool.color;
+      ctx.lineWidth = padTool.mode === 'eraser' ? 18 : 2.4;
+      ctx.beginPath(); ctx.moveTo(p.x, p.y); ctx.lineTo(p.x + 0.1, p.y); ctx.stroke();
+    });
+    cv.addEventListener('pointermove', function (e) {
+      if (!drawing) return;
+      e.preventDefault();
+      var p = pos(e);
+      ctx.lineTo(p.x, p.y); ctx.stroke();
+    });
+    function end() {
+      if (!drawing) return;
+      drawing = false;
+      ctx.globalCompositeOperation = 'source-over';
+      padInk[key] = cv.toDataURL('image/png');          // 획이 끝날 때만 스냅샷
+    }
+    cv.addEventListener('pointerup', end);
+    cv.addEventListener('pointercancel', end);
+    cv.addEventListener('pointerleave', end);
+  }
+  function pushPadUndo(key) {
+    var stack = padUndo[key] || (padUndo[key] = []);
+    stack.push(padInk[key] || '');
+    if (stack.length > PAD_UNDO_MAX) stack.shift();
+  }
+
   function render() {
     renderChrome();
     // 슬라이드
@@ -1299,9 +1425,11 @@ function renderStudentSinglePage(activity, questions) {
       html += '<div class="noimg" style="color:#e11d48;">🙏 문항을 불러올 수 없어요</div>';
     }
     html += '<div class="answers" id="answers"></div><div id="doneHint"></div>';
+    html += '<div class="padbar"><button class="padbtn" id="padToggle" type="button">✏️ 연습장</button></div><div id="padHost"></div>';
     el.innerHTML = html;
     bindChoices(el, s);        // 선지 클릭 = 답 선택(선지가 있는 문항만)
     renderAnswers(el, s);      // 객관식이면 입력칸 대신 선택 상태
+    mountPad(el, s);           // 문항별 연습장
     el.querySelectorAll('.fontbar button').forEach(function (b) {
       b.addEventListener('click', function () { setFont(b.getAttribute('data-f')); });
     });

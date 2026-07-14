@@ -120,7 +120,7 @@ async function drag(page, box, x0, y0, x1, y1) {   // 페이지 px 좌표로 드
   await page.waitForSelector('#sliceBtn', { state: 'visible', timeout: 20000 });
   await page.click('#sliceBtn');
   await page.waitForSelector('.slice-page .qbox', { timeout: 30000 });
-  await page.waitForFunction(() => window.sliceState && window.sliceState.pages.length === 2, null, { timeout: 20000 });
+  await page.waitForFunction(() => window.sliceState && window.sliceState.pages.length === 3, null, { timeout: 20000 });
 
   // --- 자동 인식 품질 배너(표 학습지 페이지 때문에 낮게 나와야 한다) ---
   const banner = await page.isVisible('#sliceLowConf');
@@ -193,8 +193,29 @@ async function drag(page, box, x0, y0, x1, y1) {   // 페이지 px 좌표로 드
   ok('묶음에 공통 지문이 있다(㉠~㉢)', /㉠/.test(g.p.passage || ''), 'passage=' + (g.p.passage || '').slice(0, 60));
   ok('본문에 쪽번호 "1" 이 섞이지 않는다', !/(^|\s)1(\s|$)/.test((g.p.passage || '')), g.p.passage);
 
+  // --- [기호 선지] 21번: 발문에 인라인으로 붙은 ㉠㉡㉢ 를 선지로 떼어낸다 ---
+  const q21 = parsed['21'] || { html: '', p: {} };
+  const mk21 = ((q21.p.choices) || []).map((c) => c.marker).join('');
+  ok('21번이 선다형으로 잡힌다(단답형 아님)', q21.p.type === 'choice', 'type=' + q21.p.type);
+  ok('21번 보기 ㉠㉡㉢ 3개가 선지로 갈라진다', mk21 === '㉠㉡㉢', 'markers=' + mk21);
+  ok('21번 발문에서 보기가 빠진다', /기호를 쓰세요\.?$/.test((q21.p.stem || '').trim()) && !/㉠/.test(q21.p.stem || ''), 'stem=' + q21.p.stem);
+  ok('21번 선지 본문이 살아 있다(28-17+6)', /28-17\+6/.test(((q21.p.choices || [])[0] || {}).text || ''), JSON.stringify(q21.p.choices));
+
+  // --- (1)(2) 꼴 보기도 선지로 ---
+  const q22 = parsed['22'] || { p: {} };
+  const mk22 = ((q22.p.choices) || []).map((c) => c.marker).join(',');
+  ok('22번 "(1) (2)" 꼴 보기도 선지가 된다', q22.p.type === 'choice' && mk22 === '(1),(2)', 'type=' + q22.p.type + ' markers=' + mk22);
+
+  // --- [유형 수동 전환] 편집기 드롭다운으로 선다형 ↔ 단답형 ---
+  await page.selectOption('.qcard[data-num="21"] .qtype-sel', 'short');
+  const asShort = await page.evaluate(() => window.qHtml['21'].html);
+  ok('편집기에서 단답형으로 바꾸면 클릭 선지가 사라진다', !/data-marker=/.test(asShort) && /㉠/.test(asShort), asShort.slice(0, 80));
+  await page.selectOption('.qcard[data-num="21"] .qtype-sel', 'choice');
+  const asChoice = await page.evaluate(() => window.qHtml['21'].html);
+  ok('다시 선다형으로 바꾸면 클릭 선지가 돌아온다', (asChoice.match(/data-marker=/g) || []).length === 3, asChoice.slice(0, 80));
+
   // 학생 화면 검증에 쓸 실제 변환 결과를 DB(모의)에 적재 — '교사가 만든 그대로' 학생에게 간다
-  const answersKey = { 16: '3', 17: '태백산', 8: '1', 9: '1', 20: '1' };
+  const answersKey = { 16: '3', 17: '태백산', 8: '1', 9: '1', 20: '1', 21: '㉡', 22: '(1)' };
   state.activity = { id: ACT_ID, title: '검증용 시험지', html_body: '', status: 'published', version: 1, view_mode: 'single' };
   state.questions = await page.evaluate((key) => {
     const rows = [];
@@ -383,6 +404,81 @@ async function drag(page, box, x0, y0, x1, y1) {   // 페이지 px 좌표로 드
   const g9 = await sp.textContent('#slide .picked[data-num="9"]');
   ok('8번을 답해도 9번은 그대로다(독립)', /선택:\s*①/.test(g8) && /선지를 눌러/.test(g9), g8 + ' / ' + g9);
 
+  // ---- 기호 선지(㉠㉡㉢): 초등학생이 원문자를 타이핑할 수 없으니 반드시 클릭이어야 한다 ----
+  await sp.click('.chip:has-text("21")');
+  await sp.waitForSelector('#slide ol.choices li.pick');
+  ok('21번이 학생 화면에서 클릭 선지 3개가 된다', (await sp.locator('#slide ol.choices li.pick').count()) === 3);
+  ok('21번엔 텍스트 입력칸이 없다(원문자 타이핑 불가)', (await sp.locator('#slide .arow input').count()) === 0);
+  await sp.locator('#slide ol.choices li.pick').nth(1).click();
+  const p21 = await sp.textContent('#slide .picked');
+  ok('㉡ 을 눌러 답할 수 있다(저장값 "㉡")', /선택:\s*㉡/.test(p21), p21);
+
+  // ---- 연습장(스케치패드) ----
+  const padDraw = async () => {
+    const b = await sp.locator('#padCanvas').boundingBox();
+    await sp.mouse.move(b.x + 20, b.y + 20);
+    await sp.mouse.down();
+    await sp.mouse.move(b.x + 120, b.y + 90, { steps: 8 });
+    await sp.mouse.up();
+  };
+  const inkOf = () => sp.evaluate(() => {
+    const cv = document.querySelector('#padCanvas');
+    const d = cv.getContext('2d').getImageData(0, 0, cv.width, cv.height).data;
+    let n = 0;
+    for (let i = 3; i < d.length; i += 4 * 13) if (d[i] > 10) n++;   // 알파값이 있는 픽셀 = 그린 자국
+    return n;
+  });
+
+  ok('연습장은 기본으로 접혀 있다', (await sp.locator('#padCanvas').count()) === 0);
+  await sp.click('#padToggle');
+  await sp.waitForSelector('#padCanvas');
+  ok('[✏️ 연습장]을 누르면 캔버스가 펼쳐진다', (await sp.locator('#padCanvas').count()) === 1);
+  const ta = await sp.evaluate(() => getComputedStyle(document.querySelector('#padCanvas')).touchAction);
+  ok('그리는 동안 화면이 스크롤되지 않는다(touch-action:none)', ta === 'none', 'touch-action=' + ta);
+
+  await padDraw();
+  const ink21 = await inkOf();
+  ok('연습장에 그림이 그려진다', ink21 > 0, 'ink=' + ink21);
+
+  // 다른 문항으로 갔다 오면 — 남의 그림은 안 보이고, 내 그림은 그대로
+  await sp.click('.chip:has-text("22")');
+  await sp.waitForSelector('#padToggle');
+  ok('다른 문항에는 그 문항의 연습장이 뜬다(접힘 상태)', (await sp.locator('#padCanvas').count()) === 0);
+  await sp.click('#padToggle');
+  await sp.waitForSelector('#padCanvas');
+  const ink22 = await inkOf();
+  ok('22번 연습장은 비어 있다(21번 그림이 새지 않는다)', ink22 === 0, 'ink=' + ink22);
+
+  await sp.click('.chip:has-text("21")');
+  await sp.waitForSelector('#padCanvas');           // 펼침 상태가 문항별로 기억된다
+  await sp.waitForFunction(() => {
+    const cv = document.querySelector('#padCanvas');
+    const d = cv.getContext('2d').getImageData(0, 0, cv.width, cv.height).data;
+    for (let i = 3; i < d.length; i += 4 * 13) if (d[i] > 10) return true;
+    return false;
+  }, null, { timeout: 3000 }).catch(() => {});
+  const back21 = await inkOf();
+  ok('21번으로 돌아오면 그림이 그대로 있다', back21 > 0, 'ink=' + back21);
+
+  // 실행취소 → 그림이 지워진다
+  await sp.click('.pad [data-undo]');
+  await sleep(300);
+  const padUndone = await inkOf();
+  ok('실행취소로 마지막 획이 지워진다', padUndone === 0, 'ink=' + padUndone);
+
+  // 지우개·전체 지우기 동작(그린 뒤 전체 지우기)
+  await padDraw();
+  await sp.click('.pad [data-clear]');
+  await sleep(200);
+  ok('전체 지우기가 동작한다', (await inkOf()) === 0);
+  await sp.click('.pad [data-eraser]');
+  ok('지우개 도구를 고를 수 있다', (await sp.locator('.pad [data-eraser].on').count()) === 1);
+  await sp.click('.pad [data-big]');
+  const bigH = await sp.evaluate(() => document.querySelector('#padCanvas').style.height);
+  ok('[더 크게] 로 480px 로 넓어진다', bigH === '480px', bigH);
+  await sp.click('#padToggle');
+  ok('연습장을 접을 수 있다', (await sp.locator('#padCanvas').count()) === 0);
+
   // 미답 상태로 제출 → 확인창에 번호가 나오고, 번호를 누르면 그 문항으로 간다
   await sp.click('#nextBtn');                     // 마지막까지 가면 finish()
   for (let i = 0; i < 8; i++) { if (await sp.isVisible('#finishOverlay.show')) break; await sp.click('#nextBtn'); }
@@ -402,7 +498,11 @@ async function drag(page, box, x0, y0, x1, y1) {   // 페이지 px 좌표로 드
   const sub = state.submissions[state.submissions.length - 1] || {};
   const sent = sub.answers || {};
   ok('제출값이 마커 형식(③)으로 서버에 저장된다', sent.q16 === '③', JSON.stringify(sent));
+  ok('기호 선지 답도 마커 그대로(㉡) 저장된다', sent.q21 === '㉡', JSON.stringify(sent));
   ok('단답형 답도 함께 저장된다', sent.q17 === '태백산', JSON.stringify(sent));
+  // 연습장은 답이 아니다 — 제출 페이로드에 절대 들어가면 안 된다
+  const payloadStr = JSON.stringify(sub);
+  ok('연습장 그림이 제출 페이로드에 포함되지 않는다', !/data:image\/png/.test(payloadStr) && !/sketch|pad/i.test(payloadStr), payloadStr.slice(0, 100));
   ok('마커(③)가 교사 정답표(3)와 맞아 채점된다(auto_score≥1)', Number(sub.auto_score) >= 1, 'auto_score=' + sub.auto_score);
   ok('학생 화면에서 자바스크립트 오류가 없다', serrors.length === 0, serrors.join(' | '));
 
