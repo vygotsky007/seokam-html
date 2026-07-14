@@ -1147,6 +1147,31 @@ function renderLivePage(activity) {
   .bar .n { width: 100px; font-size: 12px; color: #4a5568; }
   .who { font-size: 12px; color: #718096; margin-left: 4px; }
   .muted { color: #718096; font-size: 13px; }
+  /* 학생 패널 — 이름을 누르면 오른쪽에서 밀려 나온다 */
+  table.matrix td.name { cursor: pointer; }
+  table.matrix td.name:hover { background: #ebf8ff; }
+  #stuPanel { position: fixed; top: 0; right: 0; width: 380px; max-width: 100%; height: 100%; background: #fff;
+    border-left: 1px solid #e2e8f0; box-shadow: -4px 0 20px rgba(0,0,0,.10); padding: 16px; overflow-y: auto;
+    transform: translateX(100%); transition: transform .18s ease; z-index: 40; }
+  #stuPanel.show { transform: translateX(0); }
+  #stuPanel h3 { margin: 0 0 4px; font-size: 17px; }
+  #stuPanel .close { position: absolute; top: 12px; right: 14px; border: 0; background: transparent; font-size: 20px; cursor: pointer; color: #718096; }
+  .stat { font-size: 13px; color: #4a5568; margin-bottom: 12px; }
+  .stat b { color: #2b6cb0; }
+  .ansrow { display: flex; gap: 8px; padding: 5px 0; border-top: 1px dashed #e2e8f0; font-size: 13px; }
+  .ansrow .n { flex: 0 0 40px; font-weight: 800; color: #4a5568; }
+  .ansrow .v { flex: 1; word-break: break-word; }
+  .ansrow .v.none { color: #a0aec0; }
+  .quick { display: flex; flex-wrap: wrap; gap: 6px; margin: 8px 0; }
+  .quick button { padding: 7px 10px; font-size: 12px; font-weight: 700; border: 1px solid #cbd5e1; background: #f7fafc; border-radius: 999px; cursor: pointer; }
+  .msgbar { display: flex; gap: 6px; }
+  .msgbar input { flex: 1; min-width: 0; padding: 9px 10px; font-size: 14px; border: 1px solid #cbd5e1; border-radius: 8px; }
+  .msgbar button { padding: 9px 12px; font-weight: 800; color: #fff; background: #2b6cb0; border: 0; border-radius: 8px; cursor: pointer; }
+  .msglog { margin-top: 10px; }
+  .msglog .m { padding: 8px 10px; margin-bottom: 6px; background: #ebf8ff; border: 1px solid #bee3f8; border-radius: 8px; font-size: 13px; }
+  .msglog .m .meta { font-size: 11px; color: #718096; margin-top: 3px; }
+  .msglog .m.unread { background: #fffaf0; border-color: #f6ad55; }
+  .msglog .m .badge2 { font-size: 11px; font-weight: 800; color: #975a16; }
 </style>
 </head>
 <body>
@@ -1176,10 +1201,15 @@ function renderLivePage(activity) {
       <div class="dist" id="dist"></div>
     </div>
   </div>
+
+  <div id="stuPanel">
+    <button class="close" id="stuClose" type="button">✕</button>
+    <div id="stuBody"></div>
+  </div>
 <script>
 (function () {
   var ACTIVITY_ID = ${JSON.stringify(activity.id)};
-  var state = null, pickedQ = null;
+  var state = null, pickedQ = null, openStu = null;   // openStu = 패널을 열어 둔 학생 닉네임
 
   function esc(s) { return String(s == null ? '' : s).replace(/[&<>"']/g, function (c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]; }); }
   function hasAns(st, num) { return String((st.answers || {})['q' + num] || '').trim() !== ''; }
@@ -1202,7 +1232,7 @@ function renderLivePage(activity) {
     qs.forEach(function (q) { h += '<th class="qh" data-q="' + q.num + '">' + q.num + '</th>'; });
     h += '</tr></thead><tbody>';
     sts.forEach(function (st) {
-      h += '<tr class="' + (st.online ? '' : 'off') + '"><td class="name">' + esc(st.nickname) +
+      h += '<tr class="' + (st.online ? '' : 'off') + '"><td class="name" data-nick="' + esc(st.nickname) + '" title="눌러서 학생 패널 열기">' + esc(st.nickname) +
         (st.online ? '' : '<span class="badge offb">연결 끊김</span>') +
         (st.submitted ? '<span class="badge sub">제출</span>' : '') + '</td>';
       qs.forEach(function (q) {
@@ -1222,6 +1252,10 @@ function renderLivePage(activity) {
     document.querySelectorAll('th.qh').forEach(function (th) {
       th.onclick = function () { pickedQ = Number(th.getAttribute('data-q')); renderDist(); };
     });
+    document.querySelectorAll('#matrix td.name').forEach(function (td) {
+      td.onclick = function () { openStu = td.getAttribute('data-nick'); renderStu(); };
+    });
+    if (openStu) renderStu();
 
     // ---- 공지 이력 / 마감 상태 ----
     document.getElementById('nlist').innerHTML = (state.notices || []).map(function (n) {
@@ -1231,6 +1265,81 @@ function renderLivePage(activity) {
     document.getElementById('closeBtn').disabled = !!state.closed;
 
     if (pickedQ != null) renderDist();
+  }
+
+  // ---- 학생 패널: 상태 · 답 목록 · 개별 메시지(전체 공지와 다른 채널) ----
+  var QUICK = ['잘하고 있어요 👍', '다시 확인해 보세요', '선생님한테 오세요'];
+
+  document.getElementById('stuClose').onclick = function () {
+    openStu = null;
+    document.getElementById('stuPanel').classList.remove('show');
+  };
+
+  function renderStu() {
+    var panel = document.getElementById('stuPanel');
+    var st = (state.students || []).filter(function (s) { return s.nickname === openStu; })[0];
+    if (!st) { panel.classList.remove('show'); return; }
+    panel.classList.add('show');
+
+    var qs = state.questions || [];
+    var answered = qs.filter(function (q) { return hasAns(st, q.num); }).length;
+
+    var h = '<h3>' + esc(st.nickname) + '</h3>' +
+      '<div class="stat">' +
+      (st.online ? '🟢 접속 중' : '⚪ 연결 끊김') +
+      ' · 현재 <b>' + (st.current_q != null ? st.current_q + '번' : '—') + '</b>' +
+      ' · 답한 문항 <b>' + answered + '/' + qs.length + '</b>' +
+      ' · ' + (st.submitted ? '제출 완료' : '미제출') +
+      '</div>';
+
+    h += '<div class="lbl" style="font-weight:800;font-size:13px;margin-bottom:4px;">문항별 답 (원문 그대로)</div>';
+    h += qs.map(function (q) {
+      var v = String((st.answers || {})['q' + q.num] || '').trim();
+      return '<div class="ansrow"><span class="n">' + q.num + '번</span>' +
+        '<span class="v' + (v ? '' : ' none') + '">' + (v ? esc(v) : '—') + '</span></div>';
+    }).join('');
+
+    h += '<div class="lbl" style="font-weight:800;font-size:13px;margin:14px 0 4px;">개별 메시지</div>';
+    h += '<div class="quick">' + QUICK.map(function (t, i) {
+      return '<button type="button" data-quick="' + i + '">' + esc(t) + '</button>';
+    }).join('') + '</div>';
+    h += '<div class="msgbar"><input id="stuMsg" type="text" placeholder="이 학생에게만 보내는 말" autocomplete="off" />' +
+      '<button id="stuSend" type="button">보내기</button></div>';
+
+    var msgs = (st.messages || []).slice().reverse();
+    h += '<div class="msglog">' + (msgs.length
+      ? msgs.map(function (m) {
+          return '<div class="m' + (m.seen_at ? '' : ' unread') + '">' + esc(m.text) +
+            '<div class="meta">' + new Date(m.at).toLocaleTimeString('ko-KR') + ' · ' +
+            (m.seen_at ? '확인함' : '<span class="badge2">미확인' + (st.online ? '' : ' (연결 끊김 — 재접속하면 전달돼요)') + '</span>') +
+            '</div></div>';
+        }).join('')
+      : '<div class="muted">보낸 메시지가 없어요.</div>') + '</div>';
+
+    document.getElementById('stuBody').innerHTML = h;
+    document.getElementById('stuSend').onclick = function () {
+      var el = document.getElementById('stuMsg');
+      sendMessage(st.nickname, el.value);
+      el.value = '';
+    };
+    document.getElementById('stuMsg').addEventListener('keydown', function (e) {
+      if (e.key === 'Enter') { sendMessage(st.nickname, this.value); this.value = ''; }
+    });
+    panel.querySelectorAll('button[data-quick]').forEach(function (b) {
+      b.onclick = function () { sendMessage(st.nickname, QUICK[Number(b.getAttribute('data-quick'))]); };
+    });
+  }
+
+  function sendMessage(nickname, text) {
+    var t = String(text || '').trim();
+    if (!t) return;
+    fetch('/api/live/message', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ activityId: ACTIVITY_ID, nickname: nickname, text: t }),
+    }).then(function (r) { return r.json(); }).then(function (d) {
+      if (!d.ok) throw new Error(d.error || '실패');
+      poll();
+    }).catch(function (e) { alert('메시지 보내기 실패: ' + e.message); });
   }
 
   // ---- 문항별 응답 분포(이름은 교사에게만) ----
@@ -1411,8 +1520,16 @@ function renderStudentSinglePage(activity, questions) {
   #updateBanner { display: none; background: #fefcbf; color: #744210; border: 1px solid #ecc94b; border-radius: 8px; padding: 8px 12px; margin: 8px 0; font-weight: 700; font-size: 14px; }
   #updateBanner button { margin-left: 8px; padding: 4px 10px; border: 0; border-radius: 6px; background: #d69e2e; color: #fff; font-weight: 700; cursor: pointer; }
   /* 선생님 공지 — 새 공지가 오면 부드럽게 강조(진동·소리 없음: 수업 중이다) */
-  #noticeBanner { display: none; background: #ebf8ff; color: #2a4365; border: 1px solid #90cdf4; border-radius: 8px; padding: 10px 12px; margin: 8px 0; font-weight: 700; font-size: 14px; transition: background .6s ease; }
-  #noticeBanner.fresh { background: #bee3f8; }
+  /* 전체 공지 — 노란 계열 */
+  #noticeBanner { display: none; background: #fffaf0; color: #744210; border: 1px solid #f6ad55; border-radius: 8px; padding: 10px 12px; margin: 8px 0; font-weight: 700; font-size: 14px; transition: background .6s ease; }
+  #noticeBanner.fresh { background: #feebc8; }
+  /* 나에게만 온 메시지 — 파란 계열 + "선생님이 나에게" 라벨(전체 공지와 한눈에 구분) */
+  #dmBanner { display: none; background: #ebf8ff; color: #2a4365; border: 2px solid #2b6cb0; border-radius: 8px; padding: 10px 12px; margin: 8px 0; font-size: 14px; transition: background .6s ease; }
+  #dmBanner.fresh { background: #bee3f8; }
+  #dmBanner .dmlab { display: inline-block; font-size: 11px; font-weight: 800; color: #fff; background: #2b6cb0; border-radius: 999px; padding: 2px 8px; margin-bottom: 4px; }
+  #dmBanner .dmtext { font-weight: 800; }
+  #dmBanner .dmact { margin-top: 8px; display: flex; gap: 6px; }
+  #dmBanner button { padding: 8px 14px; font-size: 13px; font-weight: 800; border: 0; border-radius: 8px; background: #2b6cb0; color: #fff; cursor: pointer; min-height: 40px; }
   #closedOverlay { display: none; position: fixed; inset: 0; background: rgba(0,0,0,.55); z-index: 60; align-items: center; justify-content: center; padding: 20px; }
   #closedOverlay.show { display: flex; }
 </style>
@@ -1424,6 +1541,7 @@ function renderStudentSinglePage(activity, questions) {
     <input class="nick" id="nick" type="text" placeholder="닉네임(이름)을 입력하세요" autocomplete="off" />
     <div id="updateBanner">🔔 선생님이 문제를 수정했어요. <button id="reloadBtn">새로고침</button></div>
     <div id="noticeBanner"></div>
+    <div id="dmBanner"></div>
     <div class="prog"><div id="progFill"></div></div>
     <div class="chips" id="chips"></div>
     <div class="counter" id="counter"></div>
@@ -1952,7 +2070,35 @@ function renderStudentSinglePage(activity, questions) {
     }).then(function (r) { return r.json(); }).then(function (d) {
       if (!d || !d.ok) return;
       showNotice((d.notices || [])[0]);
+      showDm((d.messages || [])[0]);         // 본인 앞으로 온 것만 서버가 보내 준다
       if (d.closed) onClosed();
+    }).catch(function () {});
+  }
+
+  // ---- 선생님이 나에게 보낸 메시지(전체 공지와 다른 채널·다른 색) ----
+  var dmShown = null;
+  function showDm(m) {
+    var el = document.getElementById('dmBanner');
+    if (!m) { if (!dmShown) el.style.display = 'none'; return; }
+    if (dmShown === m.id) return;             // 같은 메시지를 다시 그리지 않는다(중첩 금지)
+    dmShown = m.id;
+    el.style.display = 'block';
+    el.innerHTML = '<div class="dmlab">선생님이 나에게</div>' +
+      '<div class="dmtext"></div>' +
+      '<div class="dmact"><button type="button" id="dmOk">확인</button></div>';
+    el.querySelector('.dmtext').textContent = m.text;
+    el.classList.add('fresh');
+    setTimeout(function () { el.classList.remove('fresh'); }, 1200);
+    document.getElementById('dmOk').onclick = function () { ackDm(m.id); };
+  }
+  function ackDm(id) {
+    var el = document.getElementById('dmBanner');
+    el.style.display = 'none';
+    dmShown = null;                            // 새 메시지가 오면 다시 뜬다
+    var nick = (document.getElementById('nick').value || '').trim();
+    fetch('/api/live/message/seen', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ activityId: ACTIVITY_ID, nickname: nick, messageId: id }),
     }).catch(function () {});
   }
   function showNotice(n) {

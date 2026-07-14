@@ -732,6 +732,67 @@ async function drag(page, box, x0, y0, x1, y1) {   // 페이지 px 좌표로 드
   const sum2 = await tp.textContent('#sum');
   ok('창을 닫은 학생이 15초 안에 "연결 끊김" 으로 바뀐다', /접속 2명/.test(sum2), sum2);
 
+  // --- 개별 메시지: 이름 클릭 → 학생 패널 → 그 학생에게만 ---
+  await tp.click('#matrix td.name:has-text("가영")');
+  await tp.waitForSelector('#stuPanel.show');
+  const stat = await tp.textContent('#stuPanel .stat');
+  ok('학생 이름을 누르면 상태 요약이 있는 패널이 열린다', /접속 중|연결 끊김/.test(stat) && /답한 문항/.test(stat), stat.replace(/\s+/g, ' '));
+  const ansRows = await tp.locator('#stuPanel .ansrow').count();
+  ok('패널에 그 학생의 문항별 답이 원문 그대로 나온다', ansRows >= 1 && /③/.test(await tp.textContent('#stuPanel')), 'rows=' + ansRows);
+
+  await tp.fill('#stuMsg', '가영아, 3번 다시 볼까?');
+  await tp.click('#stuSend');
+  await s1.waitForSelector('#dmBanner', { state: 'visible', timeout: 9000 });
+  const dm = await s1.textContent('#dmBanner');
+  ok('개별 메시지가 그 학생 화면에만 배너로 뜬다', /가영아, 3번 다시 볼까\?/.test(dm) && /선생님이 나에게/.test(dm), dm.replace(/\s+/g, ' '));
+
+  const s2 = students[1].page;
+  const otherVisible = await s2.isVisible('#dmBanner');
+  ok('다른 학생(나온)에게는 그 메시지가 보이지 않는다', !otherVisible);
+
+  // 전체 공지와 시각적으로 구분(다른 배너·다른 라벨)
+  const bothShown = await s1.evaluate(() => ({
+    notice: document.getElementById('noticeBanner').style.display,
+    dm: document.getElementById('dmBanner').style.display,
+    lab: !!document.querySelector('#dmBanner .dmlab'),
+  }));
+  ok('전체 공지와 개별 메시지가 서로 다른 배너로 구분된다', bothShown.notice === 'block' && bothShown.dm === 'block' && bothShown.lab, JSON.stringify(bothShown));
+
+  // [확인] → 배너 닫힘 + 교사 쪽 '확인함'
+  await s1.click('#dmOk');
+  ok('[확인]을 누르면 배너가 닫힌다', !(await s1.isVisible('#dmBanner')));
+  await tp.waitForFunction(() => /확인함/.test(document.getElementById('stuPanel').textContent), null, { timeout: 8000 });
+  ok('교사 패널에 "확인함" 으로 바뀐다', /확인함/.test(await tp.textContent('#stuPanel')));
+
+  // 자주 쓰는 문구 버튼 즉시 발송
+  await tp.click('#stuPanel button[data-quick="0"]');
+  await s1.waitForFunction(() => {
+    const el = document.getElementById('dmBanner');
+    return el.style.display === 'block' && /잘하고 있어요/.test(el.textContent);
+  }, null, { timeout: 9000 });
+  ok('자주 쓰는 문구 버튼으로 즉시 보낼 수 있다', true);
+
+  // 끊김 학생에게 보내기 → '미확인' → 재접속 시 전달
+  await tp.click('#stuClose');
+  await tp.click('#matrix td.name:has-text("다솔")');      // 다솔은 창을 닫아 끊긴 상태
+  await tp.waitForSelector('#stuPanel.show');
+  await tp.fill('#stuMsg', '다솔아 돌아오면 5번부터 하자');
+  await tp.click('#stuSend');
+  await tp.waitForFunction(() => /미확인/.test(document.getElementById('stuPanel').textContent), null, { timeout: 8000 });
+  const off = await tp.textContent('#stuPanel .msglog');
+  ok('끊긴 학생에게 보내면 "미확인" 으로 표시된다', /미확인/.test(off) && /재접속/.test(off), off.replace(/\s+/g, ' ').slice(0, 70));
+
+  const back = await browser.newContext({ viewport: { width: 390, height: 800 } });
+  const bp = await back.newPage();
+  await bp.goto(`http://127.0.0.1:${APP_PORT}/go/${ACT_ID}`);
+  await bp.waitForSelector('#slide');
+  await bp.fill('#nick', '다솔');
+  await bp.dispatchEvent('#nick', 'change');
+  await bp.waitForSelector('#dmBanner', { state: 'visible', timeout: 9000 });
+  ok('재접속하면 끊긴 동안 온 메시지를 그대로 받는다', /돌아오면 5번부터/.test(await bp.textContent('#dmBanner')));
+  await back.close();
+  await tp.click('#stuClose');
+
   // --- 마감: 학생 화면 전환 + 미제출분 자동 제출 ---
   const subsBefore = state.submissions.length;
   tp.on('dialog', (d) => d.accept());

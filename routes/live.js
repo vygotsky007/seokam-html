@@ -33,15 +33,72 @@ router.post('/live/heartbeat', async (req, res) => {
     return res.status(500).json({ ok: false, error: error.message });
   }
 
-  // 학생 화면이 알아야 할 것만 되돌려준다 — 공지(최근 3개)와 마감 여부
-  const { data: act } = await supabase
-    .from('activities').select('notices, closed_at').eq('id', activityId).single();
+  // 학생 화면이 알아야 할 것만 되돌려준다 — 공지(최근 3개), 마감 여부, 그리고 '본인 앞으로 온' 메시지.
+  // 개별 메시지는 그 학생의 세션 행에만 들어 있으므로, 폴링 응답에 남의 메시지가 섞일 수가 없다.
+  const [{ data: act }, { data: me }] = await Promise.all([
+    supabase.from('activities').select('notices, closed_at').eq('id', activityId).single(),
+    supabase.from('live_sessions').select('messages')
+      .eq('activity_id', activityId).eq('nickname', String(nickname).trim()).single(),
+  ]);
+
+  const mine = ((me && me.messages) || []).filter((m) => !m.seen_at);
 
   return res.json({
     ok: true,
     notices: ((act && act.notices) || []).slice(0, 3),
     closed: !!(act && act.closed_at),
+    messages: mine,                       // 아직 확인하지 않은 개별 메시지만
   });
+});
+
+// ---- 교사 → 한 학생에게 보내는 개별 메시지 ----
+// 연결이 끊긴 학생에게 보내도 세션 행에 남는다 → 재접속하면 다음 하트비트에서 그대로 받는다.
+router.post('/live/message', async (req, res) => {
+  const { activityId, nickname, text } = req.body || {};
+  const msg = String(text || '').trim();
+  if (!activityId || !nickname || !msg) {
+    return res.status(400).json({ ok: false, error: 'activityId·nickname·내용이 필요합니다.' });
+  }
+
+  const { data: sess, error: e1 } = await supabase
+    .from('live_sessions').select('messages')
+    .eq('activity_id', activityId).eq('nickname', nickname).single();
+  if (e1) return res.status(500).json({ ok: false, error: e1.message });
+
+  const messages = ((sess && sess.messages) || []).concat([{
+    id: 'm' + Date.now() + '-' + Math.floor(Math.random() * 1000),
+    text: msg,
+    at: new Date().toISOString(),
+    seen_at: null,                        // 학생이 [확인] 누르기 전까지 교사에겐 '미확인'
+  }]);
+
+  const { error } = await supabase
+    .from('live_sessions').update({ messages })
+    .eq('activity_id', activityId).eq('nickname', nickname);
+  if (error) return res.status(500).json({ ok: false, error: error.message });
+  return res.json({ ok: true, messages });
+});
+
+// ---- 학생이 메시지를 확인함 ----
+router.post('/live/message/seen', async (req, res) => {
+  const { activityId, nickname, messageId } = req.body || {};
+  if (!activityId || !nickname || !messageId) {
+    return res.status(400).json({ ok: false, error: 'activityId·nickname·messageId 가 필요합니다.' });
+  }
+
+  const { data: sess, error: e1 } = await supabase
+    .from('live_sessions').select('messages')
+    .eq('activity_id', activityId).eq('nickname', nickname).single();
+  if (e1) return res.status(500).json({ ok: false, error: e1.message });
+
+  const now = new Date().toISOString();
+  const messages = ((sess && sess.messages) || []).map((m) => (m.id === messageId ? Object.assign({}, m, { seen_at: now }) : m));
+
+  const { error } = await supabase
+    .from('live_sessions').update({ messages })
+    .eq('activity_id', activityId).eq('nickname', nickname);
+  if (error) return res.status(500).json({ ok: false, error: error.message });
+  return res.json({ ok: true });
 });
 
 // ---- 교사 대시보드가 3초마다 부르는 현황 ----
@@ -51,7 +108,7 @@ router.get('/live/state', async (req, res) => {
 
   const [{ data: qs }, { data: sessions }, { data: subs }, { data: act }] = await Promise.all([
     supabase.from('questions').select('num, type, answer').eq('activity_id', activityId).order('num', { ascending: true }),
-    supabase.from('live_sessions').select('nickname, current_q, answers, submitted, last_seen').eq('activity_id', activityId),
+    supabase.from('live_sessions').select('nickname, current_q, answers, submitted, last_seen, messages').eq('activity_id', activityId),
     supabase.from('submissions').select('nickname, answers, auto_score').eq('activity_id', activityId),
     supabase.from('activities').select('notices, closed_at').eq('id', activityId).single(),
   ]);
@@ -67,6 +124,7 @@ router.get('/live/state', async (req, res) => {
       submitted: submitted.has(s.nickname),
       last_seen: s.last_seen,
       online: now - new Date(s.last_seen).getTime() < STALE_MS,
+      messages: s.messages || [],          // 교사 화면 전용(학생 폴링에는 본인 것만 나간다)
     }))
     .sort((a, b) => a.nickname.localeCompare(b.nickname, 'ko'));
 
