@@ -2961,6 +2961,7 @@ function rowHtml(a) {
     '<div class="li-main"><div class="li-title">' + escapeHtml(a.title || '(제목 없음)') + ' ' + badge + '</div>' +
       '<div class="li-sub">입장코드 <span class="li-code">' + (a.join_code || '----') + '</span> · ' + when + '</div></div>' +
     '<div class="li-actions">' +
+      '<a class="btn btn-blue btn-sm" href="' + SERVER + '/live/' + a.id + '" target="_blank">🟢 실시간 현황</a>' +
       '<a class="btn btn-blue btn-sm" href="' + SERVER + '/dashboard/' + a.id + '" target="_blank">📊 대시보드</a>' +
       '<a class="btn btn-green btn-sm" href="' + SERVER + '/present/' + a.id + '" target="_blank">🎬 발표</a>' +
       '<button class="btn-outline btn-sm" data-act="qr" data-id="' + a.id + '" data-code="' + (a.join_code || '') + '">QR</button>' +

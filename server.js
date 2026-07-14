@@ -7,6 +7,7 @@ const path = require('path');
 const supabase = require('./db');
 const submitRouter = require('./routes/submit');
 const activitiesRouter = require('./routes/activities');
+const liveRouter = require('./routes/live');
 const { sanitizeHtml } = require('./lib/sanitize');
 
 const app = express();
@@ -28,6 +29,15 @@ app.get('/api/health', (req, res) => {
 // 제출/조회 + 교사 활동 API
 app.use('/api', submitRouter);
 app.use('/api', activitiesRouter);
+app.use('/api', liveRouter);
+
+// 교사용 실시간 교실 대시보드
+app.get('/live/:id', async (req, res) => {
+  const { data: activity, error } = await supabase
+    .from('activities').select('id, title').eq('id', req.params.id).single();
+  if (error || !activity) return res.status(404).send('<h1>활동을 찾을 수 없습니다.</h1>');
+  res.type('html').send(renderLivePage(activity));
+});
 
 // 학생 응시 페이지 — 교사 html_body 위에 닉네임칸, 아래에 제출버튼을 서버가 얹어 렌더
 app.get('/go/:id', async (req, res) => {
@@ -996,6 +1006,212 @@ ${body}
 }
 
 // 학생 한 문제씩 응시 화면 (view_mode='single')
+// ================= 교사용 실시간 교실 대시보드 =================
+// 3초 폴링. 학생 하트비트(5초)가 last_seen 을 갱신하고, 15초 넘게 소식이 없으면 '연결 끊김'.
+function renderLivePage(activity) {
+  const title = escapeHtml(activity.title || '활동');
+  return `<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>실시간 현황 · ${title}</title>
+<style>
+  * { box-sizing: border-box; }
+  body { font-family: system-ui, -apple-system, "Segoe UI", sans-serif; margin: 0; background: #f5f6f8; color: #1a1a1a; }
+  .top { background: #fff; border-bottom: 1px solid #e2e8f0; padding: 14px 18px; position: sticky; top: 0; z-index: 20; }
+  .top h1 { margin: 0 0 6px; font-size: 18px; }
+  .sum { font-size: 15px; font-weight: 800; color: #2b6cb0; }
+  .sum .off { color: #a0aec0; font-weight: 700; margin-left: 8px; font-size: 13px; }
+  .wrap { max-width: 1200px; margin: 0 auto; padding: 16px; }
+  .card { background: #fff; border: 1px solid #e2e8f0; border-radius: 12px; padding: 14px; margin-bottom: 16px; }
+  .card h2 { margin: 0 0 10px; font-size: 15px; }
+  .noticebar { display: flex; gap: 8px; }
+  .noticebar input { flex: 1; padding: 10px 12px; font-size: 15px; border: 1px solid #cbd5e1; border-radius: 8px; }
+  .noticebar button { padding: 10px 16px; font-weight: 800; color: #fff; background: #2b6cb0; border: 0; border-radius: 8px; cursor: pointer; }
+  .nlist { margin-top: 10px; font-size: 13px; color: #4a5568; }
+  .nlist div { padding: 4px 0; border-top: 1px dashed #e2e8f0; }
+  .closebtn { padding: 10px 16px; font-weight: 800; color: #fff; background: #c53030; border: 0; border-radius: 8px; cursor: pointer; }
+  .closed { padding: 10px 12px; background: #fed7d7; border: 1px solid #fc8181; border-radius: 8px; font-weight: 800; color: #822727; }
+  table.matrix { border-collapse: collapse; font-size: 13px; width: 100%; }
+  table.matrix th, table.matrix td { border: 1px solid #e2e8f0; padding: 5px 6px; text-align: center; }
+  table.matrix th.name, table.matrix td.name { text-align: left; white-space: nowrap; font-weight: 700; position: sticky; left: 0; background: #fff; }
+  table.matrix th.qh { cursor: pointer; }
+  table.matrix th.qh:hover { background: #ebf8ff; }
+  table.matrix td.cell { width: 30px; height: 26px; }
+  td.a { background: #c6f6d5; }          /* 답함 */
+  td.c { background: #bee3f8; box-shadow: inset 0 0 0 2px #2b6cb0; }  /* 지금 보는 중 */
+  td.u { background: #edf2f7; }          /* 미답 */
+  tr.off td.name { color: #a0aec0; }
+  .badge { display: inline-block; font-size: 11px; font-weight: 800; padding: 1px 7px; border-radius: 999px; margin-left: 6px; }
+  .badge.on { background: #c6f6d5; color: #22543d; }
+  .badge.offb { background: #edf2f7; color: #718096; }
+  .badge.sub { background: #bee3f8; color: #2a4365; }
+  tfoot td { font-weight: 800; color: #4a5568; background: #f7fafc; }
+  .scroller { overflow-x: auto; }
+  .dist { margin-top: 8px; }
+  .bar { display: flex; align-items: center; gap: 8px; margin-bottom: 6px; }
+  .bar .mk { width: 34px; font-weight: 800; color: #2b6cb0; }
+  .bar .track { flex: 1; background: #edf2f7; border-radius: 6px; height: 24px; position: relative; }
+  .bar .fill { background: #90cdf4; height: 100%; border-radius: 6px; }
+  .bar .n { width: 100px; font-size: 12px; color: #4a5568; }
+  .who { font-size: 12px; color: #718096; margin-left: 4px; }
+  .muted { color: #718096; font-size: 13px; }
+</style>
+</head>
+<body>
+  <div class="top">
+    <h1>🟢 실시간 현황 · ${title}</h1>
+    <div class="sum" id="sum">불러오는 중...</div>
+  </div>
+  <div class="wrap">
+    <div class="card">
+      <h2>📢 공지 보내기</h2>
+      <div class="noticebar">
+        <input id="noticeText" type="text" placeholder="예: 5번은 건너뛰세요" autocomplete="off" />
+        <button id="noticeSend" type="button">보내기</button>
+        <button class="closebtn" id="closeBtn" type="button">마감하기</button>
+      </div>
+      <div class="nlist" id="nlist"></div>
+      <div id="closedBox" style="display:none; margin-top:10px;" class="closed">🔒 마감됨 — 학생 화면이 제출 마감으로 바뀌었고, 미제출 학생의 답은 자동 제출됐어요.</div>
+    </div>
+
+    <div class="card">
+      <h2>📊 진행 매트릭스 <span class="muted">— 문항 번호를 누르면 응답 분포를 볼 수 있어요</span></h2>
+      <div class="scroller"><table class="matrix" id="matrix"></table></div>
+    </div>
+
+    <div class="card" id="distCard" style="display:none;">
+      <h2 id="distTitle"></h2>
+      <div class="dist" id="dist"></div>
+    </div>
+  </div>
+<script>
+(function () {
+  var ACTIVITY_ID = ${JSON.stringify(activity.id)};
+  var state = null, pickedQ = null;
+
+  function esc(s) { return String(s == null ? '' : s).replace(/[&<>"']/g, function (c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]; }); }
+  function hasAns(st, num) { return String((st.answers || {})['q' + num] || '').trim() !== ''; }
+
+  function poll() {
+    fetch('/api/live/state?activityId=' + encodeURIComponent(ACTIVITY_ID))
+      .then(function (r) { return r.json(); })
+      .then(function (d) { if (d && d.ok) { state = d; render(); } })
+      .catch(function () {});
+  }
+
+  function render() {
+    var qs = state.questions, sts = state.students;
+    document.getElementById('sum').innerHTML =
+      '접속 ' + state.online + '명 · 제출 ' + state.submitted + '명' +
+      '<span class="off">(전체 ' + sts.length + '명)</span>';
+
+    // ---- 진행 매트릭스 ----
+    var h = '<thead><tr><th class="name">학생</th>';
+    qs.forEach(function (q) { h += '<th class="qh" data-q="' + q.num + '">' + q.num + '</th>'; });
+    h += '</tr></thead><tbody>';
+    sts.forEach(function (st) {
+      h += '<tr class="' + (st.online ? '' : 'off') + '"><td class="name">' + esc(st.nickname) +
+        (st.online ? '' : '<span class="badge offb">연결 끊김</span>') +
+        (st.submitted ? '<span class="badge sub">제출</span>' : '') + '</td>';
+      qs.forEach(function (q) {
+        var cls = hasAns(st, q.num) ? 'a' : (st.current_q === q.num ? 'c' : 'u');
+        if (st.current_q === q.num && cls === 'a') cls = 'a c';
+        h += '<td class="cell ' + cls + '"></td>';
+      });
+      h += '</tr>';
+    });
+    h += '</tbody><tfoot><tr><td class="name">답한 학생</td>';
+    qs.forEach(function (q) {
+      var n = sts.filter(function (st) { return hasAns(st, q.num); }).length;
+      h += '<td>' + n + '</td>';
+    });
+    h += '</tr></tfoot>';
+    document.getElementById('matrix').innerHTML = h;
+    document.querySelectorAll('th.qh').forEach(function (th) {
+      th.onclick = function () { pickedQ = Number(th.getAttribute('data-q')); renderDist(); };
+    });
+
+    // ---- 공지 이력 / 마감 상태 ----
+    document.getElementById('nlist').innerHTML = (state.notices || []).map(function (n) {
+      return '<div>' + esc(n.text) + ' <span class="who">' + new Date(n.at).toLocaleTimeString('ko-KR') + '</span></div>';
+    }).join('') || '<div class="muted">보낸 공지가 없어요.</div>';
+    document.getElementById('closedBox').style.display = state.closed ? 'block' : 'none';
+    document.getElementById('closeBtn').disabled = !!state.closed;
+
+    if (pickedQ != null) renderDist();
+  }
+
+  // ---- 문항별 응답 분포(이름은 교사에게만) ----
+  function renderDist() {
+    var q = (state.questions || []).filter(function (x) { return x.num === pickedQ; })[0];
+    if (!q) return;
+    var box = document.getElementById('distCard');
+    box.style.display = 'block';
+    document.getElementById('distTitle').textContent = pickedQ + '번 응답 분포 (' +
+      (q.type === 'choice' ? '선다형' : q.type === 'essay' ? '서술형' : '단답형') + ')';
+
+    var byAns = {};
+    (state.students || []).forEach(function (st) {
+      var v = String((st.answers || {})['q' + pickedQ] || '').trim();
+      if (!v) return;
+      (byAns[v] = byAns[v] || []).push(st.nickname);
+    });
+    var keys = Object.keys(byAns).sort();
+    var max = keys.reduce(function (m, k) { return Math.max(m, byAns[k].length); }, 0) || 1;
+    var total = (state.students || []).length || 1;
+
+    document.getElementById('dist').innerHTML = keys.length
+      ? keys.map(function (k) {
+          var n = byAns[k].length;
+          var right = q.answer != null && String(q.answer).trim() !== '' && norm(k) === norm(q.answer);
+          return '<div class="bar"><span class="mk">' + esc(k) + (right ? ' ✅' : '') + '</span>' +
+            '<span class="track"><span class="fill" style="width:' + Math.round(n / max * 100) + '%"></span></span>' +
+            '<span class="n">' + n + '명 (' + Math.round(n / total * 100) + '%)<span class="who"> ' + esc(byAns[k].join(', ')) + '</span></span></div>';
+        }).join('')
+      : '<div class="muted">아직 답한 학생이 없어요.</div>';
+  }
+  // 채점과 같은 관대한 비교(①→1)
+  function norm(v) {
+    var circled = { '①': '1', '②': '2', '③': '3', '④': '4', '⑤': '5', '⑥': '6', '⑦': '7', '⑧': '8', '⑨': '9', '⑩': '10' };
+    return String(v == null ? '' : v).replace(/[①②③④⑤⑥⑦⑧⑨⑩]/g, function (m) { return circled[m]; })
+      .toLowerCase().replace(/[\\s().,·]/g, '');
+  }
+
+  document.getElementById('noticeSend').onclick = function () {
+    var el = document.getElementById('noticeText');
+    var text = (el.value || '').trim();
+    if (!text) return;
+    fetch('/api/live/notice', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ activityId: ACTIVITY_ID, text: text }),
+    }).then(function (r) { return r.json(); }).then(function (d) {
+      if (!d.ok) throw new Error(d.error || '실패');
+      el.value = '';
+      poll();
+    }).catch(function (e) { alert('공지 보내기 실패: ' + e.message); });
+  };
+
+  document.getElementById('closeBtn').onclick = function () {
+    if (!confirm('지금 마감할까요?\\n미제출 학생의 답은 화면에 있던 그대로 자동 제출됩니다.')) return;
+    fetch('/api/live/close', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ activityId: ACTIVITY_ID }),
+    }).then(function (r) { return r.json(); }).then(function (d) {
+      if (!d.ok) throw new Error(d.error || '실패');
+      poll();
+    }).catch(function (e) { alert('마감 실패: ' + e.message); });
+  };
+
+  poll();
+  setInterval(poll, 3000);   // 3초 폴링이면 교실에서 충분하다(WebSocket 불필요)
+})();
+</script>
+</body>
+</html>`;
+}
+
 function renderStudentSinglePage(activity, questions) {
   const title = escapeHtml(activity.title || '활동');
   const activityId = activity.id;
@@ -1095,6 +1311,11 @@ function renderStudentSinglePage(activity, questions) {
   .sheet button.primary { background: #2f855a; color: #fff; border-color: #2f855a; }
   #updateBanner { display: none; background: #fefcbf; color: #744210; border: 1px solid #ecc94b; border-radius: 8px; padding: 8px 12px; margin: 8px 0; font-weight: 700; font-size: 14px; }
   #updateBanner button { margin-left: 8px; padding: 4px 10px; border: 0; border-radius: 6px; background: #d69e2e; color: #fff; font-weight: 700; cursor: pointer; }
+  /* 선생님 공지 — 새 공지가 오면 부드럽게 강조(진동·소리 없음: 수업 중이다) */
+  #noticeBanner { display: none; background: #ebf8ff; color: #2a4365; border: 1px solid #90cdf4; border-radius: 8px; padding: 10px 12px; margin: 8px 0; font-weight: 700; font-size: 14px; transition: background .6s ease; }
+  #noticeBanner.fresh { background: #bee3f8; }
+  #closedOverlay { display: none; position: fixed; inset: 0; background: rgba(0,0,0,.55); z-index: 60; align-items: center; justify-content: center; padding: 20px; }
+  #closedOverlay.show { display: flex; }
 </style>
 </head>
 <body>
@@ -1103,6 +1324,7 @@ function renderStudentSinglePage(activity, questions) {
     <h1>${title}</h1>
     <input class="nick" id="nick" type="text" placeholder="닉네임(이름)을 입력하세요" autocomplete="off" />
     <div id="updateBanner">🔔 선생님이 문제를 수정했어요. <button id="reloadBtn">새로고침</button></div>
+    <div id="noticeBanner"></div>
     <div class="prog"><div id="progFill"></div></div>
     <div class="chips" id="chips"></div>
     <div class="counter" id="counter"></div>
@@ -1121,6 +1343,10 @@ function renderStudentSinglePage(activity, questions) {
 
   <div class="overlay" id="finishOverlay"><div class="sheet" id="finishSheet"></div></div>
   <div class="overlay" id="resultOverlay"><div class="sheet" id="resultSheet"></div></div>
+  <div id="closedOverlay"><div class="sheet">
+    <h2>제출이 마감됐어요 🔒</h2>
+    <p>선생님이 마감했어요. 여기까지 푼 답은 자동으로 제출됐습니다.</p>
+  </div></div>
 
 <script>
 (function () {
@@ -1231,6 +1457,7 @@ function renderStudentSinglePage(activity, questions) {
     });
     renderChrome();
     renderAnswers(el, s);
+    heartbeat();                            // 답이 바뀌면 바로 알린다(대시보드가 3초 안에 본다)
     if (!same && autoNext) scheduleNext(el, s);
   }
   function bindChoices(el, s) {
@@ -1281,6 +1508,8 @@ function renderStudentSinglePage(activity, questions) {
       inp.addEventListener('input', function () {
         answers['q' + inp.getAttribute('data-num')] = inp.value;
         renderChrome();      // 슬라이드는 다시 그리지 않는다(포커스 유지)
+        clearTimeout(inp.__hb);
+        inp.__hb = setTimeout(heartbeat, 600);   // 타이핑이 멈추면 알린다
       });
     });
     box.querySelectorAll('button[data-clear]').forEach(function (b) {
@@ -1455,7 +1684,7 @@ function renderStudentSinglePage(activity, questions) {
     document.getElementById('prevBtn').disabled = nav.indexOf(cur) <= 0;
   }
 
-  function goSlide(i) { if (i < 0 || i >= slides.length) return; cur = i; render(); window.scrollTo({ top: 0, behavior: 'smooth' }); }
+  function goSlide(i) { if (i < 0 || i >= slides.length) return; cur = i; render(); heartbeat(); window.scrollTo({ top: 0, behavior: 'smooth' }); }
   function goQuestion(num) { goSlide(slideOfQuestion(num)); }
   function step(dir) {
     var nav = navigable(); var pos = nav.indexOf(cur);
@@ -1549,6 +1778,47 @@ function renderStudentSinglePage(activity, questions) {
     };
     render();
   }
+
+  // ---- 실시간 교실: 하트비트(5초) ----
+  // 살아 있음 + 지금 보는 문항 + 지금까지의 답을 함께 올린다.
+  // 답을 올려 두면 [마감] 때 서버가 미제출 학생의 답을 그대로 제출할 수 있다(브라우저가 닫혀도 남는다).
+  var lastNoticeAt = null;
+  function heartbeat() {
+    var nick = (document.getElementById('nick').value || '').trim();
+    if (!nick) return;                                  // 닉네임 전에는 누구인지 알 수 없다
+    fetch('/api/live/heartbeat', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        activityId: ACTIVITY_ID, nickname: nick,
+        currentQ: slides[cur] ? slides[cur].nums[0] : null,
+        answers: answers,                               // 연습장은 보내지 않는다(답이 아니다)
+      }),
+    }).then(function (r) { return r.json(); }).then(function (d) {
+      if (!d || !d.ok) return;
+      showNotice((d.notices || [])[0]);
+      if (d.closed) onClosed();
+    }).catch(function () {});
+  }
+  function showNotice(n) {
+    var el = document.getElementById('noticeBanner');
+    if (!n || !n.text) { el.style.display = 'none'; return; }
+    el.style.display = 'block';
+    el.textContent = '📢 ' + n.text;
+    if (n.at !== lastNoticeAt) {                        // 새 공지만 잠깐 강조(소리·진동 없음)
+      lastNoticeAt = n.at;
+      el.classList.add('fresh');
+      setTimeout(function () { el.classList.remove('fresh'); }, 1200);
+    }
+  }
+  var closedDone = false;
+  function onClosed() {
+    if (closedDone) return;
+    closedDone = true;
+    document.getElementById('closedOverlay').classList.add('show');   // 서버가 미제출분을 자동 제출한다
+    ['prevBtn', 'nextBtn', 'laterBtn'].forEach(function (id) { document.getElementById(id).disabled = true; });
+  }
+  setInterval(heartbeat, 5000);
+  document.getElementById('nick').addEventListener('change', heartbeat);   // 이름 넣자마자 접속으로 잡힌다
 
   // 버전 폴링(수정 알림)
   document.getElementById('reloadBtn').onclick = function () { location.reload(); };

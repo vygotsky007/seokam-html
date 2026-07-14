@@ -29,21 +29,46 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 function startMockDb(state) {
   const app = express();
   app.use(express.json({ limit: '20mb' }));
-  const single = (req, res, row) =>
-    (req.headers.accept || '').includes('pgrst.object')
-      ? res.json(row || null)
-      : res.json(row ? [row] : []);
 
-  app.get('/rest/v1/activities', (req, res) => single(req, res, state.activity));
-  app.get('/rest/v1/questions', (req, res) => res.json(state.questions));
-  app.post('/rest/v1/submissions', (req, res) => {
-    const rows = Array.isArray(req.body) ? req.body : [req.body];
-    rows.forEach((r) => state.submissions.push(r));
-    single(req, res, { id: 'sub-' + state.submissions.length });
+  // PostgREST 흉내 — 필요한 만큼만: eq. 필터, 단일 객체(Accept: pgrst.object), upsert(merge-duplicates), patch.
+  const rowsOf = (t) => (t === 'activities' ? [state.activity].filter(Boolean) : state[t] || (state[t] = []));
+  const match = (row, q) =>
+    Object.keys(q).every((k) => {
+      if (['select', 'order', 'limit', 'offset', 'on_conflict'].includes(k)) return true;
+      const v = String(q[k]);
+      if (!v.startsWith('eq.')) return true;
+      return String(row[k]) === v.slice(3);
+    });
+  const reply = (req, res, rows) =>
+    (req.headers.accept || '').includes('pgrst.object') ? res.json(rows[0] || null) : res.json(rows);
+
+  app.get('/rest/v1/:table', (req, res) => reply(req, res, rowsOf(req.params.table).filter((r) => match(r, req.query))));
+
+  app.post('/rest/v1/:table', (req, res) => {
+    const t = req.params.table;
+    const body = Array.isArray(req.body) ? req.body : [req.body];
+    const upsert = String(req.headers.prefer || '').includes('merge-duplicates');
+    const out = [];
+    body.forEach((row) => {
+      if (upsert && t === 'live_sessions') {
+        const hit = rowsOf(t).find((r) => r.activity_id === row.activity_id && r.nickname === row.nickname);
+        if (hit) { Object.assign(hit, row); out.push(hit); return; }
+      }
+      const withId = Object.assign({ id: t + '-' + (rowsOf(t).length + 1) }, row);
+      rowsOf(t).push(withId);
+      out.push(withId);
+    });
+    reply(req, res, out);
   });
-  app.delete('/rest/v1/submissions', (req, res) => res.json([]));
-  app.patch('/rest/v1/*', (req, res) => res.json([]));
-  app.all('/rest/v1/*', (req, res) => res.json([]));
+
+  app.patch('/rest/v1/:table', (req, res) => {
+    const t = req.params.table;
+    const hits = rowsOf(t).filter((r) => match(r, req.query));
+    hits.forEach((r) => Object.assign(r, req.body));
+    reply(req, res, hits);
+  });
+
+  app.delete('/rest/v1/:table', (req, res) => res.json([]));
   return new Promise((r) => { const s = app.listen(DB_PORT, () => r(s)); });
 }
 
@@ -224,6 +249,7 @@ async function drag(page, box, x0, y0, x1, y1) {   // 페이지 px 좌표로 드
       const rec = window.qHtml[n];
       nums.forEach((num) => {
         rows.push({
+          activity_id: '11111111-1111-1111-1111-111111111111',
           num: num,
           type: rec && rec.parsed.type === 'group'
             ? ((rec.parsed.questions.find((q) => q.number === num) || {}).type || 'short')
@@ -505,6 +531,103 @@ async function drag(page, box, x0, y0, x1, y1) {   // 페이지 px 좌표로 드
   ok('연습장 그림이 제출 페이로드에 포함되지 않는다', !/data:image\/png/.test(payloadStr) && !/sketch|pad/i.test(payloadStr), payloadStr.slice(0, 100));
   ok('마커(③)가 교사 정답표(3)와 맞아 채점된다(auto_score≥1)', Number(sub.auto_score) >= 1, 'auto_score=' + sub.auto_score);
   ok('학생 화면에서 자바스크립트 오류가 없다', serrors.length === 0, serrors.join(' | '));
+
+  // =========================================================
+  console.log('\n[4부] 실시간 교실 — 학생 3명 동시 접속 + 교사 대시보드');
+  // =========================================================
+  // 이 활동으로 '새 수업'을 연다 — 3부 학생 창을 닫고(하트비트 중단) 접속·제출 기록도 비운다
+  await mob.close();
+  state.activity.notices = []; state.activity.closed_at = null;
+  state.live_sessions = [];
+  state.submissions.length = 0;
+
+  const students = [];
+  for (const name of ['가영', '나온', '다솔']) {
+    const c = await browser.newContext({ viewport: { width: 390, height: 800 } });
+    const p = await c.newPage();
+    await p.goto(`http://127.0.0.1:${APP_PORT}/go/${ACT_ID}`);
+    await p.waitForSelector('#slide');
+    await p.fill('#nick', name);
+    await p.dispatchEvent('#nick', 'change');          // 이름을 넣는 순간 '접속'으로 잡힌다
+    students.push({ name, ctx: c, page: p });
+  }
+
+  const tp = await ctx.newPage();
+  const terrors = [];
+  tp.on('pageerror', (e) => terrors.push(String(e)));
+  await tp.goto(`http://127.0.0.1:${APP_PORT}/live/${ACT_ID}`);
+  await tp.waitForSelector('#matrix tbody tr');
+
+  await tp.waitForFunction(() => /접속 3명/.test(document.getElementById('sum').textContent), null, { timeout: 8000 })
+    .catch(() => {});
+  const sum = await tp.textContent('#sum');
+  ok('학생 3명 접속이 대시보드에 잡힌다', /접속 3명/.test(sum), sum);
+  ok('진행 매트릭스에 학생 3행이 생긴다', (await tp.locator('#matrix tbody tr').count()) === 3);
+
+  // --- 학생이 답하면 3초 안에 셀이 초록으로 ---
+  const s1 = students[0].page;
+  await s1.click('.chip:has-text("16")');
+  await s1.waitForSelector('#slide ol.choices li.pick');
+  await s1.locator('#slide ol.choices li.pick').nth(2).click();     // 가영이 16번에 ③
+  await tp.waitForFunction(() => {
+    const row = [...document.querySelectorAll('#matrix tbody tr')]
+      .find((r) => r.querySelector('td.name').textContent.startsWith('가영'));
+    return row && [...row.querySelectorAll('td.cell')].some((td) => td.classList.contains('a'));
+  }, null, { timeout: 6000 }).catch(() => {});
+  const greenOk = await tp.evaluate(() => {
+    const row = [...document.querySelectorAll('#matrix tbody tr')]
+      .find((r) => r.querySelector('td.name').textContent.startsWith('가영'));
+    return row ? [...row.querySelectorAll('td.cell')].filter((td) => td.classList.contains('a')).length : -1;
+  });
+  ok('학생이 답하면 매트릭스 셀이 초록으로 바뀐다(3초 폴링)', greenOk >= 1, '초록 셀=' + greenOk);
+
+  const footer = await tp.textContent('#matrix tfoot');
+  ok('열 하단에 문항별 "답한 학생 수" 집계가 나온다', /\d/.test(footer), footer.replace(/\s+/g, ' ').slice(0, 40));
+
+  // --- 문항별 응답 분포 ---
+  await tp.click('#matrix th.qh:has-text("16")');
+  await tp.waitForSelector('#distCard .bar');
+  const dist = await tp.textContent('#dist');
+  ok('문항을 누르면 선지별 인원 + 이름(교사 전용)이 보인다', /③/.test(dist) && /가영/.test(dist) && /1명/.test(dist), dist.replace(/\s+/g, ' ').slice(0, 70));
+
+  // --- 공지 보내기 ---
+  await tp.fill('#noticeText', '5번은 건너뛰세요');
+  await tp.click('#noticeSend');
+  await s1.waitForFunction(() => {
+    const el = document.getElementById('noticeBanner');
+    return el && el.style.display === 'block' && /5번은 건너뛰세요/.test(el.textContent);
+  }, null, { timeout: 9000 });
+  ok('공지가 학생 화면 배너에 뜬다', true);
+  const nlist = await tp.textContent('#nlist');
+  ok('대시보드에 공지 이력이 남는다', /5번은 건너뛰세요/.test(nlist));
+
+  // --- 연결 끊김: 한 명이 창을 닫으면 15초 뒤 '연결 끊김' ---
+  await students[2].ctx.close();                     // 다솔 퇴장 → 하트비트 중단
+  await tp.waitForFunction(() => {
+    const rows = [...document.querySelectorAll('#matrix tbody tr')];
+    const r = rows.find((x) => x.querySelector('td.name').textContent.startsWith('다솔'));
+    return r && /연결 끊김/.test(r.textContent);
+  }, null, { timeout: 25000 });
+  const sum2 = await tp.textContent('#sum');
+  ok('창을 닫은 학생이 15초 안에 "연결 끊김" 으로 바뀐다', /접속 2명/.test(sum2), sum2);
+
+  // --- 마감: 학생 화면 전환 + 미제출분 자동 제출 ---
+  const subsBefore = state.submissions.length;
+  tp.on('dialog', (d) => d.accept());
+  await tp.click('#closeBtn');
+  await s1.waitForSelector('#closedOverlay.show', { timeout: 9000 });
+  const closedText = await s1.textContent('#closedOverlay');
+  ok('마감하면 학생 화면이 "제출이 마감됐어요" 로 바뀐다', /마감/.test(closedText), closedText.replace(/\s+/g, ' ').trim().slice(0, 40));
+
+  const added = state.submissions.slice(subsBefore);
+  const auto = added.find((s) => s.nickname === '가영');
+  ok('미제출 학생의 답이 자동 제출된다', !!auto, '자동 제출 ' + added.length + '건: ' + added.map((a) => a.nickname).join(','));
+  ok('자동 제출된 답이 화면에 있던 그대로다(16번 ③)', auto && auto.answers && auto.answers.q16 === '③', JSON.stringify(auto && auto.answers));
+  ok('자동 제출도 채점된다', auto && Number(auto.auto_score) >= 1, 'auto_score=' + (auto && auto.auto_score));
+  ok('창을 닫고 나간 학생 답도 서버에 남아 자동 제출된다', !!added.find((s) => s.nickname === '다솔'),
+    added.map((a) => a.nickname).join(','));
+
+  ok('대시보드에서 자바스크립트 오류가 없다', terrors.length === 0, terrors.join(' | '));
 
   // ---- 정리 ----
   await browser.close();
