@@ -1,7 +1,7 @@
 // 자동채점 유틸 — choice/short 는 정답 대조, essay 는 채점 제외
 // 정답 대조 규칙은 lib/match.js 한 곳에 모아 두고, 발표 모드·결과 화면도 같은 것을 쓴다
 // (㉡=ㄴ, ①=1=(1), "5"="5개", "ㄱ,ㄷ"="ㄷ ㄱ", 정답 여러 개는 "㉡|28-(17+6)").
-const { normalize, isCorrect } = require('./lib/match');
+const { normalize, isCorrect, partialCount } = require('./lib/match');
 
 // questions: [{ num, type, answer, graded }], answers: { q1:'...', q2:'...' } 또는 { '1':'...' }
 // 채점 제외 규칙: 서술형(essay) / graded===false / 정답(answer) 미입력 → correct=null, gradable 에서 제외
@@ -36,7 +36,9 @@ function grade(questions, answers) {
     // 순서 배열형만 순서를 따진다(복수 선택형은 순서 무시)
     const correct = manual || isCorrect(given, q.answer, { ordered: q.type === 'order' });
     if (correct) auto_score += 1;
-    results.push({ num, type: q.type, given, expected: q.answer ?? '', correct, excluded: false });
+    // 부분 일치는 오답이지만(배점 기능이 없다), 몇 개 맞았는지는 남긴다 — 선긋기의 맞은 쌍 수 등
+    const partial = correct ? null : partialCount(given, q.answer);
+    results.push({ num, type: q.type, given, expected: q.answer ?? '', correct, excluded: false, partial });
   }
 
   return { auto_score, gradable, results };

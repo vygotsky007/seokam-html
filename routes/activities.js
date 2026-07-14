@@ -356,7 +356,7 @@ router.get('/present/:id', async (req, res) => {
 
   const { data: questions, error: qErr } = await supabase
     .from('questions')
-    .select('num, type, answer, graded')
+    .select('num, type, answer, graded, meta')
     .eq('activity_id', id)
     .order('num', { ascending: true });
 

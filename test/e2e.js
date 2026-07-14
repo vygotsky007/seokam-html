@@ -321,8 +321,32 @@ async function drag(page, box, x0, y0, x1, y1) {   // 페이지 px 좌표로 드
   ok('[선택 문항 이미지로] 일괄 전환이 동작한다', bulk[0] === true && bulk[1] === true, JSON.stringify(bulk));
   await page.evaluate(() => { window.qHtml['35'].useImage = false; renderHtmlEditor(); });   // 대조군 복원
 
+  // --- [선긋기] 31번(선긋기 문항)을 교사가 인터랙티브 유형으로 만든다 ---
+  const cand = await page.evaluate(() => (window.qHtml['31'].parsed.matchCand || null));
+  ok('선긋기 문항에서 좌우 항목 후보를 뽑아 둔다(자동 확정은 안 함)',
+    cand && cand.left.length >= 2 && cand.right.length >= 2, JSON.stringify(cand));
+  ok('후보만 뽑을 뿐 자동으로 match 로 확정하지 않는다', (await page.evaluate(() => window.qHtml['31'].parsed.type)) !== 'match');
+
+  await page.click('.qcard[data-num="31"] .qcard-head button:has-text("선긋기로 만들기")');
+  await page.waitForSelector('.qcard[data-num="31"] .matchedit');
+  await page.fill('.qcard[data-num="31"] .medit-ta >> nth=0', '사자\n독수리\n상어');
+  await page.dispatchEvent('.qcard[data-num="31"] .medit-ta >> nth=0', 'change');
+  await page.fill('.qcard[data-num="31"] .medit-ta >> nth=1', '땅\n하늘\n바다');
+  await page.dispatchEvent('.qcard[data-num="31"] .medit-ta >> nth=1', 'change');
+  await page.waitForSelector('.qcard[data-num="31"] .medit-item');
+
+  // 교사가 화면에서 직접 정답 선을 긋는다: 사자—땅, 독수리—하늘, 상어—바다
+  const mItem = (col, i) => `.qcard[data-num="31"] .medit-col >> nth=${col} >> .medit-item >> nth=${i}`;
+  for (const [l, r] of [[0, 0], [1, 1], [2, 2]]) {
+    await page.click(mItem(0, l));
+    await page.click(mItem(1, r));
+  }
+  const mAns = await page.inputValue('.q-answer[data-num="31"]');
+  ok('교사가 그은 정답이 "0:0,1:1,2:2" 로 등록된다', mAns === '0:0,1:1,2:2', mAns);
+  ok('선긋기 문항 유형이 정답표에도 반영된다', (await page.inputValue('.q-type[data-num="31"]')) === 'match');
+
   // 학생 화면 검증에 쓸 실제 변환 결과를 DB(모의)에 적재 — '교사가 만든 그대로' 학생에게 간다
-  const answersKey = { 16: '3', 17: '태백산', 8: '1', 9: '1', 20: '1', 21: '㉡', 22: '(1)' };
+  const answersKey = { 16: '3', 17: '태백산', 8: '1', 9: '1', 20: '1', 21: '㉡', 22: '(1)', 31: '0:0,1:1,2:2' };
   state.activity = { id: ACT_ID, title: '검증용 시험지', html_body: '', status: 'published', version: 1, view_mode: 'single' };
   state.questions = await page.evaluate((key) => {
     const rows = [];
@@ -339,6 +363,7 @@ async function drag(page, box, x0, y0, x1, y1) {   // 페이지 px 좌표로 드
           slice_image: window.sliceImages[n],
           group_label: nums.length > 1 ? nums[0] + '~' + nums[nums.length - 1] : null,
           html_content: rec && !rec.useImage ? rec.html : null,
+          meta: (rec && rec.meta) || {},
           answer: key[String(num)] || null,
           graded: true,
         });
@@ -587,6 +612,50 @@ async function drag(page, box, x0, y0, x1, y1) {   // 페이지 px 좌표로 드
   await sp.click('#padToggle');
   ok('연습장을 접을 수 있다', (await sp.locator('#padCanvas').count()) === 0);
 
+  // ---- 선긋기(match): 드래그 · 탭탭 · 1:1 대체 · 재탭 해제 ----
+  await sp.click('.chip:has-text("31")');
+  await sp.waitForSelector('#slide .matchwrap .mcard');
+  ok('선긋기 문항이 좌우 카드로 렌더된다', (await sp.locator('#slide .mcol.left .mcard').count()) === 3 &&
+    (await sp.locator('#slide .mcol.right .mcard').count()) === 3);
+  const cardH = await sp.locator('#slide .mcol.left .mcard').first().boundingBox();
+  ok('폰에서 카드가 충분히 크다(44px+)', cardH.height >= 44, 'h=' + cardH.height);
+
+  // 드래그: 사자(0) → 땅(0)
+  const dragPair = async (li, ri) => {
+    const a = await sp.locator(`#slide .mcol.left .mcard >> nth=${li}`).locator('.dot').boundingBox();
+    const b = await sp.locator(`#slide .mcol.right .mcard >> nth=${ri}`).locator('.dot').boundingBox();
+    await sp.mouse.move(a.x + a.width / 2, a.y + a.height / 2);
+    await sp.mouse.down();
+    await sp.mouse.move(b.x + b.width / 2, b.y + b.height / 2, { steps: 8 });
+    await sp.mouse.up();
+  };
+  await dragPair(0, 0);
+  ok('드래그로 선을 이을 수 있다(선이 그려진다)', (await sp.locator('#slide .matchwrap svg line').count()) === 1);
+
+  // 탭탭: 독수리(1) → 하늘(1), 상어(2) → 바다(2)
+  await sp.locator('#slide .mcol.left .mcard >> nth=1').click();
+  ok('탭탭: 왼쪽을 누르면 선택 강조된다', (await sp.locator('#slide .mcard.sel').count()) === 1);
+  await sp.locator('#slide .mcol.right .mcard >> nth=1').click();
+  await sp.locator('#slide .mcol.left .mcard >> nth=2').click();
+  await sp.locator('#slide .mcol.right .mcard >> nth=2').click();
+  ok('탭탭으로도 이어진다(선 3개)', (await sp.locator('#slide .matchwrap svg line').count()) === 3);
+  const mstat = await sp.textContent('#slide .picked[data-num="31"]');
+  ok('모두 이으면 상태가 표시된다', /모두 이었어요 \(3쌍\)/.test(mstat), mstat);
+
+  // 1:1 대체: 사자(0)를 하늘(1)로 다시 이으면 기존 사자—땅 선이 사라진다
+  await sp.locator('#slide .mcol.left .mcard >> nth=0').click();
+  await sp.locator('#slide .mcol.right .mcard >> nth=1').click();
+  const afterReplace = await sp.evaluate(() => window.__ans ? null : null);
+  ok('1:1 — 새로 이으면 기존 선이 대체된다(선 개수 유지)', (await sp.locator('#slide .matchwrap svg line').count()) === 2,
+    'lines=' + (await sp.locator('#slide .matchwrap svg line').count()));
+
+  // 되돌려서 정답 상태로 (사자—땅 다시)
+  await sp.locator('#slide .mcol.left .mcard >> nth=0').click();
+  await sp.locator('#slide .mcol.right .mcard >> nth=0').click();
+  await sp.locator('#slide .mcol.left .mcard >> nth=1').click();
+  await sp.locator('#slide .mcol.right .mcard >> nth=1').click();
+  ok('재탭으로 선을 지우고 다시 이을 수 있다', (await sp.locator('#slide .matchwrap svg line').count()) === 3);
+
   // ---- 새 유형: 복수 선택 / 순서 배열 / OX / 서술형 ----
   await sp.click('.chip:has-text("41")');
   await sp.waitForSelector('#slide ol.choices li.pick');
@@ -646,6 +715,15 @@ async function drag(page, box, x0, y0, x1, y1) {   // 페이지 px 좌표로 드
   ok('순서 배열 답이 누른 순서대로 저장된다', sent.q42 === '㉠,㉡', 'q42=' + sent.q42);
   ok('OX 답이 "X" 로 저장된다', sent.q43 === 'X', 'q43=' + sent.q43);
   ok('서술형 답이 저장된다', /물이 더 차갑기/.test(sent.q47 || ''), 'q47=' + sent.q47);
+  ok('선긋기 답이 쌍 목록으로 저장된다', /0:0/.test(sent.q31 || '') && sent.q31.split(',').length === 3, 'q31=' + sent.q31);
+  // 쌍 순서가 뒤섞여도 정답(집합 비교)
+  const matchGrade = require('../grade').grade(
+    [{ num: 31, type: 'match', answer: '0:0,1:1,2:2', graded: true }], { q31: '2:2,0:0,1:1' });
+  ok('선긋기 채점: 쌍 순서가 뒤섞여도 정답', matchGrade.auto_score === 1, JSON.stringify(matchGrade.results[0]));
+  const matchPartial = require('../grade').grade(
+    [{ num: 31, type: 'match', answer: '0:0,1:1,2:2', graded: true }], { q31: '0:0,1:1,2:0' });
+  ok('선긋기 부분 일치는 오답이되 맞은 쌍 수를 남긴다',
+    matchPartial.auto_score === 0 && matchPartial.results[0].partial === 2, JSON.stringify(matchPartial.results[0]));
   ok('단답형 답도 함께 저장된다', sent.q17 === '태백산', JSON.stringify(sent));
   // 연습장은 답이 아니다 — 제출 페이로드에 절대 들어가면 안 된다
   const payloadStr = JSON.stringify(sub);

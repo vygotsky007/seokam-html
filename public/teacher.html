@@ -155,6 +155,16 @@
   .qcard { position: relative; }
   .qwarn.fallback { background: #fffaf0; border: 1px solid #f6ad55; color: #7b341e; display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
   .qwarn.fallback button { margin-left: auto; }
+  /* 선긋기 편집기 */
+  .matchedit { border: 1px solid var(--line); border-radius: 8px; padding: 10px; background: #f7fafc; }
+  .medit-cols { display: flex; gap: 8px; margin: 8px 0; }
+  .medit-ta { flex: 1; padding: 8px; font-size: 13px; border: 1px solid var(--line); border-radius: 7px; font-family: inherit; }
+  .medit-pair { display: flex; gap: 24px; }
+  .medit-col { flex: 1; display: flex; flex-direction: column; gap: 6px; }
+  .medit-item { padding: 8px 10px; font-size: 13px; font-weight: 700; text-align: left; border: 2px solid var(--line); background: #fff; border-radius: 8px; cursor: pointer; }
+  .medit-item.sel { border-color: #2b6cb0; background: #ebf8ff; }
+  .medit-item.linked { border-color: #38a169; }
+  .medit-pv { margin-top: 8px; }
   .qprev .opts p { margin: 4px 0; }
   /* 직접 그리기 모드 */
   .slice-page.drawing { cursor: crosshair; }
@@ -385,6 +395,18 @@ if (window.pdfjsLib) {
 }
 
 // ================= 문항표 =================
+// 정답표의 유형 = 학생 화면이 실제로 쓰는 유형이다(DB questions.type).
+// HTML 변환에서 감지한 유형(복수 선택·순서 배열·O/X·선긋기 …)이 여기까지 와야 학생 화면이 그 UI 를 켠다.
+var Q_TYPES = [
+  ['choice', '객관식'], ['marker_only', '번호 버튼'], ['multi_choice', '복수 선택'], ['order', '순서 배열'],
+  ['match', '선긋기'], ['fill_symbol', '기호 채우기'], ['ox', 'O/X'], ['short', '단답'], ['essay', '서술형'],
+];
+var Q_TYPE_OPTIONS = Q_TYPES.map(function (t) {
+  return '<option value="' + t[0] + '"' + (t[0] === 'short' ? ' selected' : '') + '>' + t[1] + '</option>';
+}).join('');
+// 정답을 입력할 수 없는(=정답 없는) 유형
+function typeHasAnswer(t) { return t !== 'essay'; }
+
 document.getElementById('buildRows').addEventListener('click', buildRows);
 function buildRows() {
   var n = parseInt(document.getElementById('qcount').value, 10) || 0;
@@ -402,9 +424,7 @@ function buildRows() {
     var tr = document.createElement('tr');
     tr.innerHTML =
       '<td class="num">' + i + '</td>' +
-      '<td><select class="q-type" data-num="' + i + '">' +
-        '<option value="choice">객관식</option><option value="short" selected>단답</option><option value="essay">서술형</option>' +
-      '</select></td>' +
+      '<td><select class="q-type" data-num="' + i + '">' + Q_TYPE_OPTIONS + '</select></td>' +
       '<td><input type="text" class="q-answer" data-num="' + i + '" placeholder="정답 (name=q' + i + ')" /></td>' +
       '<td style="text-align:center;"><input type="checkbox" class="q-graded" data-num="' + i + '" checked title="채점 대상" /></td>';
     body.appendChild(tr);
@@ -2105,9 +2125,44 @@ function parseSliceToQuestion(num, parts, nums) {
     figs = figs.concat(figuresInRect(p.pg, p.rect, ls));
   });
   var raw = lines.map(function (l) { return l.text; }).join('\n');
-  return (nums && nums.length > 1)
+  var q = (nums && nums.length > 1)
     ? parseGroupItem(num, nums, lines, figs, raw)
     : parseSingleItem(num, lines, figs, raw);
+  // 선긋기로 보이면 좌우 항목 '후보'를 뽑아 둔다 — 자동 확정하지 않는다(좌우 순서·누락 위험).
+  // 교사가 편집기에서 [선긋기로 만들기] 를 누르면 이 후보가 채워진 채로 열린다.
+  if (INTERACTIVE_RE.test(raw)) q.matchCand = matchCandidates(lines);
+  return q;
+}
+
+// 발문 아래에서 좌·우 항목 후보를 뽑는다.
+// ※ 줄 단위로 가르면 안 된다 — 선긋기는 좌우 박스가 '같은 높이'라 한 줄로 묶여 나온다
+//   ("사자 ● ● 하늘"). 그래서 글자(item) 의 x 로 갈라야 한다.
+function matchCandidates(lines) {
+  var body = lines.slice(1).filter(function (l) { return l.parts && l.parts.length; });
+  if (body.length < 2) return null;
+  var items = [];
+  body.forEach(function (l) {
+    (l.parts || []).forEach(function (p) {
+      if (/^[●○\s]*$/.test(p.str || '')) return;               // 연결점은 글이 아니다
+      items.push({ x: p.x + (p.w || 0) / 2, p: p, y: l.y });
+    });
+  });
+  if (items.length < 2) return null;
+  var xs = items.map(function (i) { return i.x; });
+  var mid = (Math.min.apply(null, xs) + Math.max.apply(null, xs)) / 2;
+
+  var left = [], right = [];
+  body.forEach(function (l) {
+    var mine = items.filter(function (i) { return i.y === l.y; });
+    var L = mine.filter(function (i) { return i.x < mid; }).map(function (i) { return i.p; });
+    var R = mine.filter(function (i) { return i.x >= mid; }).map(function (i) { return i.p; });
+    var lt = L.length ? tidyText(joinParts(L)) : '';
+    var rt = R.length ? tidyText(joinParts(R)) : '';
+    if (lt) left.push(lt);
+    if (rt) right.push(rt);
+  });
+  if (left.length < 2 || right.length < 2) return null;
+  return { left: left, right: right };
 }
 
 // 선지 줄 → 선지 배열(한 줄에 여러 개면 쪼갠다).
@@ -2563,6 +2618,7 @@ function renderHtmlEditor() {
       sel.addEventListener('change', function () { setQuestionType(num, sel.value); });
       head.appendChild(sel);
     }
+    syncTypeToTable(num, q.type);       // 감지한 유형을 정답표(=학생 화면이 쓰는 유형)에 반영
 
     var toggle = document.createElement('button');
     toggle.className = 'btn-outline btn-sm';
@@ -2571,7 +2627,16 @@ function renderHtmlEditor() {
     head.appendChild(toggle);
     right.appendChild(head);
 
-    if (rec.useImage) {
+    // 선긋기로 만들기 — 자동 변환이 안 되는 문항도 교사가 1분이면 인터랙티브 문항으로 바꾼다
+    var mkMatch = document.createElement('button');
+    mkMatch.className = 'btn-outline btn-sm';
+    mkMatch.textContent = q.type === 'match' ? '🔗 선긋기 편집' : '🔗 선긋기로 만들기';
+    mkMatch.addEventListener('click', function () { openMatchEditor(num); });
+    head.appendChild(mkMatch);
+
+    if (q.type === 'match') {
+      right.appendChild(matchEditorEl(num, rec));
+    } else if (rec.useImage) {
       if (rec.reason) {
         // 조용히 이미지로 바꿔치기하지 않는다 — 왜 그랬는지 교사에게 그대로 말한다
         var rnote = document.createElement('div'); rnote.className = 'qwarn fallback';
@@ -2619,6 +2684,18 @@ function renderHtmlEditor() {
   });
   refreshRichIfActive();   // [이미지로 되돌리기] 등 편집기 변경 → 편집칸·미리보기 즉시 반영
 }
+// 감지·수정한 유형을 정답표 드롭다운에 그대로 반영한다.
+// (학생 화면은 DB questions.type 을 보고 UI 를 켜는데, 그 값은 정답표에서 온다 —
+//  여기서 잇지 않으면 편집기에서 '순서 배열' 로 보여도 학생에겐 그냥 단답형으로 간다)
+function syncTypeToTable(num, type) {
+  if (!type || type === 'unparsed' || type === 'group') return;
+  var sel = document.querySelector('.q-type[data-num="' + num + '"]');
+  if (!sel || sel.value === type) return;
+  if (!Array.prototype.some.call(sel.options, function (o) { return o.value === type; })) return;
+  sel.value = type;
+  syncAnswerDisabled(sel);
+}
+
 // 교사가 유형을 바꾸면 HTML 도 그 유형에 맞게 다시 만든다.
 // 선다형으로 바꿨는데 선지가 없으면 발문 안의 마커(㉠ ① (1) …)를 다시 훑어 떼어낸다.
 function setQuestionType(num, type) {
@@ -2640,8 +2717,130 @@ function setQuestionType(num, type) {
   }
   q.type = type;
   rec.html = questionToHtml(q);
+  syncTypeToTable(num, type);
   renderHtmlEditor();
 }
+// ================= 선긋기(match) 편집기 =================
+// 자동 감지는 '후보 제시'까지만 한다(좌우 순서·항목 누락 위험). 확정은 교사가 한다.
+// 정답은 교사가 화면에서 직접 그어서 등록한다 — 입력이 곧 미리보기다.
+function openMatchEditor(num) {
+  var rec = qHtml[num];
+  if (!rec) return;
+  var q = rec.parsed;
+  if (q.type !== 'match') {
+    var cand = q.matchCand || (rec.meta && rec.meta.left ? rec.meta : null);
+    rec.meta = {
+      left: (cand && cand.left) ? cand.left.slice() : ['', '', ''],
+      right: (cand && cand.right) ? cand.right.slice() : ['', '', ''],
+      once: true,
+    };
+    q.type = 'match';
+    rec.useImage = true;        // 본문은 원본 이미지, 답은 인터랙티브 — 이게 이 유형의 기본형이다
+    syncTypeToTable(num, 'match');
+  }
+  renderHtmlEditor();
+}
+
+function matchEditorEl(num, rec) {
+  var meta = rec.meta || (rec.meta = { left: [], right: [], once: true });
+  var wrap = document.createElement('div');
+  wrap.className = 'matchedit';
+
+  var note = document.createElement('div');
+  note.className = 'muted';
+  note.textContent = '왼쪽·오른쪽 항목을 한 줄에 하나씩 적고, 아래에서 정답 선을 직접 그어 주세요(본문은 원본 이미지로 나갑니다).';
+  wrap.appendChild(note);
+
+  var cols = document.createElement('div');
+  cols.className = 'medit-cols';
+  var la = document.createElement('textarea'); la.className = 'medit-ta'; la.rows = 4;
+  la.placeholder = '왼쪽 항목 (한 줄에 하나)';
+  la.value = (meta.left || []).join('\n');
+  var ra = document.createElement('textarea'); ra.className = 'medit-ta'; ra.rows = 4;
+  ra.placeholder = '오른쪽 항목 (한 줄에 하나)';
+  ra.value = (meta.right || []).join('\n');
+  var apply = function () {
+    meta.left = la.value.split('\n').map(function (x) { return x.trim(); }).filter(Boolean);
+    meta.right = ra.value.split('\n').map(function (x) { return x.trim(); }).filter(Boolean);
+    setMatchAnswer(num, matchAnswerPairs(num).filter(function (p) {
+      return p[0] < meta.left.length && p[1] < meta.right.length;     // 항목이 줄면 그 선은 버린다
+    }));
+    renderHtmlEditor();
+  };
+  la.addEventListener('change', apply);
+  ra.addEventListener('change', apply);
+  cols.appendChild(la); cols.appendChild(ra);
+  wrap.appendChild(cols);
+
+  // 정답 긋기(교사용) — 왼쪽 누르고 오른쪽 누르면 이어진다
+  var pv = document.createElement('div');
+  pv.className = 'medit-pv';
+  var sel = { l: null };
+  var render = function () {
+    var pairs = matchAnswerPairs(num);
+    pv.innerHTML = '';
+    if (!meta.left.length || !meta.right.length) {
+      pv.innerHTML = '<div class="muted">항목을 입력하면 여기서 정답 선을 그을 수 있어요.</div>';
+      return;
+    }
+    var row = document.createElement('div'); row.className = 'medit-pair';
+    [['left', 'l'], ['right', 'r']].forEach(function (side) {
+      var col = document.createElement('div'); col.className = 'medit-col';
+      (meta[side[0]] || []).forEach(function (t, i) {
+        var b = document.createElement('button');
+        b.type = 'button';
+        b.className = 'medit-item';
+        var linked = pairs.some(function (p) { return side[1] === 'l' ? p[0] === i : p[1] === i; });
+        if (linked) b.classList.add('linked');
+        if (side[1] === 'l' && sel.l === i) b.classList.add('sel');
+        b.textContent = t;
+        b.addEventListener('click', function () {
+          if (side[1] === 'l') { sel.l = (sel.l === i ? null : i); render(); return; }
+          if (sel.l == null) return;
+          var ps = matchAnswerPairs(num);
+          var had = ps.some(function (p) { return p[0] === sel.l && p[1] === i; });
+          if (had) ps = ps.filter(function (p) { return !(p[0] === sel.l && p[1] === i); });
+          else {
+            if (meta.once !== false) ps = ps.filter(function (p) { return p[0] !== sel.l && p[1] !== i; });
+            ps.push([sel.l, i]);
+          }
+          setMatchAnswer(num, ps);
+          sel.l = null;
+          render();
+        });
+        col.appendChild(b);
+      });
+      row.appendChild(col);
+    });
+    pv.appendChild(row);
+    var cur = document.createElement('div');
+    cur.className = 'muted';
+    cur.textContent = pairs.length
+      ? '정답 선 ' + pairs.length + '개: ' + pairs.map(function (p) { return meta.left[p[0]] + ' — ' + meta.right[p[1]]; }).join(' / ')
+      : '아직 정답 선이 없어요. 왼쪽을 누르고 오른쪽을 누르세요.';
+    pv.appendChild(cur);
+  };
+  render();
+  wrap.appendChild(pv);
+  return wrap;
+}
+
+// 정답은 정답표(questions.answer)에 "0:0,1:1" 로 저장한다 — 기존 채점 경로를 그대로 쓴다(순서 무시 비교).
+function matchAnswerPairs(num) {
+  var el = document.querySelector('.q-answer[data-num="' + num + '"]');
+  var v = el ? (el.value || '').trim() : '';
+  if (!v) return [];
+  return v.split(',').map(function (p) {
+    var a = p.split(':');
+    return [Number(a[0]), Number(a[1])];
+  }).filter(function (p) { return !isNaN(p[0]) && !isNaN(p[1]); });
+}
+function setMatchAnswer(num, pairs) {
+  var el = document.querySelector('.q-answer[data-num="' + num + '"]');
+  if (!el) return;
+  el.value = pairs.map(function (p) { return p[0] + ':' + p[1]; }).join(',');
+}
+
 // 일괄 도구 — '이상한 것만' 걸러 보고, 여러 개를 한 번에 이미지/텍스트로 돌린다
 function renderHtmlTools(all) {
   var bar = document.getElementById('htmlTools');
@@ -3015,6 +3214,9 @@ function collectQuestions() {
     if (rec && !rec.useImage && rec.html) {
       q.html_content = window.sanitizeHtml ? window.sanitizeHtml(rec.html) : rec.html;
     }
+    // 구조가 필요한 유형(선긋기·기호 채우기·번호 버튼)은 본문 HTML 만으로 표현할 수 없다 → meta 로 함께 보낸다.
+    // 이 유형들은 본문이 이미지여도(useImage) 답 영역은 인터랙티브하게 뜬다.
+    if (rec && rec.meta && Object.keys(rec.meta).length) q.meta = rec.meta;
     questions.push(q);
   });
   return questions;

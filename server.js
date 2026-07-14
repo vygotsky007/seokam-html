@@ -57,7 +57,7 @@ app.get('/go/:id', async (req, res) => {
   if (activity.view_mode === 'single') {
     const { data: questions } = await supabase
       .from('questions')
-      .select('num, type, slice_image, group_label, html_content')
+      .select('num, type, slice_image, group_label, html_content, meta')
       .eq('activity_id', id)
       .order('num', { ascending: true });
     const qs = (questions || []).filter((q) => q); // 안전
@@ -464,6 +464,16 @@ ${body}
     } else if (!state.reveal) {
       // 가려도 '교사만 보는 입력칸'은 살아 있다 — 정답을 넣는 즉시 채점되고, 공개는 따로 결정한다
       valHtml = '<div class="val" style="letter-spacing:4px;color:#64748b">●●●</div>';
+    } else if (q.type === 'match') {
+      // 선긋기 정답은 "0:0,1:1" 이라 그대로 띄우면 못 읽는다 → 이어진 쌍을 글로 보여준다
+      var mm = q.meta || {}, L = mm.left || [], R = mm.right || [];
+      var prs = String(q.answer || '').split(',').map(function (p) { return p.split(':'); })
+        .filter(function (p) { return p.length === 2; });
+      valHtml = prs.length
+        ? '<div class="val" style="font-size:20px;line-height:1.5;">' + prs.map(function (p) {
+            return escapeHtml(L[Number(p[0])] || p[0]) + ' — ' + escapeHtml(R[Number(p[1])] || p[1]);
+          }).join('<br />') + '</div>'
+        : '<div class="val">(정답 미입력)</div>';
     } else {
       valHtml = '<div class="val">' + escapeHtml(q.answer || '(정답 미입력)') + '</div>';
     }
@@ -1411,6 +1421,27 @@ function renderLivePage(activity) {
     document.getElementById('distTitle').textContent = pickedQ + '번 응답 분포 (' +
       (q.type === 'choice' ? '선다형' : q.type === 'essay' ? '서술형' : '단답형') + ')';
 
+    // 선긋기는 답이 "0:0,1:1" 이라 그대로 나열하면 못 읽는다 → 완전 정답 / 부분 / 오답으로 묶는다
+    if (q.type === 'match') {
+      var full = [], part = [], none = [];
+      (state.students || []).forEach(function (st) {
+        var v = String((st.answers || {})['q' + pickedQ] || '').trim();
+        if (!v) return;
+        if (window.answerMatch.isCorrect(v, q.answer)) full.push(st.nickname);
+        else if (window.answerMatch.partialCount(v, q.answer) > 0) part.push(st.nickname);
+        else none.push(st.nickname);
+      });
+      var bar = function (label, list, color) {
+        var tot = full.length + part.length + none.length || 1;
+        return '<div class="bar"><span class="mk">' + label + '</span>' +
+          '<span class="track"><span class="fill" style="width:' + Math.round(list.length / tot * 100) + '%;background:' + color + '"></span></span>' +
+          '<span class="n">' + list.length + '명<span class="who"> ' + esc(list.join(', ')) + '</span></span></div>';
+      };
+      document.getElementById('dist').innerHTML =
+        bar('완전', full, '#68d391') + bar('부분', part, '#f6ad55') + bar('오답', none, '#fc8181');
+      return;
+    }
+
     var byAns = {};
     (state.students || []).forEach(function (st) {
       var v = String((st.answers || {})['q' + pickedQ] || '').trim();
@@ -1480,6 +1511,7 @@ function renderStudentSinglePage(activity, questions) {
     slice_image: q.slice_image || null, group_label: q.group_label || null,
     // 변환된 HTML 이 있으면 이걸로 렌더(확대해도 안 깨짐). 없으면 조각 이미지로 폴백.
     html_content: q.html_content ? sanitizeHtml(q.html_content) : null,
+    meta: q.meta || {},          // 선긋기·기호 채우기·번호 버튼처럼 구조가 필요한 유형
   }));
 
   return `<!doctype html>
@@ -1542,6 +1574,21 @@ function renderStudentSinglePage(activity, questions) {
   .oxbtns { display: flex; gap: 10px; margin-left: auto; }
   .oxb { min-width: 64px; min-height: 48px; font-size: 22px; font-weight: 800; border: 2px solid #cbd5e1; background: #fff; border-radius: 12px; cursor: pointer; margin: 0 !important; }
   .oxb.on { border-color: #2b6cb0; background: #ebf8ff; color: #2b6cb0; }
+  /* 선긋기(match) — 화면에서 실제로 선을 그어 답한다 */
+  .matchwrap { position: relative; margin-top: 8px; }
+  .matchwrap svg { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; z-index: 1; }
+  .mcols { display: flex; gap: 44px; justify-content: space-between; touch-action: none; }
+  .mcol { flex: 1; display: flex; flex-direction: column; gap: 12px; min-width: 0; }
+  .mcard { position: relative; display: flex; align-items: center; min-height: 52px; padding: 10px 12px;
+    border: 2px solid #cbd5e1; border-radius: 10px; background: #fff; font-weight: 700; cursor: pointer;
+    user-select: none; word-break: break-word; z-index: 2; }
+  .mcard.sel { border-color: #2b6cb0; background: #ebf8ff; }
+  .mcard .dot { position: absolute; width: 20px; height: 20px; border-radius: 50%; background: #fff;
+    border: 3px solid #718096; top: 50%; transform: translateY(-50%); }
+  .mcol.left .mcard .dot { right: -12px; }
+  .mcol.right .mcard .dot { left: -12px; }
+  .mcard.linked .dot { background: #2b6cb0; border-color: #2b6cb0; }
+  .mhint { font-size: 12px; color: #718096; margin-top: 8px; }
   .arow.essay { align-items: flex-start; }
   .arow textarea { flex: 1; padding: 11px 12px; font-size: 16px; border: 1px solid #cbd5e1; border-radius: 8px; font-family: inherit; resize: vertical; }
   .counter { font-size: 13px; color: #4a5568; font-weight: 700; margin-top: 6px; }
@@ -1811,7 +1858,12 @@ function renderStudentSinglePage(activity, questions) {
     var html = '';
     s.nums.forEach(function (n) {
       var t = typeOfNum(n), cur = picked(n);
-      if (t === 'ox') {
+      if (t === 'match') {
+        // 선긋기 — 답 영역 자체가 인터랙티브하다(본문이 이미지여도 여기서 답한다)
+        html += '<div class="picked" data-num="' + n + '"><span>' + n + '번</span>' +
+          '<span class="none" id="mstat' + n + '">왼쪽에서 오른쪽으로 이어 보세요</span></div>' +
+          '<div class="matchwrap" data-match="' + n + '"></div>';
+      } else if (t === 'ox') {
         // O/X 판정형 — 큰 버튼 두 개
         html += '<div class="picked" data-num="' + n + '"><span>' + n + '번</span>' +
           '<span class="oxbtns">' +
@@ -1845,6 +1897,9 @@ function renderStudentSinglePage(activity, questions) {
         inp.__hb = setTimeout(heartbeat, 600);   // 타이핑이 멈추면 알린다
       });
     });
+    box.querySelectorAll('.matchwrap[data-match]').forEach(function (w) {
+      mountMatch(w, Number(w.getAttribute('data-match')), el, s);
+    });
     box.querySelectorAll('button[data-ox]').forEach(function (b) {
       b.onclick = function () {
         var n = Number(b.getAttribute('data-ox')), v = b.getAttribute('data-v');
@@ -1862,6 +1917,134 @@ function renderStudentSinglePage(activity, questions) {
         renderChrome(); renderAnswers(el, s); heartbeat();
       };
     });
+  }
+
+  // ================= 선긋기(match) =================
+  // 답 = 쌍 목록 "0:0,1:1,2:2" (왼쪽index:오른쪽index). 순서는 무시하고 채점한다.
+  // 조작은 두 가지를 다 지원한다 — 드래그(●에서 끌어다 놓기)와 탭탭(왼쪽 탭 → 오른쪽 탭).
+  // 저학년은 폰에서 드래그가 서툴러 탭탭이 사실상 주 경로다.
+  var MATCH_COLORS = ['#e53e3e', '#3182ce', '#38a169', '#d69e2e', '#805ad5', '#dd6b20'];
+  function metaOf(n) {
+    var q = QUESTIONS.filter(function (x) { return x.num === n; })[0];
+    return (q && q.meta) || {};
+  }
+  function pairsOf(n) {
+    return picked(n).map(function (p) {
+      var a = p.split(':');
+      return [Number(a[0]), Number(a[1])];
+    }).filter(function (p) { return !isNaN(p[0]) && !isNaN(p[1]); });
+  }
+  function setPairs(n, pairs) {
+    setPicked(n, pairs.map(function (p) { return p[0] + ':' + p[1]; }));
+  }
+
+  function mountMatch(wrap, n, el, s) {
+    var meta = metaOf(n);
+    var left = meta.left || [], right = meta.right || [];
+    var once = meta.once !== false;          // 기본 1:1 — 새로 이으면 기존 선을 대체한다
+    var selLeft = null;
+
+    wrap.innerHTML = '<svg></svg><div class="mcols">' +
+      '<div class="mcol left">' + left.map(function (t, i) {
+        return '<div class="mcard" data-side="L" data-i="' + i + '"><span></span><span class="dot"></span></div>';
+      }).join('') + '</div>' +
+      '<div class="mcol right">' + right.map(function (t, i) {
+        return '<div class="mcard" data-side="R" data-i="' + i + '"><span class="dot"></span><span></span></div>';
+      }).join('') + '</div></div>' +
+      '<div class="mhint">왼쪽을 누르고 오른쪽을 누르면 이어져요. 끌어서 이어도 돼요. 이은 선을 다시 누르면 지워져요.</div>';
+
+    // 텍스트는 textContent 로 — 시험지 내용이 그대로 들어가므로 HTML 로 해석시키지 않는다
+    wrap.querySelectorAll('.mcol.left .mcard').forEach(function (c, i) { c.querySelector('span').textContent = left[i]; });
+    wrap.querySelectorAll('.mcol.right .mcard').forEach(function (c, i) { c.querySelectorAll('span')[1].textContent = right[i]; });
+
+    var svg = wrap.querySelector('svg');
+    var cardOf = function (side, i) { return wrap.querySelector('.mcard[data-side="' + side + '"][data-i="' + i + '"]'); };
+    var dotXY = function (side, i) {
+      var d = cardOf(side, i).querySelector('.dot');
+      var r = d.getBoundingClientRect(), w = wrap.getBoundingClientRect();
+      return { x: r.left + r.width / 2 - w.left, y: r.top + r.height / 2 - w.top };
+    };
+
+    function draw(preview) {
+      var pairs = pairsOf(n);
+      var lines = pairs.map(function (p, k) {
+        var a = dotXY('L', p[0]), b = dotXY('R', p[1]);
+        return '<line x1="' + a.x + '" y1="' + a.y + '" x2="' + b.x + '" y2="' + b.y +
+          '" stroke="' + MATCH_COLORS[k % MATCH_COLORS.length] + '" stroke-width="4" stroke-linecap="round" />';
+      }).join('');
+      if (preview) {
+        lines += '<line x1="' + preview.a.x + '" y1="' + preview.a.y + '" x2="' + preview.b.x + '" y2="' + preview.b.y +
+          '" stroke="#a0aec0" stroke-width="3" stroke-dasharray="6 5" stroke-linecap="round" />';
+      }
+      svg.innerHTML = lines;
+      wrap.querySelectorAll('.mcard').forEach(function (c) {
+        var side = c.getAttribute('data-side'), i = Number(c.getAttribute('data-i'));
+        var linked = pairs.some(function (p) { return side === 'L' ? p[0] === i : p[1] === i; });
+        c.classList.toggle('linked', linked);
+        c.classList.toggle('sel', side === 'L' && selLeft === i);
+      });
+      var st = document.getElementById('mstat' + n);
+      if (st) {
+        var done = pairs.length && pairs.length === Math.min(left.length, right.length);
+        st.className = pairs.length ? 'mk' : 'none';
+        st.textContent = pairs.length
+          ? (done ? '모두 이었어요 (' + pairs.length + '쌍)' : pairs.length + '쌍 이었어요')
+          : '왼쪽에서 오른쪽으로 이어 보세요';
+      }
+    }
+
+    function link(li, ri) {
+      var pairs = pairsOf(n);
+      var had = pairs.some(function (p) { return p[0] === li && p[1] === ri; });
+      if (had) pairs = pairs.filter(function (p) { return !(p[0] === li && p[1] === ri); });   // 같은 선 재탭 = 해제
+      else {
+        if (once) pairs = pairs.filter(function (p) { return p[0] !== li && p[1] !== ri; });   // 1:1 → 기존 선 대체
+        pairs.push([li, ri]);
+      }
+      setPairs(n, pairs);
+      selLeft = null;
+      draw();
+      renderChrome();
+      heartbeat();
+    }
+
+    // 탭탭: 왼쪽 → 오른쪽
+    wrap.querySelectorAll('.mcard').forEach(function (c) {
+      c.addEventListener('click', function () {
+        var side = c.getAttribute('data-side'), i = Number(c.getAttribute('data-i'));
+        if (side === 'L') { selLeft = (selLeft === i ? null : i); draw(); return; }
+        if (selLeft == null) return;
+        link(selLeft, i);
+      });
+    });
+
+    // 드래그: 왼쪽 카드에서 끌어 오른쪽 카드에 놓기(그리는 동안 점선 미리보기)
+    wrap.querySelectorAll('.mcol.left .mcard').forEach(function (c) {
+      c.addEventListener('pointerdown', function (e) {
+        var li = Number(c.getAttribute('data-i'));
+        var moved = false;
+        var a = dotXY('L', li);
+        function mv(ev) {
+          moved = true;
+          var w = wrap.getBoundingClientRect();
+          draw({ a: a, b: { x: ev.clientX - w.left, y: ev.clientY - w.top } });
+        }
+        function up(ev) {
+          document.removeEventListener('pointermove', mv);
+          document.removeEventListener('pointerup', up);
+          if (!moved) { draw(); return; }                     // 그냥 탭이면 click 핸들러가 처리한다
+          var t = document.elementFromPoint(ev.clientX, ev.clientY);
+          var target = t && t.closest ? t.closest('.mcol.right .mcard') : null;
+          if (target) link(li, Number(target.getAttribute('data-i')));
+          else draw();
+        }
+        document.addEventListener('pointermove', mv);
+        document.addEventListener('pointerup', up);
+      });
+    });
+
+    draw();
+    window.addEventListener('resize', function () { draw(); });
   }
 
   // ================= 연습장(스케치패드) =================
