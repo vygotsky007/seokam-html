@@ -203,10 +203,6 @@
   .review-nav { display: flex; align-items: center; gap: 8px; padding: 8px 12px; border-bottom: 1px solid var(--line); }
   .review-nav .muted { flex: 1; text-align: center; font-weight: 700; }
   #slicePvToggle { display: none; float: right; }
-  /* 묶기 대상 체크박스(터치 40px) — 클릭(=미리보기)과 선택을 완전히 분리한다 */
-  .qbox-check { position: absolute; top: 2px; left: 2px; width: 40px; height: 40px; display: flex;
-    align-items: center; justify-content: center; z-index: 7; cursor: pointer; }
-  .qbox-check input { width: 20px; height: 20px; cursor: pointer; }
   .qbox.selected { border-width: 4px; }
   .qbox.selected::after { content: '✔'; position: absolute; top: 2px; right: 4px; font-weight: 900; color: #2b6cb0; }
   .qbox.focus { box-shadow: 0 0 0 3px rgba(43,108,176,.35); }
@@ -353,7 +349,7 @@
     <div id="sliceLowConf" style="display:none; margin:8px 0;"></div>
     <div id="sliceDrawHint" style="display:none; margin:8px 0;" class="drawhint">✏️ <b>직접 그리기 모드</b> — 페이지 위에서 <b>드래그</b>해 문항 영역을 그리세요. 그린 순서대로 번호가 붙습니다(번호 라벨 클릭으로 수정). <b>Esc</b>로 그리기 중단.</div>
     <div id="sliceDropInfo" style="display:none; margin:8px 0;"></div>
-    <div class="muted" id="sliceHelp" style="margin:8px 0;"><b>박스를 클릭</b>하면 오른쪽에 조각 미리보기만 바뀝니다(선택은 안 됩니다). 묶으려면 박스 <b>왼쪽 위 체크박스</b>를 켜세요 — <b>Shift+클릭</b>이면 그 사이 전부 체크됩니다. 키보드로 검수하면 빠릅니다: <b>←/→</b> 이전·다음 문항, <b>Space</b> 체크, <b>Delete</b> 삭제(Ctrl+Z로 되돌리기), <b>Esc</b> 전체 해제. 번호가 틀렸으면 <b>번호 라벨을 클릭</b>, 박스 <b>손잡이(⇕)</b>로 끝을 조절합니다. 빨간 점선은 <b>빈 영역</b>입니다.</div>
+    <div class="muted" id="sliceHelp" style="margin:8px 0;"><b>박스를 클릭</b>하면 선택되고(묶기용) 오른쪽 패널에 그 조각이 보입니다. <b>Shift+클릭</b>이면 그 사이 전부 선택됩니다. 여러 개 고른 뒤 <b>[선택 묶기]</b>로 공통 지문 문항을 합치세요. 키보드로 검수하면 빠릅니다: <b>←/→</b> 이전·다음 문항, <b>Space</b> 선택 토글, <b>Delete</b> 삭제(Ctrl+Z로 되돌리기), <b>Esc</b> 전체 해제. 번호가 틀렸으면 <b>번호 라벨을 클릭</b>, 박스 <b>손잡이(⇕)</b>로 끝을 조절합니다. 빨간 점선은 <b>빈 영역</b>입니다.</div>
     <div class="slice-editor">
       <div id="slicePages" class="slice-pages"></div>
       <div id="sliceFlow" class="slice-flow" style="display:none;"></div>
@@ -1480,22 +1476,12 @@ function flowQCard(en) {
   meta.appendChild(acts);
   card.appendChild(meta);
 
-  // 읽기 순서 뷰도 같은 규칙: 카드 클릭 = 미리보기, 체크박스 = 묶기 대상
-  var pick = document.createElement('label');
-  pick.className = 'flow-check';
-  var fcb = document.createElement('input');
-  fcb.type = 'checkbox';
-  fcb.checked = sliceSel.indexOf(s) >= 0;
-  fcb.addEventListener('click', function (ev) {
-    ev.stopPropagation();
+  // 읽기 순서 뷰도 같은 규칙: 카드 클릭 = 선택 토글 + 미리보기
+  card.addEventListener('click', function (ev) {
     if (ev.shiftKey) rangeCheckTo(s); else toggleSel(s);
     lastChecked = s;
-    renderSliceEditor();
+    focusSlice(s, { scroll: false });
   });
-  pick.appendChild(fcb);
-  meta.insertBefore(pick, meta.firstChild);
-
-  card.addEventListener('click', function () { focusSlice(s, { scroll: false }); });
   return card;
 }
 
@@ -1630,28 +1616,15 @@ function addQBox(div, pg, s, col, yTop, yBottom, color, i, colSlices) {
     warn.textContent = '↔ 단을 벗어남';
     box.appendChild(warn);
   }
-  // 체크박스 = 묶기 대상 선택. 박스 클릭과 완전히 분리한다 —
-  // 클릭이 선택까지 겸하면 '미리보기 좀 보려다' 선택이 헝클어져 검수가 안 된다.
-  var chk = document.createElement('label');
-  chk.className = 'qbox-check';
-  var cb = document.createElement('input');
-  cb.type = 'checkbox';
-  cb.checked = selected;
-  cb.title = '묶기 대상으로 선택 (Shift+클릭 = 범위 선택)';
-  cb.addEventListener('click', function (ev) {
+  // 박스 클릭 = 선택 토글(묶기용) + 그 조각을 미리보기에 띄운다.
+  // 미리보기 '순회'는 옆 패널([이전]/[다음]·←/→)이 전담하므로, 클릭은 선택에 쓰는 게 낫다 —
+  // 확인과 선택이 한 번에 끝난다.
+  box.addEventListener('click', function (ev) {
     ev.stopPropagation();
     if (ev.shiftKey) rangeCheckTo(s);      // 연속 묶음이 대부분이라 이게 실사용 최다 경로다
     else toggleSel(s);
     lastChecked = s;
-    renderSliceEditor();
-  });
-  chk.appendChild(cb);
-  box.appendChild(chk);
-
-  // 박스 클릭 = 미리보기만(선택은 건드리지 않는다)
-  box.addEventListener('click', function (ev) {
-    ev.stopPropagation();
-    focusSlice(s, { scroll: false });
+    focusSlice(s, { scroll: false });      // 선택하면서 그 조각이 패널에 보인다
   });
   // 선택된 박스에만 8방향 리사이즈 핸들(네 변 + 네 모서리)
   if (selected) {

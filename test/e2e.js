@@ -162,14 +162,17 @@ async function drag(page, box, x0, y0, x1, y1) {   // 페이지 px 좌표로 드
   ok('지문 위 빈 영역이 [빈 영역]으로 표시된다', gi >= 0);
   await gaps.nth(gi).locator('button').click();
 
-  // --- 클릭 = 미리보기만, 체크박스 = 묶기 대상(역할 분리) ---
+  // --- 박스 클릭 = 선택 토글 + 미리보기 갱신(동시에) ---
   await page.click('.slice-page .qbox[data-num="8"]');
-  ok('박스 클릭은 미리보기만 바꾼다(선택되지 않는다)',
-    (await page.evaluate(() => window.sliceSel.length)) === 0 && (await page.locator('#slicePreviewBody img').count()) === 1);
+  ok('박스를 클릭하면 선택되고 미리보기도 함께 갱신된다',
+    (await page.evaluate(() => window.sliceSel.length)) === 1 &&
+    (await page.locator('#slicePreviewBody img').count()) === 1);
+  await page.click('.slice-page .qbox[data-num="8"]');
+  ok('같은 박스를 다시 클릭하면 선택이 풀린다', (await page.evaluate(() => window.sliceSel.length)) === 0);
 
-  // --- 8~9 묶기: 체크박스로 선택 → [선택 묶기] ---
-  await page.check('.slice-page .qbox[data-num="8"] .qbox-check input');
-  await page.check('.slice-page .qbox[data-num="9"] .qbox-check input');
+  // --- 8~9 묶기: 두 박스를 클릭해 선택 → [선택 묶기] ---
+  await page.click('.slice-page .qbox[data-num="8"]');
+  await page.click('.slice-page .qbox[data-num="9"]');
   ok('[선택 묶기] 버튼에 선택 개수가 표시된다', /선택 묶기 \(2개\)/.test(await page.textContent('#sliceMergeBtn')));
   await page.click('#sliceMergeBtn');
   await page.waitForSelector('.qbox[data-num="8"] .qbox-label');
@@ -188,23 +191,24 @@ async function drag(page, box, x0, y0, x1, y1) {   // 페이지 px 좌표로 드
   await page.keyboard.press('ArrowLeft');
   ok('← 키로 이전 문항으로 돌아온다', (await page.textContent('#revCount')).trim() === cnt0.trim());
 
+  await page.keyboard.press('Escape');            // 클릭으로 선택된 상태를 비우고 Space 만 본다
   const focusNum = await page.evaluate(() => window.focusSlice_ && window.focusSlice_.num);
   await page.keyboard.press(' ');
-  ok('Space 로 현재 문항을 체크 토글한다',
+  ok('Space 로 현재 문항의 선택을 토글한다',
     (await page.evaluate(() => window.sliceSel.length)) === 1 &&
     (await page.evaluate(() => window.sliceSel[0].num)) === focusNum);
   await page.keyboard.press(' ');
-  ok('Space 를 다시 누르면 체크가 풀린다', (await page.evaluate(() => window.sliceSel.length)) === 0);
+  ok('Space 를 다시 누르면 선택이 풀린다', (await page.evaluate(() => window.sliceSel.length)) === 0);
 
-  // Shift 범위 체크: 읽기 순서로 첫 항목 체크 → Shift+세 번째 체크 = 1~3 전부
+  // Shift 범위 선택: 읽기 순서로 첫 항목 클릭 → Shift+세 번째 클릭 = 1~3 전부
   const order3 = await page.evaluate(() => window.orderedSlices().slice(0, 3).map((m) => m.s.num));
-  await page.check(`.slice-page .qbox[data-num="${order3[0]}"] .qbox-check input`);
-  await page.click(`.slice-page .qbox[data-num="${order3[2]}"] .qbox-check input`, { modifiers: ['Shift'] });
+  await page.click(`.slice-page .qbox[data-num="${order3[0]}"]`);
+  await page.click(`.slice-page .qbox[data-num="${order3[2]}"]`, { modifiers: ['Shift'] });
   const selNums = await page.evaluate(() => window.sliceSel.map((s) => s.num).sort((a, b) => a - b));
-  ok('Shift+클릭으로 범위 체크가 된다(연속 묶음 최다 경로)',
+  ok('Shift+클릭으로 범위 선택이 된다(연속 묶음 최다 경로)',
     selNums.length === 3 && order3.every((n) => selNums.indexOf(n) >= 0), 'sel=' + selNums.join(',') + ' 기대=' + order3.join(','));
   await page.keyboard.press('Escape');
-  ok('Esc 로 전체 체크가 풀린다', (await page.evaluate(() => window.sliceSel.length)) === 0);
+  ok('Esc 로 전체 선택이 풀린다', (await page.evaluate(() => window.sliceSel.length)) === 0);
 
   // sticky: 시험지를 스크롤해도 미리보기 패널이 뷰포트 안에 있다
   await page.evaluate(() => window.scrollTo(0, 1200));
@@ -509,8 +513,8 @@ async function drag(page, box, x0, y0, x1, y1) {   // 페이지 px 좌표로 드
   ok('Ctrl+Z 로 리사이즈를 되돌린다', Math.abs(undone - before.yEnd) < 1, 'yEnd=' + undone);
 
   // --- 묶기 / 삭제 ---
-  await page.check('.slice-page:nth-of-type(2) .qbox[data-num="1"] .qbox-check input');
-  await page.check('.slice-page:nth-of-type(2) .qbox[data-num="2"] .qbox-check input');
+  await page.click('.slice-page:nth-of-type(2) .qbox[data-num="1"]');
+  await page.click('.slice-page:nth-of-type(2) .qbox[data-num="2"]');
   await page.click('#sliceMergeBtn');
   const merged = await page.evaluate(() => {
     const s = window.sliceState.pages[1].slices;
