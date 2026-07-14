@@ -162,13 +162,61 @@ async function drag(page, box, x0, y0, x1, y1) {   // 페이지 px 좌표로 드
   ok('지문 위 빈 영역이 [빈 영역]으로 표시된다', gi >= 0);
   await gaps.nth(gi).locator('button').click();
 
-  // --- 8~9 묶기: 두 박스를 클릭해 선택 → [선택 묶기] (사람이 하는 그대로) ---
+  // --- 클릭 = 미리보기만, 체크박스 = 묶기 대상(역할 분리) ---
   await page.click('.slice-page .qbox[data-num="8"]');
-  await page.click('.slice-page .qbox[data-num="9"]');
+  ok('박스 클릭은 미리보기만 바꾼다(선택되지 않는다)',
+    (await page.evaluate(() => window.sliceSel.length)) === 0 && (await page.locator('#slicePreviewBody img').count()) === 1);
+
+  // --- 8~9 묶기: 체크박스로 선택 → [선택 묶기] ---
+  await page.check('.slice-page .qbox[data-num="8"] .qbox-check input');
+  await page.check('.slice-page .qbox[data-num="9"] .qbox-check input');
+  ok('[선택 묶기] 버튼에 선택 개수가 표시된다', /선택 묶기 \(2개\)/.test(await page.textContent('#sliceMergeBtn')));
   await page.click('#sliceMergeBtn');
   await page.waitForSelector('.qbox[data-num="8"] .qbox-label');
   const groupLabel = await page.textContent('.qbox[data-num="8"] .qbox-label');
   ok('8·9 를 묶으면 "8~9번" 묶음이 된다', /8~9/.test(groupLabel), groupLabel);
+
+  // --- 검수 UX: 키보드 순회 · sticky 미리보기 · Shift 범위 체크 ---
+  await page.evaluate(() => { window.sliceSel = []; window.lastChecked = null; renderSliceEditor(); });
+  await page.click('.slice-page .qbox[data-num="16"]');           // 미리보기 기준점
+  const cnt0 = await page.textContent('#revCount');
+  ok('미리보기에 "n / 전체" 카운터가 있다', /^\d+ \/ \d+$/.test(cnt0.trim()), cnt0);
+
+  await page.keyboard.press('ArrowRight');
+  const cnt1 = await page.textContent('#revCount');
+  ok('→ 키로 다음 문항 미리보기로 넘어간다', Number(cnt1.split('/')[0]) === Number(cnt0.split('/')[0]) + 1, cnt0 + ' → ' + cnt1);
+  await page.keyboard.press('ArrowLeft');
+  ok('← 키로 이전 문항으로 돌아온다', (await page.textContent('#revCount')).trim() === cnt0.trim());
+
+  const focusNum = await page.evaluate(() => window.focusSlice_ && window.focusSlice_.num);
+  await page.keyboard.press(' ');
+  ok('Space 로 현재 문항을 체크 토글한다',
+    (await page.evaluate(() => window.sliceSel.length)) === 1 &&
+    (await page.evaluate(() => window.sliceSel[0].num)) === focusNum);
+  await page.keyboard.press(' ');
+  ok('Space 를 다시 누르면 체크가 풀린다', (await page.evaluate(() => window.sliceSel.length)) === 0);
+
+  // Shift 범위 체크: 읽기 순서로 첫 항목 체크 → Shift+세 번째 체크 = 1~3 전부
+  const order3 = await page.evaluate(() => window.orderedSlices().slice(0, 3).map((m) => m.s.num));
+  await page.check(`.slice-page .qbox[data-num="${order3[0]}"] .qbox-check input`);
+  await page.click(`.slice-page .qbox[data-num="${order3[2]}"] .qbox-check input`, { modifiers: ['Shift'] });
+  const selNums = await page.evaluate(() => window.sliceSel.map((s) => s.num).sort((a, b) => a - b));
+  ok('Shift+클릭으로 범위 체크가 된다(연속 묶음 최다 경로)',
+    selNums.length === 3 && order3.every((n) => selNums.indexOf(n) >= 0), 'sel=' + selNums.join(',') + ' 기대=' + order3.join(','));
+  await page.keyboard.press('Escape');
+  ok('Esc 로 전체 체크가 풀린다', (await page.evaluate(() => window.sliceSel.length)) === 0);
+
+  // sticky: 시험지를 스크롤해도 미리보기 패널이 뷰포트 안에 있다
+  await page.evaluate(() => window.scrollTo(0, 1200));
+  await page.waitForTimeout(150);
+  const pv = await page.evaluate(() => {
+    const r = document.getElementById('slicePreview').getBoundingClientRect();
+    return { top: r.top, bottom: r.bottom, vh: window.innerHeight };
+  });
+  ok('스크롤해도 미리보기 패널이 뷰포트 안에 남는다(sticky)',
+    pv.bottom > 0 && pv.top < pv.vh, JSON.stringify(pv));
+  ok('미리보기 패널이 뷰포트 높이를 넘지 않는다', pv.bottom - pv.top <= pv.vh + 1, JSON.stringify(pv));
+  await page.evaluate(() => window.scrollTo(0, 0));
 
   // --- 저장 → HTML 변환 ---
   await page.click('#sliceSaveBtn');
@@ -461,8 +509,8 @@ async function drag(page, box, x0, y0, x1, y1) {   // 페이지 px 좌표로 드
   ok('Ctrl+Z 로 리사이즈를 되돌린다', Math.abs(undone - before.yEnd) < 1, 'yEnd=' + undone);
 
   // --- 묶기 / 삭제 ---
-  await page.click('.slice-page:nth-of-type(2) .qbox[data-num="1"]');
-  await page.click('.slice-page:nth-of-type(2) .qbox[data-num="2"]');
+  await page.check('.slice-page:nth-of-type(2) .qbox[data-num="1"] .qbox-check input');
+  await page.check('.slice-page:nth-of-type(2) .qbox[data-num="2"] .qbox-check input');
   await page.click('#sliceMergeBtn');
   const merged = await page.evaluate(() => {
     const s = window.sliceState.pages[1].slices;

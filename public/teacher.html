@@ -198,7 +198,30 @@
   .flow-actions { display: flex; gap: 6px; flex-wrap: wrap; }
   .flow-item.gap { border-style: dashed; border-color: #e53e3e; background: rgba(229,62,62,.06); }
   .flow-item.gap .flow-num { background: #fff; color: #c53030; border: 1px dashed #e53e3e; cursor: default; }
-  @media (max-width: 860px) { .slice-editor { flex-direction: column; } .slice-preview { position: static; width: 100%; } }
+  /* 미리보기: 시험지를 스크롤해도 따라오도록 sticky, 높이는 뷰포트 안에서 자체 스크롤 */
+  .slice-preview { max-height: calc(100vh - 90px); }
+  .review-nav { display: flex; align-items: center; gap: 8px; padding: 8px 12px; border-bottom: 1px solid var(--line); }
+  .review-nav .muted { flex: 1; text-align: center; font-weight: 700; }
+  #slicePvToggle { display: none; float: right; }
+  /* 묶기 대상 체크박스(터치 40px) — 클릭(=미리보기)과 선택을 완전히 분리한다 */
+  .qbox-check { position: absolute; top: 2px; left: 2px; width: 40px; height: 40px; display: flex;
+    align-items: center; justify-content: center; z-index: 7; cursor: pointer; }
+  .qbox-check input { width: 20px; height: 20px; cursor: pointer; }
+  .qbox.selected { border-width: 4px; }
+  .qbox.selected::after { content: '✔'; position: absolute; top: 2px; right: 4px; font-weight: 900; color: #2b6cb0; }
+  .qbox.focus { box-shadow: 0 0 0 3px rgba(43,108,176,.35); }
+  .qbox.flash { animation: qflash .7s ease; }
+  @keyframes qflash { 0% { box-shadow: 0 0 0 0 rgba(43,108,176,.7); } 100% { box-shadow: 0 0 0 14px rgba(43,108,176,0); } }
+  /* 좁은 화면: 하단 고정 바(작은 썸네일 + 펼치기) */
+  @media (max-width: 1100px) {
+    .slice-editor { flex-direction: column; }
+    .slice-preview { position: fixed; left: 0; right: 0; bottom: 0; width: 100%; max-height: 40vh; z-index: 30;
+      border-radius: 12px 12px 0 0; box-shadow: 0 -4px 16px rgba(0,0,0,.12); background: #fff; }
+    .slice-preview.collapsed #slicePreviewBody, .slice-preview.collapsed .review-nav { display: none; }
+    .slice-preview.collapsed { max-height: 44px; }
+    #slicePvToggle { display: inline-flex; }
+    #slicePages { padding-bottom: 42vh; }
+  }
 </style>
 </head>
 <body>
@@ -330,13 +353,16 @@
     <div id="sliceLowConf" style="display:none; margin:8px 0;"></div>
     <div id="sliceDrawHint" style="display:none; margin:8px 0;" class="drawhint">✏️ <b>직접 그리기 모드</b> — 페이지 위에서 <b>드래그</b>해 문항 영역을 그리세요. 그린 순서대로 번호가 붙습니다(번호 라벨 클릭으로 수정). <b>Esc</b>로 그리기 중단.</div>
     <div id="sliceDropInfo" style="display:none; margin:8px 0;"></div>
-    <div class="muted" id="sliceHelp" style="margin:8px 0;">각 문항이 색 박스로 표시됩니다(번호는 <b>시험지에 인쇄된 번호</b> 그대로, 순서는 왼단 위→아래 → 오른단 위→아래). 번호가 잘못 읽혔으면 <b>번호 라벨을 클릭</b>해 고치세요. 박스 <b>아래 손잡이(⇕)</b>를 끌어 끝(=다음 문항 시작)을 조절하고, 박스를 <b>클릭</b>해 여러 개 선택 후 [선택 묶기]로 공통 지문 문항을 합치세요(<b>페이지·단을 걸친 묶기는 [읽기 순서] 뷰</b>에서 나란히 놓고 하면 쉽습니다). 선택 해제는 <b>Esc</b>, 실수는 <b>Ctrl+Z</b>로 되돌립니다. 빨간 점선은 <b>빈 영역</b>입니다.</div>
+    <div class="muted" id="sliceHelp" style="margin:8px 0;"><b>박스를 클릭</b>하면 오른쪽에 조각 미리보기만 바뀝니다(선택은 안 됩니다). 묶으려면 박스 <b>왼쪽 위 체크박스</b>를 켜세요 — <b>Shift+클릭</b>이면 그 사이 전부 체크됩니다. 키보드로 검수하면 빠릅니다: <b>←/→</b> 이전·다음 문항, <b>Space</b> 체크, <b>Delete</b> 삭제(Ctrl+Z로 되돌리기), <b>Esc</b> 전체 해제. 번호가 틀렸으면 <b>번호 라벨을 클릭</b>, 박스 <b>손잡이(⇕)</b>로 끝을 조절합니다. 빨간 점선은 <b>빈 영역</b>입니다.</div>
     <div class="slice-editor">
       <div id="slicePages" class="slice-pages"></div>
       <div id="sliceFlow" class="slice-flow" style="display:none;"></div>
-      <div class="slice-preview">
-        <div class="slice-preview-head">🔍 조각 미리보기</div>
-        <div id="slicePreviewBody" class="muted" style="padding:12px;">문항 박스를 클릭하면 잘려 나올 조각이 여기 보여요.</div>
+      <div class="slice-preview" id="slicePreview">
+        <div class="slice-preview-head">🔍 조각 미리보기
+          <button class="btn-gray btn-sm" id="slicePvToggle" type="button">펼치기</button>
+        </div>
+        <div class="review-nav" id="sliceReviewNav"></div>
+        <div id="slicePreviewBody" class="muted" style="padding:12px;">문항 박스를 클릭하거나 ←/→ 키로 넘기면 잘려 나올 조각이 여기 보여요.</div>
       </div>
     </div>
   </div>
@@ -1179,6 +1205,13 @@ function syncUndoButtons() {
   document.getElementById('sliceUndoBtn').disabled = !undoStack.length;
   document.getElementById('sliceRedoBtn').disabled = !redoStack.length;
 }
+// 좁은 화면의 하단 고정 미리보기 바 — 접었다 펼 수 있게
+document.getElementById('slicePvToggle').addEventListener('click', function () {
+  var p = document.getElementById('slicePreview');
+  var on = p.classList.toggle('collapsed');
+  this.textContent = on ? '펼치기' : '접기';
+});
+
 document.getElementById('sliceUndoBtn').addEventListener('click', undoSlice);
 document.getElementById('sliceRedoBtn').addEventListener('click', redoSlice);
 // 빈 곳(카드 사이) 클릭 = 선택 전체 해제 — 렌더마다 붙이지 않도록 컨테이너에 한 번만
@@ -1188,7 +1221,34 @@ document.getElementById('sliceFlow').addEventListener('click', function (e) {
 document.addEventListener('keydown', function (e) {
   var card = document.getElementById('sliceCard');
   if (!sliceState || card.style.display === 'none') return;
+  var typing = /^(INPUT|TEXTAREA|SELECT)$/.test((e.target && e.target.tagName) || '');
   if (e.key === 'Escape') { clearSel(); return; }
+
+  // 키보드 순회 검수 — 문항을 하나씩 넘기며 조각을 확인하는 게 이 화면의 주 작업이다
+  if (!typing) {
+    if (e.key === 'ArrowRight' || e.key === 'ArrowDown') { e.preventDefault(); stepFocus(1); return; }
+    if (e.key === 'ArrowLeft' || e.key === 'ArrowUp') { e.preventDefault(); stepFocus(-1); return; }
+    if (e.key === ' ' || e.key === 'Spacebar') {
+      if (!focusSlice_) return;
+      e.preventDefault();
+      toggleSel(focusSlice_);
+      lastChecked = focusSlice_;
+      renderSliceEditor();
+      return;
+    }
+    if (e.key === 'Delete' || e.key === 'Backspace') {
+      if (!focusSlice_) return;
+      e.preventDefault();
+      var all = orderedSlices().map(function (m) { return m.s; });
+      var i = all.indexOf(focusSlice_);
+      deleteSlices(groupMembersGlobal(focusSlice_).map(function (m) { return m.s; }));   // 되돌리기 가능
+      var left = orderedSlices();
+      focusSlice_ = left.length ? left[Math.min(i, left.length - 1)].s : null;
+      if (focusSlice_) focusSlice(focusSlice_, { scroll: false });
+      return;
+    }
+  }
+
   var z = (e.key === 'z' || e.key === 'Z');
   if (!z || !(e.ctrlKey || e.metaKey)) return;
   e.preventDefault();
@@ -1197,7 +1257,60 @@ document.addEventListener('keydown', function (e) {
 function clearSel() {
   if (!sliceSel.length) return;
   sliceSel = [];
+  lastChecked = null;
   renderSliceEditor();
+}
+
+// ---- 검수 순회: 읽기 순서(페이지 → 단 → y)로 펼친 목록 ----
+var focusSlice_ = null;      // 지금 미리보기 중인 영역
+var lastChecked = null;      // Shift 범위 선택의 기준점
+function orderedSlices() {
+  var out = [];
+  sliceState.pages.forEach(function (pg, pi) {
+    pg.slices.slice().sort(function (a, b) { return (a.col - b.col) || (a.y - b.y); })
+      .forEach(function (s) { out.push({ pg: pg, pi: pi, s: s }); });
+  });
+  return out;
+}
+function focusIndex() {
+  var all = orderedSlices();
+  for (var i = 0; i < all.length; i++) if (all[i].s === focusSlice_) return i;
+  return -1;
+}
+// 미리보기 대상 지정(+ 시험지 쪽 해당 박스로 스크롤·강조)
+function focusSlice(s, opt) {
+  focusSlice_ = s;
+  var all = orderedSlices();
+  var hit = all.filter(function (m) { return m.s === s; })[0];
+  if (!hit) return;
+  showSlicePreview(hit.pg, s);
+  renderSliceEditor();
+  if (!opt || opt.scroll !== false) {
+    var box = document.querySelector('.qbox[data-num="' + s.num + '"]');
+    if (box) {
+      box.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      box.classList.add('flash');
+      setTimeout(function () { box.classList.remove('flash'); }, 700);
+    }
+  }
+}
+function stepFocus(dir) {
+  var all = orderedSlices();
+  if (!all.length) return;
+  var i = focusIndex();
+  var next = i < 0 ? 0 : Math.max(0, Math.min(all.length - 1, i + dir));
+  focusSlice(all[next].s);
+}
+// Shift+체크 = 읽기 순서 기준 범위 선택(1번 체크 → Shift+3번 = 1~3)
+function rangeCheckTo(s) {
+  var all = orderedSlices().map(function (m) { return m.s; });
+  var to = all.indexOf(s);
+  var from = lastChecked ? all.indexOf(lastChecked) : -1;
+  if (from < 0 || to < 0) { toggleSel(s); return; }
+  var a = Math.min(from, to), b = Math.max(from, to);
+  for (var i = a; i <= b; i++) {
+    if (sliceSel.indexOf(all[i]) < 0) sliceSel.push(all[i]);
+  }
 }
 
 function renderSliceEditor() {
@@ -1216,7 +1329,31 @@ function renderSliceEditor() {
   if (sliceView === 'flow') renderFlowView(flowEl); else renderGridView(pagesEl);
   updateGapBadge();
   syncUndoButtons();
-  document.getElementById('sliceMergeBtn').disabled = sliceSel.length < 2;
+  var mb = document.getElementById('sliceMergeBtn');
+  mb.disabled = sliceSel.length < 2;
+  mb.textContent = sliceSel.length ? '선택 묶기 (' + sliceSel.length + '개)' : '선택 묶기';
+  renderReviewNav();
+}
+
+// 미리보기 패널의 [이전]/[다음] + "n / 전체" 카운터
+function renderReviewNav() {
+  var el = document.getElementById('sliceReviewNav');
+  if (!el) return;
+  var all = orderedSlices();
+  var i = focusIndex();
+  el.innerHTML = '';
+  var prev = document.createElement('button');
+  prev.className = 'btn-outline btn-sm'; prev.id = 'revPrev'; prev.textContent = '← 이전';
+  prev.disabled = !all.length || i <= 0;
+  prev.addEventListener('click', function () { stepFocus(-1); });
+  var next = document.createElement('button');
+  next.className = 'btn-outline btn-sm'; next.id = 'revNext'; next.textContent = '다음 →';
+  next.disabled = !all.length || (i >= 0 && i >= all.length - 1);
+  next.addEventListener('click', function () { stepFocus(1); });
+  var cnt = document.createElement('span');
+  cnt.className = 'muted'; cnt.id = 'revCount';
+  cnt.textContent = all.length ? ((i < 0 ? 0 : i + 1) + ' / ' + all.length) : '0 / 0';
+  el.appendChild(prev); el.appendChild(cnt); el.appendChild(next);
 }
 
 // ---- 뷰 ①: 원본 배치(페이지·단 격자) ----
@@ -1343,7 +1480,22 @@ function flowQCard(en) {
   meta.appendChild(acts);
   card.appendChild(meta);
 
-  card.addEventListener('click', function () { toggleSel(s); showSlicePreview(en.pg, s); renderSliceEditor(); });
+  // 읽기 순서 뷰도 같은 규칙: 카드 클릭 = 미리보기, 체크박스 = 묶기 대상
+  var pick = document.createElement('label');
+  pick.className = 'flow-check';
+  var fcb = document.createElement('input');
+  fcb.type = 'checkbox';
+  fcb.checked = sliceSel.indexOf(s) >= 0;
+  fcb.addEventListener('click', function (ev) {
+    ev.stopPropagation();
+    if (ev.shiftKey) rangeCheckTo(s); else toggleSel(s);
+    lastChecked = s;
+    renderSliceEditor();
+  });
+  pick.appendChild(fcb);
+  meta.insertBefore(pick, meta.firstChild);
+
+  card.addEventListener('click', function () { focusSlice(s, { scroll: false }); });
   return card;
 }
 
@@ -1441,7 +1593,7 @@ function addQBox(div, pg, s, col, yTop, yBottom, color, i, colSlices) {
   var r = sliceRect(pg, s);
   var selected = sliceSel.indexOf(s) >= 0;
   var box = document.createElement('div');
-  box.className = 'qbox' + (selected ? ' selected' : '') + (outOfColumn(pg, s) ? ' outcol' : '');
+  box.className = 'qbox' + (selected ? ' selected' : '') + (s === focusSlice_ ? ' focus' : '') + (outOfColumn(pg, s) ? ' outcol' : '');
   box.setAttribute('data-num', s.num);
   box.style.left = (r.x0 / pg.W * 100) + '%';
   box.style.width = ((r.x1 - r.x0) / pg.W * 100) + '%';
@@ -1478,12 +1630,28 @@ function addQBox(div, pg, s, col, yTop, yBottom, color, i, colSlices) {
     warn.textContent = '↔ 단을 벗어남';
     box.appendChild(warn);
   }
-  // 클릭 = 선택 토글 + 미리보기
+  // 체크박스 = 묶기 대상 선택. 박스 클릭과 완전히 분리한다 —
+  // 클릭이 선택까지 겸하면 '미리보기 좀 보려다' 선택이 헝클어져 검수가 안 된다.
+  var chk = document.createElement('label');
+  chk.className = 'qbox-check';
+  var cb = document.createElement('input');
+  cb.type = 'checkbox';
+  cb.checked = selected;
+  cb.title = '묶기 대상으로 선택 (Shift+클릭 = 범위 선택)';
+  cb.addEventListener('click', function (ev) {
+    ev.stopPropagation();
+    if (ev.shiftKey) rangeCheckTo(s);      // 연속 묶음이 대부분이라 이게 실사용 최다 경로다
+    else toggleSel(s);
+    lastChecked = s;
+    renderSliceEditor();
+  });
+  chk.appendChild(cb);
+  box.appendChild(chk);
+
+  // 박스 클릭 = 미리보기만(선택은 건드리지 않는다)
   box.addEventListener('click', function (ev) {
     ev.stopPropagation();
-    toggleSel(s);
-    showSlicePreview(pg, s);
-    renderSliceEditor();
+    focusSlice(s, { scroll: false });
   });
   // 선택된 박스에만 8방향 리사이즈 핸들(네 변 + 네 모서리)
   if (selected) {
