@@ -30,7 +30,15 @@ async function analyze(page, pdf) {
   await page.click('#toHtmlBtn');
   await page.waitForSelector('#htmlCards .qcard', { timeout: 60000 });
 
-  return page.evaluate(() => {
+  const cols = await page.evaluate(() =>
+    window.sliceState.pages.map((pg) => ({
+      cols: pg.cols.length,
+      // 세로 기둥 = 폭이 페이지의 18% 도 안 되는 가짜 단(분수·표가 만든다). 하나도 없어야 한다.
+      thin: pg.cols.filter((c) => (c.x1 - c.x0) < pg.W * 0.18).length,
+    }))
+  );
+
+  const res = await page.evaluate(() => {
     const rows = Object.keys(window.qHtml).map(Number).sort((a, b) => a - b).map((n) => {
       const rec = window.qHtml[n], q = rec.parsed;
       return {
@@ -40,6 +48,8 @@ async function analyze(page, pdf) {
     });
     return { slices: rows.length, rows: rows };
   });
+  res.cols = cols;
+  return res;
 }
 
 (async () => {
@@ -75,8 +85,12 @@ async function analyze(page, pdf) {
     const img = r.rows.filter((x) => x.useImage).length;
     now[f] = { slices: r.slices, text, image: img, types: r.rows.reduce((a, x) => { a[x.type] = (a[x.type] || 0) + 1; return a; }, {}) };
 
+    const thin = (r.cols || []).reduce((a, c) => a + c.thin, 0);
+    now[f].thinCols = thin;
     console.log(`\n📄 ${f}`);
     console.log(`   문항 ${r.slices}개 · 텍스트 ${text} · 이미지 ${img}`);
+    console.log(`   단 인식: ${(r.cols || []).map((c) => c.cols + '단').join(' / ')}`);
+    if (thin) { console.log(`   ❌ 세로 기둥(가짜 단) ${thin}개 — 문항이 세로로 찢어진다`); fail++; }
     if (SHOW_TABLE) {
       console.log('   번호 | 유형          | 표시   | 선지 | 사유/발문');
       r.rows.forEach((x) => {

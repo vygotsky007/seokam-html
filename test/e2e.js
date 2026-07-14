@@ -179,6 +179,43 @@ async function drag(page, box, x0, y0, x1, y1) {   // 페이지 px 좌표로 드
   const groupLabel = await page.textContent('.qbox[data-num="8"] .qbox-label');
   ok('8·9 를 묶으면 "8~9번" 묶음이 된다', /8~9/.test(groupLabel), groupLabel);
 
+  // --- 단 설정(교사 안전장치): 인식 결과 표시 · 1단/2단 강제 · 페이지 단위 재인식 ---
+  const colInfo0 = await page.textContent('.colbar[data-page="1"] .colinfo');
+  ok('페이지마다 "N단으로 인식됨" 이 표시된다', /1페이지 — \d단으로 인식됨/.test(colInfo0), colInfo0);
+
+  const before2 = await page.evaluate(() => window.sliceState.pages[1].slices.length);
+  await page.click('.colbar[data-page="2"] button[data-cols="2"]');    // 2페이지를 2단으로 강제
+  const forced = await page.evaluate(() => ({
+    cols: window.sliceState.pages[1].cols.length,
+    override: !!window.sliceState.pages[1].colOverride,
+    other: window.sliceState.pages[0].slices.length,
+  }));
+  ok('[2단] 지정 → 그 페이지만 2단으로 재인식된다', forced.cols === 2 && forced.override, JSON.stringify(forced));
+  ok('다른 페이지의 인식 결과는 보존된다', forced.other > 0, 'p1 slices=' + forced.other);
+  ok('교사 지정이 표시된다', /교사 지정/.test(await page.textContent('.colbar[data-page="2"] .colinfo')));
+
+  await page.click('.colbar[data-page="2"] button:has-text("자동으로 되돌리기")');
+  const autoBack = await page.evaluate(() => ({
+    override: !!window.sliceState.pages[1].colOverride,
+    slices: window.sliceState.pages[1].slices.length,
+  }));
+  ok('[자동으로 되돌리기] 로 원래 인식으로 복귀한다', !autoBack.override && autoBack.slices === before2, JSON.stringify(autoBack));
+
+  // 직접 선 긋기 → 그 선을 절대 기준으로 단 재산출 (2페이지에서 — 1페이지 묶음 결과를 건드리지 않는다)
+  await page.click('.colbar[data-page="2"] button[data-gutter="1"]');
+  ok('[직접 선 긋기] 모드에 들어간다', await page.evaluate(() => !!window.sliceState.pages[1].gutterMode));
+  const pbox = await pageBox(page, 1, 300);
+  const oldG = await page.evaluate(() => window.sliceState.pages[1].cols[0].x1);
+  const clickAt = (x) => page.mouse.click(pbox.left + (x / pbox.W) * pbox.w, pbox.top + (300 / pbox.H) * pbox.h);
+  await clickAt(oldG);                       // 기존 선 위를 누르면 그 선이 지워진다
+  ok('그은 선을 다시 누르면 지워진다', (await page.evaluate(() => window.sliceState.pages[1].gutters.length)) === 0);
+  await clickAt(pbox.W * 0.5);               // 가운데에 새 선 하나
+  await page.click('.colbar[data-page="2"] button[data-gutter="1"]');          // 끝내기 → 확정
+  const gcols = await page.evaluate(() => window.sliceState.pages[1].cols);
+  ok('직접 그은 선이 단 경계가 된다', gcols.length === 2 && Math.abs(gcols[0].x1 - 1190 / 2) < 30,
+    JSON.stringify(gcols.map((c) => [Math.round(c.x0), Math.round(c.x1)])));
+  await page.click('.colbar[data-page="2"] button:has-text("자동으로 되돌리기")');
+
   // --- 검수 UX: 키보드 순회 · sticky 미리보기 · Shift 범위 체크 ---
   await page.evaluate(() => { window.sliceSel = []; window.lastChecked = null; renderSliceEditor(); });
   await page.click('.slice-page .qbox[data-num="16"]');           // 미리보기 기준점
@@ -533,15 +570,15 @@ async function drag(page, box, x0, y0, x1, y1) {   // 페이지 px 좌표로 드
   ok('Ctrl+Z 로 리사이즈를 되돌린다', Math.abs(undone - before.yEnd) < 1, 'yEnd=' + undone);
 
   // --- 묶기 / 삭제 ---
-  await page.click('.slice-page:nth-of-type(2) .qbox[data-num="1"]');
-  await page.click('.slice-page:nth-of-type(2) .qbox[data-num="2"]');
+  await page.locator('.slice-page').nth(1).locator('.qbox[data-num="1"]').click();
+  await page.locator('.slice-page').nth(1).locator('.qbox[data-num="2"]').click();
   await page.click('#sliceMergeBtn');
   const merged = await page.evaluate(() => {
     const s = window.sliceState.pages[1].slices;
     return s[0].groupId && s[0].groupId === s[1].groupId;
   });
   ok('그린 영역끼리 묶을 수 있다', !!merged);
-  await page.click('.slice-page:nth-of-type(2) .qbox[data-num="3"] .qbox-del');
+  await page.locator('.slice-page').nth(1).locator('.qbox[data-num="3"] .qbox-del').click();
   const left = await page.evaluate(() => window.sliceState.pages[1].slices.length);
   ok('그린 영역을 삭제할 수 있다', left === 2, 'slices=' + left);
 
