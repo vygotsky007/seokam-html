@@ -2037,16 +2037,21 @@ function emphasizeNegation(html) {
 function dropQuestionNumber(l, num) {
   var lead = new RegExp('^\\s*' + num + '\\s*[.)]?\\s*');
   if (!lead.test(l.text || '')) return null;
+  var whole = new RegExp('^\\s*' + num + '\\s*[.)]?\\s*$');
   var parts = (l.parts || []).slice();
-  var eaten = '';
+  var acc = '';
+  // 번호를 이루는 앞쪽 조각들만 먹는다("55" + "." 처럼 나뉘어 오기도 한다)
   while (parts.length) {
-    var s = (parts[0].str || '');
-    if (!lead.test(eaten + s) && !(eaten + s).replace(/\s/g, '').length <= String(num).length + 1) break;
-    if (!/^[\s\d.)]*$/.test(s)) break;               // 번호·구두점 조각만 먹는다
-    eaten += s;
+    var s = parts[0].str || '';
+    if (!/^[\s\d.)]*$/.test(s)) break;                              // 숫자·구두점 조각이 아니면 멈춘다
+    var next = acc + s;
+    if (next.replace(/\s/g, '').length > String(num).length + 1) break;   // 번호보다 길어지면 그만
+    acc = next;
     parts.shift();
-    if (new RegExp('^\\s*' + num + '\\s*[.)]?\\s*$').test(eaten)) break;
+    if (whole.test(acc)) break;
   }
+  // 번호 뒤의 마침표·괄호가 별도 조각으로 남는 경우("5","5","." 처럼 글자 단위로 흩어져 온다)
+  while (parts.length && /^[\s.)]+$/.test(parts[0].str || '')) parts.shift();
   var t = (l.text || '').replace(lead, '');
   return { y: l.y, h: l.h, x: parts.length ? parts[0].x : l.x, w: l.w, pg: l.pg, parts: parts.length ? parts : null, text: t };
 }

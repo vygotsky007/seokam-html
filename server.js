@@ -1988,6 +1988,29 @@ function renderStudentSinglePage(activity, questions) {
   // 저학년은 폰에서 드래그가 서툴러 탭탭이 사실상 주 경로다.
   var MATCH_COLORS = ['#e53e3e', '#3182ce', '#38a169', '#d69e2e', '#805ad5', '#dd6b20'];
   var MARKERS = ['①', '②', '③', '④', '⑤', '⑥', '⑦', '⑧', '⑨', '⑩'];
+
+  // ---- 발문 끝의 답란 표기 숨기기 ----
+  // 탭으로 답하는 유형은 발문 끝의 "…… ( )" 가 뜻 없는 잔재다(종이에 손으로 쓰라는 표시).
+  // 단답·서술형은 그대로 둔다 — 거기선 '빈칸에 쓰라'는 신호다.
+  // 데이터(stem 원문)는 건드리지 않는다 — 화면에서만 숨긴다.
+  var TAP_TYPES = ['choice', 'marker_only', 'multi_choice', 'ox', 'order', 'match', 'fill_symbol'];
+  // …·⋯·‥ 는 한 글자가 이미 말줄임이다(…… 는 두 글자). 마침표·가운뎃점은 3개 이상일 때만 점선으로 본다.
+  // ※ 이 스크립트는 서버의 템플릿 리터럴 안에 있다 — 정규식의 백슬래시는 반드시 \\ 로 써야 한다
+  //   (\s 로 쓰면 템플릿이 백슬래시를 먹어 그냥 문자 s 가 된다).
+  var TAIL_BLANK_RE = /(?:(?:[…⋯‥]+|[.·]{3,})\\s*)?[(（][\\s_ㆍ·．.]*[)）]\\s*$/;
+  var TAIL_DOTS_RE = /(?:[…⋯‥]+|[.·]{3,})\\s*$/;
+  function hideTailBlank(el, s) {
+    s.nums.forEach(function (n) {
+      if (TAP_TYPES.indexOf(typeOfNum(n)) < 0) return;
+      var scope = el.querySelector('.qhtml [data-num="' + n + '"]');
+      if (!scope && s.nums.length === 1) scope = el.querySelector('.qhtml');
+      if (!scope) return;
+      scope.querySelectorAll('.stem').forEach(function (p) {
+        var h = p.innerHTML.replace(TAIL_BLANK_RE, '').replace(TAIL_DOTS_RE, '');
+        if (h !== p.innerHTML) p.innerHTML = h;
+      });
+    });
+  }
   function metaOf(n) {
     var q = QUESTIONS.filter(function (x) { return x.num === n; })[0];
     return (q && q.meta) || {};
@@ -2339,6 +2362,7 @@ function renderStudentSinglePage(activity, questions) {
     html += '<div class="answers" id="answers"></div><div id="doneHint"></div>';
     html += '<div class="padbar"><button class="padbtn" id="padToggle" type="button">✏️ 연습장</button></div><div id="padHost"></div>';
     el.innerHTML = html;
+    hideTailBlank(el, s);      // 발문 끝 "…… ( )" 는 탭 유형에선 잔재다(원문은 그대로 둔다)
     bindChoices(el, s);        // 선지 클릭 = 답 선택(선지가 있는 문항만)
     renderAnswers(el, s);      // 객관식이면 입력칸 대신 선택 상태
     mountPad(el, s);           // 문항별 연습장

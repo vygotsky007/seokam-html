@@ -254,6 +254,14 @@ const W = (t, opt) => Object.assign({ t }, opt || {});
   drawLine(p6, [W('54.'), W('○'), W('안에'), W('×,'), W('÷'), W('를'), W('한'), W('번씩'), W('써넣으시오.')], 320, 790, fonts);
   drawLine(p6, [W('12'), W('○'), W('3'), W('○'), W('2'), W('='), W('8')], 330, 765, fonts);
 
+  // 55. 탭으로 답하는 선다형인데 발문 끝에 답란 괄호·말줄임이 붙어 있다(화면에서 숨겨야 한다)
+  drawLine(p6, [W('55.'), W('가장'), W('큰'), W('수는'), W('무엇입니까?'), W('……'), W('(     )')], 320, 705, fonts);
+  drawLine(p6, [W('①'), W('7')], 326, 683, fonts);
+  drawLine(p6, [W('②'), W('9')], 326, 661, fonts);
+
+  // 56. 단답형은 끝 괄호를 그대로 둔다(빈칸에 쓰라는 신호)
+  drawLine(p6, [W('56.'), W('7과'), W('9의'), W('합을'), W('구하시오.'), W('(     )')], 320, 620, fonts);
+
   fs.mkdirSync(path.dirname(OUT), { recursive: true });
   fs.writeFileSync(OUT, await doc.save());
   console.log('✅ 픽스처 생성:', OUT);

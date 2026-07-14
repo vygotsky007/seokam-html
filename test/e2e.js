@@ -350,6 +350,9 @@ async function drag(page, box, x0, y0, x1, y1) {   // 페이지 px 좌표로 드
   const r5 = gradeOf([{ num: 53, type: 'short_sub', answer: '7,7', graded: true }], { q53: '7,7' });
   ok('소문항은 자리 순서대로 채점된다', r5.auto_score === 1);
 
+  ok('55번 stem 원문에는 답란 괄호가 그대로 남아 있다(데이터 보존)',
+    /[(（]\s*[)）]/.test(P('55').stem || ''), 'stem=' + P('55').stem);
+
   // --- [선긋기] 31번(선긋기 문항)을 교사가 인터랙티브 유형으로 만든다 ---
   const cand = await page.evaluate(() => (window.qHtml['31'].parsed.matchCand || null));
   ok('선긋기 문항에서 좌우 항목 후보를 뽑아 둔다(자동 확정은 안 함)',
@@ -642,6 +645,24 @@ async function drag(page, box, x0, y0, x1, y1) {   // 페이지 px 좌표로 드
   await sp.click('#padToggle');
   ok('연습장을 접을 수 있다', (await sp.locator('#padCanvas').count()) === 0);
 
+  // ---- 발문 끝 답란 괄호·말줄임: 탭 유형에서만 화면에서 숨긴다(원문은 보존) ----
+  await sp.click('.chip:has-text("55")');
+  await sp.waitForSelector('#slide ol.choices li.pick');
+  const stem55 = await sp.textContent('#slide .qhtml .stem');
+  ok('선다형 발문 끝의 "…… ( )" 가 학생 화면에서 사라진다', !/[(（]\s*[)）]/.test(stem55) && !/……/.test(stem55), stem55);
+  ok('발문 본문은 그대로 남는다', /가장 큰 수는 무엇입니까\?/.test(stem55), stem55);
+  ok('인쇄된 문항 번호가 발문에 다시 나오지 않는다', !/^\s*55\s*[.)]/.test(stem55), stem55);
+
+  await sp.click('.chip:has-text("56")');
+  await sp.waitForSelector('#slide .arow input');
+  const stem56 = await sp.textContent('#slide .qhtml .stem');
+  ok('단답형의 끝 괄호는 그대로 둔다(빈칸에 쓰라는 신호)', /[(（]\s*[)）]/.test(stem56), stem56);
+
+  await sp.click('.chip:has-text("45")');
+  await sp.waitForSelector('#slide .qhtml');
+  const stem45 = await sp.textContent('#slide .qhtml .stem');
+  ok('빈칸 채우기의 "중간" 괄호는 보호된다', /[(（]\s*[)）]\s*안에/.test(stem45), stem45);
+
   // ---- 선긋기(match): 드래그 · 탭탭 · 1:1 대체 · 재탭 해제 ----
   await sp.click('.chip:has-text("31")');
   await sp.waitForSelector('#slide .matchwrap .mcard');
@@ -734,7 +755,7 @@ async function drag(page, box, x0, y0, x1, y1) {   // 페이지 px 좌표로 드
 
   // 제출 → 서버에 도착한 값 확인(마커 형식 + 채점)
   await sp.fill('#nick', '검증학생');
-  for (let i = 0; i < 30; i++) { if (await sp.isVisible('#finishOverlay.show')) break; await sp.click('#nextBtn'); }
+  for (let i = 0; i < 80; i++) { if (await sp.isVisible('#finishOverlay.show')) break; await sp.click('#nextBtn'); }
   await sp.click('#fSubmit');
   await sp.waitForSelector('#resultOverlay.show', { timeout: 8000 });
   const sub = state.submissions[state.submissions.length - 1] || {};
