@@ -33,7 +33,8 @@ function grade(questions, answers) {
     gradable += 1;
     // 교사가 발표 모드에서 손으로 인정한 답은 그대로 정답으로 친다
     const manual = q.manual_correct === true;
-    const correct = manual || isCorrect(given, q.answer);
+    // 순서 배열형만 순서를 따진다(복수 선택형은 순서 무시)
+    const correct = manual || isCorrect(given, q.answer, { ordered: q.type === 'order' });
     if (correct) auto_score += 1;
     results.push({ num, type: q.type, given, expected: q.answer ?? '', correct, excluded: false });
   }

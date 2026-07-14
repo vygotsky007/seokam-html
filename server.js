@@ -1367,6 +1367,14 @@ function renderStudentSinglePage(activity, questions) {
   .picked .none { color: #a0aec0; font-weight: 400; }
   .picked .mk { font-size: 20px; }
   .picked button { margin-left: auto; padding: 6px 10px; font-size: 13px; font-weight: 700; border: 1px solid #cbd5e1; background: #fff; border-radius: 8px; cursor: pointer; }
+  /* 순서 배열형: 몇 번째로 골랐는지 선지에 붙여 보여준다 */
+  .qhtml ol.choices li .ordno { margin-left: auto; font-size: 12px; font-weight: 800; color: #fff; background: #2b6cb0; border-radius: 999px; padding: 2px 8px; }
+  /* O/X 판정형: 큰 버튼 두 개 */
+  .oxbtns { display: flex; gap: 10px; margin-left: auto; }
+  .oxb { min-width: 64px; min-height: 48px; font-size: 22px; font-weight: 800; border: 2px solid #cbd5e1; background: #fff; border-radius: 12px; cursor: pointer; margin: 0 !important; }
+  .oxb.on { border-color: #2b6cb0; background: #ebf8ff; color: #2b6cb0; }
+  .arow.essay { align-items: flex-start; }
+  .arow textarea { flex: 1; padding: 11px 12px; font-size: 16px; border: 1px solid #cbd5e1; border-radius: 8px; font-family: inherit; resize: vertical; }
   .counter { font-size: 13px; color: #4a5568; font-weight: 700; margin-top: 6px; }
   .autonext { display: flex; align-items: center; gap: 6px; font-size: 12px; color: #4a5568; margin-top: 6px; }
   .autonext button { padding: 4px 10px; font-size: 12px; font-weight: 700; border: 1px solid #cbd5e1; background: #fff; color: #4a5568; border-radius: 999px; cursor: pointer; }
@@ -1539,26 +1547,59 @@ function renderStudentSinglePage(activity, questions) {
   }
   function isChoice(el, n, s) { return choiceEls(el, n, s).length > 0; }
 
+  // 문항 유형 — 선지를 어떻게 고르는지가 유형마다 다르다
+  function typeOfNum(n) {
+    var q = QUESTIONS.filter(function (x) { return x.num === n; })[0];
+    return (q && q.type) || 'short';
+  }
+  function picked(n) {
+    var v = String(answers['q' + n] || '').trim();
+    return v ? v.split(',').map(function (x) { return x.trim(); }).filter(Boolean) : [];
+  }
+  function setPicked(n, list) {
+    if (list.length) answers['q' + n] = list.join(',');
+    else delete answers['q' + n];
+  }
+
   function pickChoice(n, mk, el, s) {
-    var same = answers['q' + n] === mk;
-    if (same) delete answers['q' + n];      // 같은 선지 재클릭 = 해제
-    else answers['q' + n] = mk;
-    choiceEls(el, n, s).forEach(function (li) {
-      li.classList.toggle('on', li.getAttribute('data-marker') === answers['q' + n]);
-    });
+    var t = typeOfNum(n), cur = picked(n), was = cur.indexOf(mk) >= 0, done = false;
+    if (t === 'multi_choice') {
+      // 복수 선택: 누를 때마다 켜고 끈다. 저장은 "㉠,㉢"(순서 무시 채점)
+      setPicked(n, was ? cur.filter(function (x) { return x !== mk; }) : cur.concat([mk]));
+    } else if (t === 'order') {
+      // 순서 배열: 누른 순서대로 쌓인다. 다시 누르면 취소. 저장은 "㉢,㉠,㉡"(순서가 답)
+      setPicked(n, was ? cur.filter(function (x) { return x !== mk; }) : cur.concat([mk]));
+    } else {
+      setPicked(n, was ? [] : [mk]);        // 단일 선택: 같은 선지 재클릭 = 해제
+      done = !was;
+    }
+    paintChoices(el, n, s);
     renderChrome();
     renderAnswers(el, s);
     heartbeat();                            // 답이 바뀌면 바로 알린다(대시보드가 3초 안에 본다)
-    if (!same && autoNext) scheduleNext(el, s);
+    if (done && autoNext) scheduleNext(el, s);
+  }
+  // 선택 상태를 선지에 칠한다(순서 배열은 몇 번째로 골랐는지도 보여준다)
+  function paintChoices(el, n, s) {
+    var t = typeOfNum(n), cur = picked(n);
+    choiceEls(el, n, s).forEach(function (li) {
+      var mk = li.getAttribute('data-marker');
+      var at = cur.indexOf(mk);
+      li.classList.toggle('on', at >= 0);
+      var badge = li.querySelector('.ordno');
+      if (t === 'order' && at >= 0) {
+        if (!badge) { badge = document.createElement('span'); badge.className = 'ordno'; li.appendChild(badge); }
+        badge.textContent = (at + 1) + '번째';
+      } else if (badge) { badge.remove(); }
+    });
   }
   function bindChoices(el, s) {
     s.nums.forEach(function (n) {
       choiceEls(el, n, s).forEach(function (li) {
         li.classList.add('pick');
-        var mk = li.getAttribute('data-marker');
-        if (answers['q' + n] === mk) li.classList.add('on');
-        li.addEventListener('click', function () { pickChoice(n, mk, el, s); });
+        li.addEventListener('click', function () { pickChoice(n, li.getAttribute('data-marker'), el, s); });
       });
+      paintChoices(el, n, s);
     });
   }
   // 이 슬라이드의 객관식을 다 풀었을 때만 넘어간다(묶음 8·9 는 둘 다 답해야 다음으로)
@@ -1583,19 +1624,34 @@ function renderStudentSinglePage(activity, questions) {
     if (!box) return;
     var html = '';
     s.nums.forEach(function (n) {
-      if (isChoice(el, n, s)) {
-        var mk = answers['q' + n];
+      var t = typeOfNum(n), cur = picked(n);
+      if (t === 'ox') {
+        // O/X 판정형 — 큰 버튼 두 개
         html += '<div class="picked" data-num="' + n + '"><span>' + n + '번</span>' +
-          (mk
-            ? '<span class="mk">선택: ' + escapeHtml(mk) + '</span><button type="button" data-clear="' + n + '">선택 지우기</button>'
-            : '<span class="none">선지를 눌러 답하세요</span>') + '</div>';
+          '<span class="oxbtns">' +
+          '<button type="button" class="oxb' + (cur[0] === 'O' ? ' on' : '') + '" data-ox="' + n + '" data-v="O">○</button>' +
+          '<button type="button" class="oxb' + (cur[0] === 'X' ? ' on' : '') + '" data-ox="' + n + '" data-v="X">✕</button>' +
+          '</span></div>';
+      } else if (t === 'essay') {
+        html += '<div class="arow essay"><label>' + n + '번</label>' +
+          '<textarea data-num="' + n + '" rows="4" placeholder="생각을 자유롭게 쓰세요">' + escapeHtml(answers['q' + n] || '') + '</textarea></div>';
+      } else if (isChoice(el, n, s)) {
+        var label = t === 'order' ? '순서: ' : t === 'multi_choice' ? '선택: ' : '선택: ';
+        var shown = t === 'order' ? cur.join(' → ') : cur.join(', ');
+        var hint = t === 'order' ? '순서대로 눌러 주세요(다시 누르면 취소)'
+          : t === 'multi_choice' ? '해당하는 것을 모두 눌러 주세요'
+            : '선지를 눌러 답하세요';
+        html += '<div class="picked" data-num="' + n + '"><span>' + n + '번</span>' +
+          (cur.length
+            ? '<span class="mk">' + label + escapeHtml(shown) + '</span><button type="button" data-clear="' + n + '">선택 지우기</button>'
+            : '<span class="none">' + hint + '</span>') + '</div>';
       } else {
         html += '<div class="arow"><label>' + n + '번</label>' +
           '<input type="text" data-num="' + n + '" value="' + escapeHtml(answers['q' + n] || '') + '" placeholder="답 입력" autocomplete="off" /></div>';
       }
     });
     box.innerHTML = html;
-    box.querySelectorAll('input[data-num]').forEach(function (inp) {
+    box.querySelectorAll('input[data-num], textarea[data-num]').forEach(function (inp) {
       inp.addEventListener('input', function () {
         answers['q' + inp.getAttribute('data-num')] = inp.value;
         renderChrome();      // 슬라이드는 다시 그리지 않는다(포커스 유지)
@@ -1603,12 +1659,21 @@ function renderStudentSinglePage(activity, questions) {
         inp.__hb = setTimeout(heartbeat, 600);   // 타이핑이 멈추면 알린다
       });
     });
+    box.querySelectorAll('button[data-ox]').forEach(function (b) {
+      b.onclick = function () {
+        var n = Number(b.getAttribute('data-ox')), v = b.getAttribute('data-v');
+        var was = picked(n)[0] === v;
+        setPicked(n, was ? [] : [v]);          // 같은 버튼 재클릭 = 해제
+        renderChrome(); renderAnswers(el, s); heartbeat();
+        if (!was && autoNext) scheduleNext(el, s);
+      };
+    });
     box.querySelectorAll('button[data-clear]').forEach(function (b) {
       b.onclick = function () {
         var n = Number(b.getAttribute('data-clear'));
         delete answers['q' + n];
-        choiceEls(el, n, s).forEach(function (li) { li.classList.remove('on'); });
-        renderChrome(); renderAnswers(el, s);
+        paintChoices(el, n, s);
+        renderChrome(); renderAnswers(el, s); heartbeat();
       };
     });
   }

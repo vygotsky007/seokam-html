@@ -145,7 +145,7 @@ async function drag(page, box, x0, y0, x1, y1) {   // 페이지 px 좌표로 드
   await page.waitForSelector('#sliceBtn', { state: 'visible', timeout: 20000 });
   await page.click('#sliceBtn');
   await page.waitForSelector('.slice-page .qbox', { timeout: 30000 });
-  await page.waitForFunction(() => window.sliceState && window.sliceState.pages.length === 4, null, { timeout: 20000 });
+  await page.waitForFunction(() => window.sliceState && window.sliceState.pages.length === 5, null, { timeout: 20000 });
 
   // --- 자동 인식 품질 배너(표 학습지 페이지 때문에 낮게 나와야 한다) ---
   const banner = await page.isVisible('#sliceLowConf');
@@ -238,6 +238,42 @@ async function drag(page, box, x0, y0, x1, y1) {   // 페이지 px 좌표로 드
   await page.selectOption('.qcard[data-num="21"] .qtype-sel', 'choice');
   const asChoice = await page.evaluate(() => window.qHtml['21'].html);
   ok('다시 선다형으로 바꾸면 클릭 선지가 돌아온다', (asChoice.match(/data-marker=/g) || []).length === 3, asChoice.slice(0, 80));
+
+  // --- [유형 전수 등록] 초등 시험지에 실제로 나오는 유형들 ---
+  const typeRow = [];
+  const P = (n) => (parsed[n] || { p: {} }).p;
+  const mk = (n) => ((P(n).choices) || []).map((c) => c.marker).join(',');
+  typeRow.push(['41 복수 선택', P('41').type, mk('41')]);
+  typeRow.push(['42 순서 배열', P('42').type, mk('42')]);
+  typeRow.push(['43 O/X', P('43').type, mk('43')]);
+  typeRow.push(['44 밑줄 지시', P('44').type, mk('44')]);
+  typeRow.push(['45 빈칸 채우기', P('45').type, mk('45')]);
+  typeRow.push(['46 ㈎㈏ 마커', P('46').type, mk('46')]);
+  typeRow.push(['47 서술형', P('47').type, mk('47')]);
+  console.log('     유형별 픽스처 결과:');
+  typeRow.forEach((r) => console.log('       ' + r[0].padEnd(16) + ' → type=' + String(r[1]).padEnd(13) + ' 선지=' + (r[2] || '-')));
+
+  ok('41번 "모두 고르시오" + ㄱㄴㄷ → 복수 선택형', P('41').type === 'multi_choice' && mk('41') === 'ㄱ.,ㄴ.,ㄷ.', P('41').type + ' ' + mk('41'));
+  ok('42번 "순서대로 기호를" + ㉠㉡㉢ → 순서 배열형', P('42').type === 'order' && mk('42') === '㉠,㉡,㉢', P('42').type + ' ' + mk('42'));
+  ok('43번 "맞으면 ○, 틀리면 ×" → OX형', P('43').type === 'ox', P('43').type);
+  ok('44번 발문 속 "밑줄 친 ㉠의" 는 선지로 오분리되지 않는다', P('44').type === 'choice' && mk('44') === '①,②' && /밑줄 친 ㉠의/.test(P('44').stem || ''), P('44').type + ' ' + mk('44') + ' / ' + P('44').stem);
+  ok('45번 "( ) 안에 알맞은" 은 발문을 자르지 않는다(빈칸 채우기)', /안에 알맞은 수를 쓰시오/.test(P('45').stem || ''), 'stem=' + P('45').stem);
+  ok('46번 ㈎㈏ 도 선지 마커로 인식된다', mk('46') === '㈎,㈏', mk('46'));
+  ok('47번 "까닭을 쓰시오" → 서술형', P('47').type === 'essay', P('47').type);
+
+  // 채점 동치: ㈎=가=(가)=㉮, ㄱ,ㄷ 순서 무시, 순서 배열은 순서 포함
+  const matchOk = await page.evaluate(() => {
+    const m = window.answerMatch;
+    return m ? {
+      pa: m.isCorrect('가', '㈎'), pb: m.isCorrect('(가)', '㉮'),
+      multi: m.isCorrect('ㄷ,ㄱ', 'ㄱ,ㄷ'),
+      ordOk: m.isCorrect('㉢,㉠,㉡', '㉢,㉠,㉡', { ordered: true }),
+      ordNo: m.isCorrect('㉠,㉢,㉡', '㉢,㉠,㉡', { ordered: true }),
+    } : null;
+  });
+  ok('채점 동치: ㈎=가, (가)=㉮', matchOk && matchOk.pa && matchOk.pb, JSON.stringify(matchOk));
+  ok('복수 선택 채점은 순서 무시("ㄷ,ㄱ" = "ㄱ,ㄷ")', matchOk && matchOk.multi);
+  ok('순서 배열 채점은 순서 포함(순서 다르면 오답)', matchOk && matchOk.ordOk && !matchOk.ordNo, JSON.stringify(matchOk));
 
   // --- [변환 신뢰도] 그림·위치가 본질인 문항은 자동으로 이미지 폴백 ---
   const conv = await page.evaluate(() => {
@@ -551,6 +587,40 @@ async function drag(page, box, x0, y0, x1, y1) {   // 페이지 px 좌표로 드
   await sp.click('#padToggle');
   ok('연습장을 접을 수 있다', (await sp.locator('#padCanvas').count()) === 0);
 
+  // ---- 새 유형: 복수 선택 / 순서 배열 / OX / 서술형 ----
+  await sp.click('.chip:has-text("41")');
+  await sp.waitForSelector('#slide ol.choices li.pick');
+  await sp.locator('#slide ol.choices li.pick').nth(0).click();     // ㄱ
+  await sp.locator('#slide ol.choices li.pick').nth(2).click();     // ㄷ
+  const multiTxt = await sp.textContent('#slide .picked');
+  ok('복수 선택: 여러 선지를 함께 고를 수 있다', /선택:\s*ㄱ\.,\s*ㄷ\./.test(multiTxt.replace(/\s+/g, ' ')), multiTxt);
+  ok('복수 선택은 자동으로 넘어가지 않는다(계속 고를 수 있어야 한다)', (await sp.textContent('.chip.cur')) === '41');
+
+  await sp.click('.chip:has-text("42")');
+  await sp.waitForSelector('#slide ol.choices li.pick');
+  await sp.locator('#slide ol.choices li.pick').nth(2).click();     // ㉢
+  await sp.locator('#slide ol.choices li.pick').nth(0).click();     // ㉠
+  await sp.locator('#slide ol.choices li.pick').nth(1).click();     // ㉡
+  const ordTxt = await sp.textContent('#slide .picked');
+  ok('순서 배열: 누른 순서대로 답이 쌓인다(㉢ → ㉠ → ㉡)', /㉢\s*→\s*㉠\s*→\s*㉡/.test(ordTxt), ordTxt);
+  ok('순서 배열: 몇 번째로 골랐는지 선지에 표시된다', (await sp.locator('#slide ol.choices li .ordno').count()) === 3);
+  await sp.locator('#slide ol.choices li.pick').nth(2).click();     // ㉢ 재탭 = 취소
+  const ordTxt2 = await sp.textContent('#slide .picked');
+  ok('순서 배열: 다시 누르면 취소된다', !/㉢/.test(ordTxt2) && /㉠\s*→\s*㉡/.test(ordTxt2), ordTxt2);
+
+  await sp.click('.chip:has-text("43")');
+  await sp.waitForSelector('#slide .oxb');
+  ok('OX형: O/X 큰 버튼 두 개가 나온다', (await sp.locator('#slide .oxb').count()) === 2);
+  const oxH = await sp.locator('#slide .oxb').first().boundingBox();
+  ok('OX 버튼도 터치 영역이 충분하다(44px+)', oxH.height >= 44, 'height=' + oxH.height);
+  await sp.locator('#slide .oxb').nth(1).click();                   // ✕
+  ok('OX형: 버튼을 누르면 선택된다', (await sp.locator('#slide .oxb.on').count()) === 1);
+
+  await sp.click('.chip:has-text("47")');
+  await sp.waitForSelector('#slide .arow.essay textarea');
+  ok('서술형: 여러 줄 입력칸(textarea)이 나온다', (await sp.locator('#slide textarea[data-num]').count()) === 1);
+  await sp.fill('#slide textarea[data-num]', '물이 더 차갑기 때문입니다.');
+
   // 미답 상태로 제출 → 확인창에 번호가 나오고, 번호를 누르면 그 문항으로 간다
   await sp.click('#nextBtn');                     // 마지막까지 가면 finish()
   for (let i = 0; i < 8; i++) { if (await sp.isVisible('#finishOverlay.show')) break; await sp.click('#nextBtn'); }
@@ -572,6 +642,10 @@ async function drag(page, box, x0, y0, x1, y1) {   // 페이지 px 좌표로 드
   const sent = sub.answers || {};
   ok('제출값이 마커 형식(③)으로 서버에 저장된다', sent.q16 === '③', JSON.stringify(sent));
   ok('기호 선지 답도 마커 그대로(㉡) 저장된다', sent.q21 === '㉡', JSON.stringify(sent));
+  ok('복수 선택 답이 "ㄱ.,ㄷ." 형식으로 저장된다', sent.q41 === 'ㄱ.,ㄷ.', 'q41=' + sent.q41);
+  ok('순서 배열 답이 누른 순서대로 저장된다', sent.q42 === '㉠,㉡', 'q42=' + sent.q42);
+  ok('OX 답이 "X" 로 저장된다', sent.q43 === 'X', 'q43=' + sent.q43);
+  ok('서술형 답이 저장된다', /물이 더 차갑기/.test(sent.q47 || ''), 'q47=' + sent.q47);
   ok('단답형 답도 함께 저장된다', sent.q17 === '태백산', JSON.stringify(sent));
   // 연습장은 답이 아니다 — 제출 페이로드에 절대 들어가면 안 된다
   const payloadStr = JSON.stringify(sub);
