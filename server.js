@@ -1589,6 +1589,21 @@ function renderStudentSinglePage(activity, questions) {
   .mcol.right .mcard .dot { left: -12px; }
   .mcard.linked .dot { background: #2b6cb0; border-color: #2b6cb0; }
   .mhint { font-size: 12px; color: #718096; margin-top: 8px; }
+  /* 번호 버튼(marker_only) */
+  .mkbtns { display: flex; gap: 8px; margin-left: auto; flex-wrap: wrap; }
+  .mkb { min-width: 48px; min-height: 48px; font-size: 20px; font-weight: 800; border: 2px solid #cbd5e1;
+    background: #fff; border-radius: 12px; cursor: pointer; margin: 0 !important; }
+  .mkb.on { border-color: #2b6cb0; background: #ebf8ff; color: #2b6cb0; }
+  /* 기호 채우기(fill_symbol) */
+  .fillexpr { display: flex; align-items: center; flex-wrap: wrap; gap: 2px; font-size: 22px; font-weight: 800;
+    padding: 12px; border: 1px solid #cbd5e1; border-radius: 10px; background: #fff; touch-action: none; }
+  .fillexpr .slot { min-width: 46px; min-height: 46px; font-size: 20px; font-weight: 800; border: 2px dashed #a0aec0;
+    background: #f7fafc; color: #4a5568; border-radius: 10px; cursor: pointer; margin: 0 4px; }
+  .fillexpr .slot.filled { border-style: solid; border-color: #2b6cb0; background: #ebf8ff; color: #2b6cb0; }
+  .sympop { position: absolute; z-index: 60; display: flex; gap: 6px; padding: 8px; background: #fff;
+    border: 1px solid #cbd5e1; border-radius: 10px; box-shadow: 0 6px 18px rgba(0,0,0,.14); }
+  .sympop button { min-width: 44px; min-height: 44px; font-size: 18px; font-weight: 800; border: 1px solid #cbd5e1;
+    background: #fff; border-radius: 8px; cursor: pointer; }
   .arow.essay { align-items: flex-start; }
   .arow textarea { flex: 1; padding: 11px 12px; font-size: 16px; border: 1px solid #cbd5e1; border-radius: 8px; font-family: inherit; resize: vertical; }
   .counter { font-size: 13px; color: #4a5568; font-weight: 700; margin-top: 6px; }
@@ -1863,6 +1878,28 @@ function renderStudentSinglePage(activity, questions) {
         html += '<div class="picked" data-num="' + n + '"><span>' + n + '번</span>' +
           '<span class="none" id="mstat' + n + '">왼쪽에서 오른쪽으로 이어 보세요</span></div>' +
           '<div class="matchwrap" data-match="' + n + '"></div>';
+      } else if (t === 'marker_only') {
+        // 선지 텍스트가 원래 없는 문항(식 위 ↑ 와 ①~⑤ 만) → 본문 이미지 + 번호 버튼
+        var cnt = Number(metaOf(n).count) || 5;
+        var btns = '';
+        for (var mi = 0; mi < cnt; mi++) {
+          var mkc = MARKERS[mi];
+          btns += '<button type="button" class="mkb' + (cur[0] === mkc ? ' on' : '') + '" data-mk="' + n + '" data-v="' + mkc + '">' + mkc + '</button>';
+        }
+        html += '<div class="picked" data-num="' + n + '"><span>' + n + '번</span>' +
+          '<span class="mkbtns">' + btns + '</span></div>';
+      } else if (t === 'fill_symbol') {
+        html += '<div class="picked" data-num="' + n + '"><span>' + n + '번</span>' +
+          '<span class="none" id="fstat' + n + '">○ 를 눌러 기호를 넣으세요</span></div>' +
+          '<div class="fillwrap" data-fill="' + n + '"></div>';
+      } else if (t === 'short_sub') {
+        // 소문항 (1)(2) — 자리마다 입력칸. 저장은 자리 순서대로 "3,5"
+        var subs = metaOf(n).subs || ['(1)', '(2)'];
+        html += subs.map(function (lab, i) {
+          return '<div class="arow"><label>' + n + '번 ' + escapeHtml(lab) + '</label>' +
+            '<input type="text" data-sub="' + n + '" data-i="' + i + '" value="' + escapeHtml(cur[i] || '') +
+            '" placeholder="답 입력" autocomplete="off" /></div>';
+        }).join('');
       } else if (t === 'ox') {
         // O/X 판정형 — 큰 버튼 두 개
         html += '<div class="picked" data-num="' + n + '"><span>' + n + '번</span>' +
@@ -1884,11 +1921,37 @@ function renderStudentSinglePage(activity, questions) {
             ? '<span class="mk">' + label + escapeHtml(shown) + '</span><button type="button" data-clear="' + n + '">선택 지우기</button>'
             : '<span class="none">' + hint + '</span>') + '</div>';
       } else {
+        var ph = t === 'multi_short' ? '답을 모두 쓰세요 (예: 1, 2, 4, 8)' : '답 입력';
         html += '<div class="arow"><label>' + n + '번</label>' +
-          '<input type="text" data-num="' + n + '" value="' + escapeHtml(answers['q' + n] || '') + '" placeholder="답 입력" autocomplete="off" /></div>';
+          '<input type="text" data-num="' + n + '" value="' + escapeHtml(answers['q' + n] || '') + '" placeholder="' + ph + '" autocomplete="off" /></div>';
       }
     });
     box.innerHTML = html;
+    // 소문항: 자리 순서대로 모아 하나의 답으로 저장한다("3,5")
+    box.querySelectorAll('input[data-sub]').forEach(function (inp) {
+      inp.addEventListener('input', function () {
+        var n = Number(inp.getAttribute('data-sub'));
+        var vals = [];
+        box.querySelectorAll('input[data-sub="' + n + '"]').forEach(function (x) { vals.push((x.value || '').trim()); });
+        while (vals.length && !vals[vals.length - 1]) vals.pop();
+        setPicked(n, vals);
+        renderChrome();
+        clearTimeout(inp.__hb);
+        inp.__hb = setTimeout(heartbeat, 600);
+      });
+    });
+    box.querySelectorAll('.fillwrap[data-fill]').forEach(function (w) {
+      mountFill(w, Number(w.getAttribute('data-fill')), el, s);
+    });
+    box.querySelectorAll('button[data-mk]').forEach(function (b) {
+      b.onclick = function () {
+        var n = Number(b.getAttribute('data-mk')), v = b.getAttribute('data-v');
+        var was = picked(n)[0] === v;
+        setPicked(n, was ? [] : [v]);          // 같은 번호 재클릭 = 해제
+        renderChrome(); renderAnswers(el, s); heartbeat();
+        if (!was && autoNext) scheduleNext(el, s);
+      };
+    });
     box.querySelectorAll('input[data-num], textarea[data-num]').forEach(function (inp) {
       inp.addEventListener('input', function () {
         answers['q' + inp.getAttribute('data-num')] = inp.value;
@@ -1924,6 +1987,7 @@ function renderStudentSinglePage(activity, questions) {
   // 조작은 두 가지를 다 지원한다 — 드래그(●에서 끌어다 놓기)와 탭탭(왼쪽 탭 → 오른쪽 탭).
   // 저학년은 폰에서 드래그가 서툴러 탭탭이 사실상 주 경로다.
   var MATCH_COLORS = ['#e53e3e', '#3182ce', '#38a169', '#d69e2e', '#805ad5', '#dd6b20'];
+  var MARKERS = ['①', '②', '③', '④', '⑤', '⑥', '⑦', '⑧', '⑨', '⑩'];
   function metaOf(n) {
     var q = QUESTIONS.filter(function (x) { return x.num === n; })[0];
     return (q && q.meta) || {};
@@ -2045,6 +2109,100 @@ function renderStudentSinglePage(activity, questions) {
 
     draw();
     window.addEventListener('resize', function () { draw(); });
+  }
+
+  // ================= 기호 채우기(fill_symbol) =================
+  // "○ 안에 ×, ÷ 를 한 번씩 써넣으시오" — 식의 ○ 자리를 눌러 기호를 넣는다.
+  // 답은 '자리 순서대로' 기호 배열("×,÷") — 자리가 뜻이므로 순서를 따진다.
+  function mountFill(wrap, n, el, s) {
+    var meta = metaOf(n);
+    var expr = String(meta.expr || '');
+    var syms = meta.symbols || [];
+    var once = meta.once !== false;              // "한 번씩" → 같은 기호를 두 곳에 못 쓴다
+
+    var slots = [];
+    var html = '';
+    for (var i = 0; i < expr.length; i++) {
+      var ch = expr[i];
+      if (ch === '○' || ch === '□') {
+        var k = slots.length;
+        slots.push(k);
+        html += '<button type="button" class="slot" data-slot="' + k + '"></button>';
+      } else {
+        html += '<span>' + escapeHtml(ch) + '</span>';
+      }
+    }
+    wrap.innerHTML = '<div class="fillexpr">' + html + '</div>' +
+      '<div class="mhint">○ 를 눌러 기호를 넣어요' + (once ? ' (같은 기호는 한 번만 쓸 수 있어요)' : '') + '</div>';
+
+    function cur() {
+      var v = picked(n);
+      var out = [];
+      for (var i = 0; i < slots.length; i++) out.push(v[i] || '');
+      return out;
+    }
+    function paint() {
+      var c = cur();
+      wrap.querySelectorAll('.slot').forEach(function (b, i) {
+        b.textContent = c[i] || '○';
+        b.classList.toggle('filled', !!c[i]);
+      });
+      var st = document.getElementById('fstat' + n);
+      if (st) {
+        var filled = c.filter(Boolean);
+        st.className = filled.length ? 'mk' : 'none';
+        st.textContent = filled.length ? '넣은 기호: ' + filled.join(' , ') : '○ 를 눌러 기호를 넣으세요';
+      }
+    }
+    function setSlot(i, val) {
+      var c = cur();
+      if (once && val) {
+        for (var k = 0; k < c.length; k++) if (k !== i && c[k] === val) c[k] = '';   // 이미 쓴 기호는 자동 해제
+      }
+      c[i] = val;
+      while (c.length && !c[c.length - 1]) c.pop();
+      setPicked(n, c);
+      paint();
+      renderChrome();
+      heartbeat();
+    }
+
+    wrap.querySelectorAll('.slot').forEach(function (b, i) {
+      b.onclick = function () {
+        var c = cur();
+        // 후보가 2개면 탭할 때마다 순환(빈칸 → ① → ② → 빈칸), 3개 이상이면 팝오버로 고른다
+        if (syms.length <= 2) {
+          var at = syms.indexOf(c[i]);
+          var next = at + 1 >= syms.length ? '' : syms[at + 1];
+          setSlot(i, next);
+          return;
+        }
+        showSymPop(b, syms, function (v) { setSlot(i, v); });
+      };
+    });
+    paint();
+  }
+  function showSymPop(anchor, syms, pick) {
+    var old = document.getElementById('symPop');
+    if (old) old.remove();
+    var p = document.createElement('div');
+    p.id = 'symPop';
+    p.className = 'sympop';
+    p.innerHTML = syms.concat(['지우기']).map(function (sv) {
+      return '<button type="button" data-v="' + escapeHtml(sv === '지우기' ? '' : sv) + '">' + escapeHtml(sv) + '</button>';
+    }).join('');
+    document.body.appendChild(p);
+    var r = anchor.getBoundingClientRect();
+    p.style.left = Math.min(r.left + window.scrollX, window.innerWidth - 160) + 'px';
+    p.style.top = (r.bottom + window.scrollY + 6) + 'px';
+    p.querySelectorAll('button').forEach(function (b) {
+      b.onclick = function () { pick(b.getAttribute('data-v')); p.remove(); };
+    });
+    setTimeout(function () {
+      document.addEventListener('click', function once2(e) {
+        if (!p.contains(e.target)) { p.remove(); document.removeEventListener('click', once2); }
+      });
+    }, 0);
   }
 
   // ================= 연습장(스케치패드) =================

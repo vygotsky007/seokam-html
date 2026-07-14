@@ -145,7 +145,7 @@ async function drag(page, box, x0, y0, x1, y1) {   // 페이지 px 좌표로 드
   await page.waitForSelector('#sliceBtn', { state: 'visible', timeout: 20000 });
   await page.click('#sliceBtn');
   await page.waitForSelector('.slice-page .qbox', { timeout: 30000 });
-  await page.waitForFunction(() => window.sliceState && window.sliceState.pages.length === 5, null, { timeout: 20000 });
+  await page.waitForFunction(() => window.sliceState && window.sliceState.pages.length === 6, null, { timeout: 20000 });
 
   // --- 자동 인식 품질 배너(표 학습지 페이지 때문에 낮게 나와야 한다) ---
   const banner = await page.isVisible('#sliceLowConf');
@@ -320,6 +320,35 @@ async function drag(page, box, x0, y0, x1, y1) {   // 페이지 px 좌표로 드
   const bulk = await page.evaluate(() => [window.qHtml['31'].useImage, window.qHtml['35'].useImage]);
   ok('[선택 문항 이미지로] 일괄 전환이 동작한다', bulk[0] === true && bulk[1] === true, JSON.stringify(bulk));
   await page.evaluate(() => { window.qHtml['35'].useImage = false; renderHtmlEditor(); });   // 대조군 복원
+
+  // --- [실물 지목 3유형] 마커-온리 / 복수 답 / 기호 채우기 ---
+  const meta51 = await page.evaluate(() => window.qHtml['51'] && window.qHtml['51'].meta);
+  ok('51번(선지가 ①~⑤ 뿐) → 번호 버튼 유형', P('51').type === 'marker_only' && meta51 && meta51.count === 5,
+    P('51').type + ' ' + JSON.stringify(meta51));
+  ok('51번은 본문을 이미지로 남긴다', (await page.evaluate(() => window.qHtml['51'].useImage)) === true);
+
+  ok('52번("약수를 모두 구하시오") → 복수 답 단답', P('52').type === 'multi_short', P('52').type);
+
+  const meta53 = await page.evaluate(() => window.qHtml['53'] && window.qHtml['53'].meta);
+  ok('53번 (1)(2) 는 선지가 아니라 소문항이다', P('53').type === 'short_sub' && meta53 && meta53.subs.join(',') === '(1),(2)',
+    P('53').type + ' ' + JSON.stringify(meta53));
+
+  const meta54 = await page.evaluate(() => window.qHtml['54'] && window.qHtml['54'].meta);
+  ok('54번("○ 안에 ×, ÷ 를 한 번씩") → 기호 채우기(후보·식 추출)',
+    P('54').type === 'fill_symbol' && meta54 && meta54.symbols.join('') === '×÷' && /○/.test(meta54.expr) && meta54.once === true,
+    P('54').type + ' ' + JSON.stringify(meta54));
+
+  // 채점 규칙
+  const gradeOf = require('../grade').grade;
+  const r1 = gradeOf([{ num: 52, type: 'multi_short', answer: '1,2,4,8', graded: true }], { q52: '8 4 2 1' });
+  ok('복수 답: "8 4 2 1" = 정답 "1,2,4,8"(순서 무시)', r1.auto_score === 1, JSON.stringify(r1.results[0]));
+  const r2 = gradeOf([{ num: 52, type: 'multi_short', answer: '1,2,4,8', graded: true }], { q52: '1,2,4' });
+  ok('복수 답 부분 일치는 오답이되 맞은 개수를 남긴다', r2.auto_score === 0 && r2.results[0].partial === 3, JSON.stringify(r2.results[0]));
+  const r3 = gradeOf([{ num: 54, type: 'fill_symbol', answer: '×,÷', graded: true }], { q54: '×,÷' });
+  const r4 = gradeOf([{ num: 54, type: 'fill_symbol', answer: '×,÷', graded: true }], { q54: '÷,×' });
+  ok('기호 채우기는 자리 순서를 따진다(순서 다르면 오답)', r3.auto_score === 1 && r4.auto_score === 0);
+  const r5 = gradeOf([{ num: 53, type: 'short_sub', answer: '7,7', graded: true }], { q53: '7,7' });
+  ok('소문항은 자리 순서대로 채점된다', r5.auto_score === 1);
 
   // --- [선긋기] 31번(선긋기 문항)을 교사가 인터랙티브 유형으로 만든다 ---
   const cand = await page.evaluate(() => (window.qHtml['31'].parsed.matchCand || null));
@@ -548,6 +577,7 @@ async function drag(page, box, x0, y0, x1, y1) {   // 페이지 px 좌표로 드
 
   // ---- 연습장(스케치패드) ----
   const padDraw = async () => {
+    await sp.locator('#padCanvas').scrollIntoViewIfNeeded();
     const b = await sp.locator('#padCanvas').boundingBox();
     await sp.mouse.move(b.x + 20, b.y + 20);
     await sp.mouse.down();

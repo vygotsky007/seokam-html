@@ -33,8 +33,13 @@ function grade(questions, answers) {
     gradable += 1;
     // 교사가 발표 모드에서 손으로 인정한 답은 그대로 정답으로 친다
     const manual = q.manual_correct === true;
-    // 순서 배열형만 순서를 따진다(복수 선택형은 순서 무시)
-    const correct = manual || isCorrect(given, q.answer, { ordered: q.type === 'order' });
+    // 순서가 답인 유형만 순서를 따진다.
+    //  · order       : ㉢→㉠→㉡ (순서가 답)
+    //  · short_sub   : 소문항 (1)(2) — 자리 순서대로
+    //  · fill_symbol : 자리 순서대로 기호 배열
+    // 나머지(복수 선택·복수 답 단답·선긋기)는 순서 무시 집합 비교.
+    const ordered = q.type === 'order' || q.type === 'short_sub' || q.type === 'fill_symbol';
+    const correct = manual || isCorrect(given, q.answer, { ordered });
     if (correct) auto_score += 1;
     // 부분 일치는 오답이지만(배점 기능이 없다), 몇 개 맞았는지는 남긴다 — 선긋기의 맞은 쌍 수 등
     const partial = correct ? null : partialCount(given, q.answer);
