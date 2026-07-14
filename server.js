@@ -1394,7 +1394,8 @@ function renderStudentSinglePage(activity, questions) {
   .nav button.next { background: #2b6cb0; color: #fff; border-color: #2b6cb0; }
   .overlay { display: none; position: fixed; inset: 0; background: rgba(0,0,0,.45); z-index: 50; align-items: center; justify-content: center; padding: 20px; }
   .overlay.show { display: flex; }
-  .sheet { background: #fff; border-radius: 16px; padding: 24px; max-width: 380px; width: 100%; text-align: center; }
+  /* 문항이 많으면 안 푼 번호 목록이 길어진다 — 시트 안에서 스크롤되게(버튼이 화면 밖으로 밀리면 못 누른다) */
+  .sheet { background: #fff; border-radius: 16px; padding: 24px; max-width: 380px; width: 100%; text-align: center; max-height: 85vh; overflow-y: auto; }
   .sheet h2 { margin: 0 0 8px; font-size: 20px; }
   .sheet p { color: #4a5568; margin: 0 0 18px; }
   .sheet button { width: 100%; padding: 13px; font-size: 15px; font-weight: 800; border-radius: 10px; margin-top: 8px; cursor: pointer; border: 1px solid #cbd5e1; background: #fff; }

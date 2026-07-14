@@ -145,7 +145,7 @@ async function drag(page, box, x0, y0, x1, y1) {   // 페이지 px 좌표로 드
   await page.waitForSelector('#sliceBtn', { state: 'visible', timeout: 20000 });
   await page.click('#sliceBtn');
   await page.waitForSelector('.slice-page .qbox', { timeout: 30000 });
-  await page.waitForFunction(() => window.sliceState && window.sliceState.pages.length === 3, null, { timeout: 20000 });
+  await page.waitForFunction(() => window.sliceState && window.sliceState.pages.length === 4, null, { timeout: 20000 });
 
   // --- 자동 인식 품질 배너(표 학습지 페이지 때문에 낮게 나와야 한다) ---
   const banner = await page.isVisible('#sliceLowConf');
@@ -238,6 +238,52 @@ async function drag(page, box, x0, y0, x1, y1) {   // 페이지 px 좌표로 드
   await page.selectOption('.qcard[data-num="21"] .qtype-sel', 'choice');
   const asChoice = await page.evaluate(() => window.qHtml['21'].html);
   ok('다시 선다형으로 바꾸면 클릭 선지가 돌아온다', (asChoice.match(/data-marker=/g) || []).length === 3, asChoice.slice(0, 80));
+
+  // --- [변환 신뢰도] 그림·위치가 본질인 문항은 자동으로 이미지 폴백 ---
+  const conv = await page.evaluate(() => {
+    const out = {};
+    Object.keys(window.qHtml).forEach((n) => {
+      out[n] = { useImage: window.qHtml[n].useImage, reason: window.qHtml[n].reason || null, type: window.qHtml[n].parsed.type };
+    });
+    return out;
+  });
+  const fellBack = (n) => conv[n] && conv[n].useImage && conv[n].reason;
+  ok('31번(선긋기 ●)이 자동 이미지 폴백된다', fellBack('31'), JSON.stringify(conv['31']));
+  ok('32번(화살표 빈 선지)이 자동 이미지 폴백된다', fellBack('32'), JSON.stringify(conv['32']));
+  ok('33번(□ 수식)이 자동 이미지 폴백된다', fellBack('33'), JSON.stringify(conv['33']));
+  ok('34번(↑ 위치 지시)이 자동 이미지 폴백된다', fellBack('34'), JSON.stringify(conv['34']));
+  ok('폴백 근거(fallback_reason)가 남는다', /선긋기|연결점|상호작용/.test((conv['31'] || {}).reason || ''), (conv['31'] || {}).reason);
+
+  // 과잉 폴백 방지 — 정상 문항은 여전히 텍스트로 변환돼야 한다
+  ok('35번(정상 선다형)은 텍스트 변환을 유지한다', conv['35'] && !conv['35'].useImage, JSON.stringify(conv['35']));
+  ok('36번(정상 선다형)은 텍스트 변환을 유지한다', conv['36'] && !conv['36'].useImage, JSON.stringify(conv['36']));
+  ok('16번(정상 선다형)은 텍스트 변환을 유지한다', conv['16'] && !conv['16'].useImage, JSON.stringify(conv['16']));
+  ok('21번(기호 선지)은 텍스트 변환을 유지한다', conv['21'] && !conv['21'].useImage, JSON.stringify(conv['21']));
+
+  const textCount = Object.keys(conv).filter((n) => !conv[n].useImage).length;
+  const imgCount = Object.keys(conv).filter((n) => conv[n].useImage).length;
+  console.log('     → 변환 비율: 전체 ' + Object.keys(conv).length + '조각 · 텍스트 ' + textCount + ' · 이미지 ' + imgCount +
+    ' (' + Object.keys(conv).filter((n) => conv[n].useImage).map((n) => n + ':' + conv[n].reason).join(' / ') + ')');
+
+  // 편집기 UI: 요약 문구 · 이상한 문항만 모아보기 · 일괄 전환 · 텍스트로 다시 시도
+  const summary = await page.textContent('#htmlSummary');
+  ok('변환 요약이 텍스트/이미지 내역을 정직하게 보여준다', /텍스트 \d+ · 이미지 \d+ \(그림 중심 \d+, 변환 실패 \d+\)/.test(summary), summary);
+
+  await page.check('#oddOnly');
+  const oddCards = await page.locator('#htmlCards .qcard').count();
+  ok('"이상한 문항만 모아보기" 가 폴백 문항만 남긴다', oddCards === imgCount, 'cards=' + oddCards + ' img=' + imgCount);
+  await page.uncheck('#oddOnly');
+
+  await page.click('.qcard[data-num="31"] .qwarn.fallback button');
+  const retried = await page.evaluate(() => window.qHtml['31'].useImage);
+  ok('[텍스트로 다시 시도] 로 교사가 자동 폴백을 뒤집을 수 있다', retried === false);
+
+  await page.check('.qcard[data-num="31"] .qpick input');
+  await page.check('.qcard[data-num="35"] .qpick input');
+  await page.click('#bulkToImage');
+  const bulk = await page.evaluate(() => [window.qHtml['31'].useImage, window.qHtml['35'].useImage]);
+  ok('[선택 문항 이미지로] 일괄 전환이 동작한다', bulk[0] === true && bulk[1] === true, JSON.stringify(bulk));
+  await page.evaluate(() => { window.qHtml['35'].useImage = false; renderHtmlEditor(); });   // 대조군 복원
 
   // 학생 화면 검증에 쓸 실제 변환 결과를 DB(모의)에 적재 — '교사가 만든 그대로' 학생에게 간다
   const answersKey = { 16: '3', 17: '태백산', 8: '1', 9: '1', 20: '1', 21: '㉡', 22: '(1)' };
@@ -512,6 +558,7 @@ async function drag(page, box, x0, y0, x1, y1) {   // 페이지 px 좌표로 드
   ok('미답 제출: "n개를 안 풀었어요(…번)" 확인창', /안 풀었어요/.test(sheet) && /번\)/.test(sheet), sheet.slice(0, 80));
   const goBtn = sp.locator('#finishSheet button[data-go]').first();
   const goNum = await goBtn.textContent();
+  await goBtn.scrollIntoViewIfNeeded();
   await goBtn.click();
   const jumped = await sp.textContent('.chip.cur');
   ok('확인창의 번호를 누르면 그 문항으로 이동한다', jumped === goNum, goNum + ' → ' + jumped);

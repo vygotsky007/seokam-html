@@ -156,6 +156,49 @@ const W = (t, opt) => Object.assign({ t }, opt || {});
   drawLine(p3, [W('(1)'), W('참')], 56, 708, fonts);
   drawLine(p3, [W('(2)'), W('거짓')], 56, 686, fonts);
 
+  // ============ 4페이지: 그림·위치가 본질인 문항들(텍스트로 옮기면 뜻이 부서진다) ============
+  // 실화면 실패 사례 5종을 재현한다 — 이 문항들은 '변환하지 않고 이미지로 남기는 것'이 정답이다.
+  const p4 = doc.addPage([595, 842]);
+
+  // 31. 선긋기(좌우 박스 + ● 연결점)
+  drawLine(p4, [W('31.'), W('관계있는'), W('것끼리'), W('선으로'), W('이으시오.')], 50, 790, fonts);
+  [0, 1, 2].forEach((i) => {
+    const y = 750 - i * 34;
+    p4.drawRectangle({ x: 60, y: y - 6, width: 90, height: 22, borderWidth: 0.8, borderColor: rgb(0, 0, 0) });
+    p4.drawRectangle({ x: 220, y: y - 6, width: 90, height: 22, borderWidth: 0.8, borderColor: rgb(0, 0, 0) });
+    drawLine(p4, [W(['사자', '독수리', '상어'][i])], 70, y, fonts);
+    drawLine(p4, [W(['하늘', '바다', '땅'][i])], 230, y, fonts);
+    drawLine(p4, [W('●')], 158, y, fonts);
+    drawLine(p4, [W('●')], 205, y, fonts);
+  });
+
+  // 32. 화살표 선지(선지 내용이 그림이라 텍스트로는 빈칸이 된다)
+  drawLine(p4, [W('32.'), W('알맞은'), W('방향을'), W('고르시오.')], 50, 630, fonts);
+  ['①', '②', '③'].forEach((m, i) => {
+    drawLine(p4, [W(m), W('↑')], 60 + i * 60, 605, fonts);
+  });
+
+  // 33. □ 가 들어간 수식
+  drawLine(p4, [W('33.'), W('□'), W('에'), W('알맞은'), W('수를'), W('구하시오.')], 50, 560, fonts);
+  drawLine(p4, [W('3'), W('×'), W('□'), W('='), W('12')], 60, 535, fonts);
+
+  // 34. 식 아래 ↑ 로 자리를 가리키는 문항
+  drawLine(p4, [W('34.'), W('잘못'), W('계산한'), W('곳을'), W('찾으시오.')], 50, 490, fonts);
+  drawLine(p4, [W('24'), W('÷'), W('6'), W('='), W('3')], 60, 465, fonts);
+  drawLine(p4, [W('↑'), W('↑')], 100, 448, fonts);
+
+  // 35. 정상 선다형(과잉 폴백 방지용 대조군 — 이건 텍스트로 변환돼야 한다)
+  drawLine(p4, [W('35.'), W('다음'), W('중'), W('가장'), W('큰'), W('수는'), W('어느'), W('것입니까?')], 320, 790, fonts);
+  [['①', '15'], ['②', '27'], ['③', '19'], ['④', '31'], ['⑤', '22']].forEach((c, i) => {
+    drawLine(p4, [W(c[0]), W(c[1])], 326, 765 - i * 22, fonts);
+  });
+
+  // 36. 정상 선다형 하나 더(대조군)
+  drawLine(p4, [W('36.'), W('삼각형의'), W('변은'), W('몇'), W('개입니까?')], 320, 640, fonts);
+  [['①', '2개'], ['②', '3개'], ['③', '4개']].forEach((c, i) => {
+    drawLine(p4, [W(c[0]), W(c[1])], 326, 615 - i * 22, fonts);
+  });
+
   fs.mkdirSync(path.dirname(OUT), { recursive: true });
   fs.writeFileSync(OUT, await doc.save());
   console.log('✅ 픽스처 생성:', OUT);
