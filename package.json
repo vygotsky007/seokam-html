@@ -4,7 +4,9 @@
   "description": "문제샘 — 학생 응답 수집 앱 (교사 등록·QR·자동채점·발표·문항 나누기·한 문제씩 응시)",
   "main": "server.js",
   "scripts": {
-    "start": "node server.js"
+    "start": "node server.js",
+    "fixture": "node test/make-fixture.js",
+    "test": "node test/make-fixture.js && node test/e2e.js"
   },
   "engines": {
     "node": "22.x"
@@ -14,5 +16,10 @@
     "cors": "^2.8.5",
     "dotenv": "^16.4.5",
     "express": "^4.19.2"
+  },
+  "devDependencies": {
+    "@pdf-lib/fontkit": "^1.1.1",
+    "pdf-lib": "^1.17.1",
+    "playwright": "^1.61.1"
   }
 }

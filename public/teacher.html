@@ -145,6 +145,16 @@
   .qprev:focus { outline: 2px solid var(--blue); }
   .qprev .stem { font-weight: 700; margin: 0 0 8px; }
   .qprev .passage { border: 1px solid var(--line); border-radius: 8px; padding: 8px 10px; background: #fff; margin: 8px 0; }
+  /* 선지 마커(①②③) — 원본과 대조할 수 있게 선지 앞에 그대로 보인다 */
+  .cmark { font-weight: 800; color: #2b6cb0; margin-right: 6px; }
+  /* 직접 그리기 모드 */
+  .slice-page.drawing { cursor: crosshair; }
+  .slice-page.drawing img.pageimg { pointer-events: none; }
+  .drawghost { position: absolute; border: 2px dashed #2b6cb0; background: rgba(43,108,176,.14); pointer-events: none; z-index: 6; }
+  .drawhint { padding: 8px 12px; background: #ebf8ff; border: 1px solid #90cdf4; border-radius: 8px; }
+  .lowconf { padding: 10px 12px; background: #fffaf0; border: 1px solid #f6ad55; border-radius: 8px; }
+  .lowconf button { margin-left: 8px; }
+  #sliceDrawBtn.on, #sliceBlankBtn.on { background: #2b6cb0; color: #fff; border-color: #2b6cb0; }
   .qprev ol.choices { list-style: none; padding: 0; margin: 8px 0 0; }
   .qprev ol.choices li { padding: 5px 8px; border: 1px solid var(--line); border-radius: 6px; margin-bottom: 5px; background: #fff; }
   .qprev img { max-width: 100%; margin: 6px 0; border: 1px solid var(--line); border-radius: 6px; }
@@ -291,11 +301,15 @@
         <button class="btn-outline btn-sm" id="sliceUndoBtn" disabled title="되돌리기 (Ctrl+Z)">↶ 되돌리기</button>
         <button class="btn-outline btn-sm" id="sliceRedoBtn" disabled title="다시 실행 (Ctrl+Shift+Z)">↷ 다시 실행</button>
         <button class="btn-blue btn-sm" id="sliceMergeBtn" disabled>선택 묶기</button>
+        <button class="btn-outline btn-sm" id="sliceDrawBtn" title="드래그로 영역을 직접 추가합니다">+ 영역 추가</button>
+        <button class="btn-outline btn-sm" id="sliceBlankBtn" title="자동 인식 결과를 버리고 빈 페이지에서 직접 그립니다">✏️ 처음부터 직접 그리기</button>
         <span class="badge draft" id="sliceGapBadge" style="display:none;">⚠ 빈 영역 있음</span>
         <button class="btn-green btn-sm" id="sliceSaveBtn">이대로 저장</button>
         <button class="btn-gray btn-sm" id="sliceCloseBtn">닫기</button>
       </div>
     </div>
+    <div id="sliceLowConf" style="display:none; margin:8px 0;"></div>
+    <div id="sliceDrawHint" style="display:none; margin:8px 0;" class="drawhint">✏️ <b>직접 그리기 모드</b> — 페이지 위에서 <b>드래그</b>해 문항 영역을 그리세요. 그린 순서대로 번호가 붙습니다(번호 라벨 클릭으로 수정). <b>Esc</b>로 그리기 중단.</div>
     <div id="sliceDropInfo" style="display:none; margin:8px 0;"></div>
     <div class="muted" id="sliceHelp" style="margin:8px 0;">각 문항이 색 박스로 표시됩니다(번호는 <b>시험지에 인쇄된 번호</b> 그대로, 순서는 왼단 위→아래 → 오른단 위→아래). 번호가 잘못 읽혔으면 <b>번호 라벨을 클릭</b>해 고치세요. 박스 <b>아래 손잡이(⇕)</b>를 끌어 끝(=다음 문항 시작)을 조절하고, 박스를 <b>클릭</b>해 여러 개 선택 후 [선택 묶기]로 공통 지문 문항을 합치세요(<b>페이지·단을 걸친 묶기는 [읽기 순서] 뷰</b>에서 나란히 놓고 하면 쉽습니다). 선택 해제는 <b>Esc</b>, 실수는 <b>Ctrl+Z</b>로 되돌립니다. 빨간 점선은 <b>빈 영역</b>입니다.</div>
     <div class="slice-editor">
@@ -562,6 +576,7 @@ var Q_DOC_CSS =
   '  .q-item .passage { border: 1px solid #cbd5e1; border-radius: 8px; padding: 10px 12px; background: #f7fafc; margin: 10px 0; }\n' +
   '  .q-item ol.choices { list-style: none; padding: 0; margin: 10px 0 0; }\n' +
   '  .q-item ol.choices li { padding: 7px 10px; border: 1px solid #e2e8f0; border-radius: 8px; margin-bottom: 6px; }\n' +
+  '  .q-item .cmark { font-weight: 800; color: #2b6cb0; margin-right: 6px; }\n' +
   '  .q-item img { max-width: 100%; height: auto; border-radius: 6px; margin: 8px 0; }\n' +
   '  .q-item img.q-slice { border: 1px solid #e2e8f0; }\n' +
   '  .q-item .subq { border-top: 1px dashed #e2e8f0; margin-top: 12px; padding-top: 10px; }\n' +
@@ -675,10 +690,13 @@ function runSlicing() {
             canvas.width = Math.ceil(viewport.width); canvas.height = Math.ceil(viewport.height);
             return page.render({ canvasContext: canvas.getContext('2d'), viewport: viewport }).promise.then(function () {
               return page.getTextContent().then(function (tc) {
+                // 폰트 이름(styles)까지 함께 보관 — 굵게(<strong>) 복원에 쓴다.
+                var styles = tc.styles || {};
                 var items = tc.items.map(function (it) {
                   var tx = pdfjsLib.Util.transform(viewport.transform, it.transform);
                   var h = Math.hypot(tx[2], tx[3]) || 10;
-                  return { x: tx[4], y: tx[5], w: (it.width || 0) * scale, h: h, str: it.str || '' };
+                  var fam = (styles[it.fontName] && styles[it.fontName].fontFamily) || it.fontName || '';
+                  return { x: tx[4], y: tx[5], w: (it.width || 0) * scale, h: h, str: it.str || '', bold: BOLD_FONT_RE.test(fam) };
                 }).filter(function (t) { return (t.str || '').trim(); });
                 var det = detectSlicesForPage(items, canvas.width, canvas.height);
                 // items 는 HTML 화(텍스트 레이어 재사용)에 다시 쓰므로 페이지에 보관한다
@@ -711,6 +729,7 @@ function runSlicing() {
       : '✅ ' + total + '개 문항 인식 · 단 판정: ' + colInfo + ' · 박스 조정 후 [이대로 저장]'
         + (bad.length ? ' ⚠ 인쇄 번호가 읽기 순서와 어긋남: ' + bad.join(', ') + '번 — 라벨을 클릭해 수정하세요.' : '');
     renderDropSummary(pages);   // 조용히 제외한 쪽번호는 상단 한 줄 요약으로만
+    renderLowConfidence(pages); // 자동 인식이 통하지 않는 양식(표·비정형)이면 직접 그리기를 권한다
     renderSliceEditor();
     var card = document.getElementById('sliceCard');
     card.style.display = 'block';
@@ -1005,7 +1024,50 @@ function outOfOrderNums(pages) {
   return bad;
 }
 
-// 줄 단위로 묶으며 최소 x 를 함께 반환(컬럼 판정용)
+var BOLD_FONT_RE = /bold|black|heavy|semib|extrab/i;
+
+// ---- 어절 복원 ----
+// PDF 는 글자를 낱개 아이템으로 흩어 놓는 경우가 많다("것","입","니","까"). 그대로 공백으로 이으면
+// "어느 것 입 니 까" 가 된다. 아이템 사이 x 간격이 평균 글자폭의 일정 비율보다 좁으면 붙이고,
+// 넓을 때만 공백을 넣는다(= 인쇄된 띄어쓰기).
+var JOIN_GAP_RATIO = 0.32;
+function avgCharWidth(parts) {
+  var w = 0, n = 0;
+  parts.forEach(function (p) {
+    var len = (p.str || '').length;
+    if (len && p.w) { w += p.w; n += len; }
+  });
+  return n ? w / n : 0;
+}
+// 문장부호 앞에는 공백을 두지 않는다("있다 ." → "있다."), 여는 괄호 뒤도 마찬가지.
+var NO_SPACE_BEFORE = /^[.,!?;:)\]}%”’〉》」』…·]/;
+var NO_SPACE_AFTER = /[(\[{“‘〈《「『]$/;
+function joinParts(parts) {
+  var acw = avgCharWidth(parts);
+  var out = '';
+  for (var i = 0; i < parts.length; i++) {
+    var s = parts[i].str || '';
+    if (!s) continue;
+    if (out && !/\s$/.test(out)) {
+      var prev = parts[i - 1];
+      var gap = parts[i].x - (prev.x + (prev.w || 0));
+      var wide = acw > 0 ? gap >= acw * JOIN_GAP_RATIO : gap > 0;
+      if (wide && !NO_SPACE_BEFORE.test(s) && !NO_SPACE_AFTER.test(out)) out += ' ';
+    }
+    out += s;
+  }
+  return tidyText(out);
+}
+// 조판에서 새어 나온 공백 정리 — 문장부호 앞 공백, 괄호 안쪽 공백
+function tidyText(s) {
+  return String(s)
+    .replace(/\s+/g, ' ')
+    .replace(/\s+([.,!?;:)\]}%”’…])/g, '$1')
+    .replace(/([(\[{“‘])\s+/g, '$1')
+    .trim();
+}
+
+// 줄 단위로 묶으며 최소 x 를 함께 반환(컬럼 판정용). parts 는 강조 서식 복원에 쓰므로 함께 남긴다.
 function groupLinesX(items) {
   var rows = [];
   items.forEach(function (it) {
@@ -1018,7 +1080,7 @@ function groupLinesX(items) {
     r.parts.sort(function (a, b) { return a.x - b.x; });
     var minX = Math.min.apply(null, r.parts.map(function (p) { return p.x; }));
     var maxX = Math.max.apply(null, r.parts.map(function (p) { return p.x + (p.w || 0); }));
-    return { y: r.y, h: r.h, x: minX, w: Math.max(0, maxX - minX), text: r.parts.map(function (p) { return p.str; }).join(' ').replace(/\s+/g, ' ').trim() };
+    return { y: r.y, h: r.h, x: minX, w: Math.max(0, maxX - minX), text: joinParts(r.parts), parts: r.parts };
   }).filter(function (l) { return l.text; });
 }
 
@@ -1045,7 +1107,7 @@ function snapshotSlices() {
   return sliceState.pages.map(function (pg) {
     return {
       slices: pg.slices.map(function (s) {
-        return { col: s.col, y: s.y, num: s.num, groupId: s.groupId || null, x0: s.x0, x1: s.x1, yEnd: s.yEnd };
+        return { col: s.col, y: s.y, num: s.num, groupId: s.groupId || null, x0: s.x0, x1: s.x1, yEnd: s.yEnd, free: !!s.free };
       }),
       suspects: (pg.suspects || []).map(function (s) { return { col: s.col, y: s.y, num: s.num, reason: s.reason }; })
     };
@@ -1055,7 +1117,7 @@ function applySnapshot(snap) {
   sliceState.pages.forEach(function (pg, i) {
     var s = snap[i] || { slices: [], suspects: [] };
     pg.slices = s.slices.map(function (x) {
-      return { col: x.col, y: x.y, num: x.num, groupId: x.groupId, x0: x.x0, x1: x.x1, yEnd: x.yEnd };
+      return { col: x.col, y: x.y, num: x.num, groupId: x.groupId, x0: x.x0, x1: x.x1, yEnd: x.yEnd, free: !!x.free };
     });
     pg.suspects = s.suspects.map(function (x) { return { col: x.col, y: x.y, num: x.num, reason: x.reason }; });
   });
@@ -1130,34 +1192,42 @@ function renderSliceEditor() {
 function renderGridView(wrap) {
   wrap.innerHTML = '';
   sliceState.pages.forEach(function (pg) {
-    var div = document.createElement('div'); div.className = 'slice-page';
+    var div = document.createElement('div'); div.className = 'slice-page' + (drawMode ? ' drawing' : '');
     var img = document.createElement('img'); img.className = 'pageimg'; img.src = pg.dataUrl; div.appendChild(img);
-    // 단 경계선(거터) — 단 수만큼
-    pgCols(pg).forEach(function (c, i) {
-      if (i === 0) return;
-      var g = document.createElement('div'); g.className = 'slice-gutter'; g.style.left = (c.x0 / pg.W * 100) + '%'; div.appendChild(g);
-    });
-    img.addEventListener('click', clearSel);   // 빈 곳 클릭 = 선택 해제
-    // 클릭한 위치에 경계 추가(빈 곳)
-    img.addEventListener('dblclick', function (e) {
-      var rect = img.getBoundingClientRect();
-      var col = colAt(pg, (e.clientX - rect.left) / rect.width * pg.W);
-      var maxNum = 0; sliceState.pages.forEach(function (p) { p.slices.forEach(function (s) { maxNum = Math.max(maxNum, s.num); }); });
-      pushUndo();
-      pg.slices.push({ col: col, y: ((e.clientY - rect.top) / rect.height) * pg.H, num: maxNum + 1 });
-      renderSliceEditor();
-    });
+    // 단 경계선(거터) — 단 수만큼. 직접 그리기 중에는 안내선이 방해되므로 감춘다.
+    if (!drawMode) {
+      pgCols(pg).forEach(function (c, i) {
+        if (i === 0) return;
+        var g = document.createElement('div'); g.className = 'slice-gutter'; g.style.left = (c.x0 / pg.W * 100) + '%'; div.appendChild(g);
+      });
+    }
+    if (drawMode) {
+      div.addEventListener('pointerdown', function (e) { startDraw(e, div, pg); });
+    } else {
+      img.addEventListener('click', clearSel);   // 빈 곳 클릭 = 선택 해제
+      // 클릭한 위치에 경계 추가(빈 곳)
+      img.addEventListener('dblclick', function (e) {
+        var rect = img.getBoundingClientRect();
+        var col = colAt(pg, (e.clientX - rect.left) / rect.width * pg.W);
+        pushUndo();
+        pg.slices.push({ col: col, y: ((e.clientY - rect.top) / rect.height) * pg.H, num: nextSliceNum() });
+        renderSliceEditor();
+      });
+    }
 
-    // 각 컬럼별로 영역 박스
+    // 각 컬럼별로 영역 박스. 자동 인식 박스만 '끝 = 다음 문항 시작'으로 이어지고,
+    // 직접 그린 박스(free)는 자기 사각형만 그린다 — 빈 영역 판정에도 끼지 않는다.
     var cols = pgCols(pg).map(function (_, i) { return i; });
     cols.forEach(function (col) {
-      var colSlices = pg.slices.filter(function (s) { return s.col === col; }).sort(function (a, b) { return a.y - b.y; });
-      var firstY = colSlices.length ? colSlices[0].y : pg.H;
-      // 컬럼 상단 빈 영역(지문/헤더)
-      if (firstY > pg.H * 0.02) addGapBox(div, pg, col, 0, firstY, colSlices[0]);
-      colSlices.forEach(function (s, i) {
-        var yBottom = (i + 1 < colSlices.length) ? colSlices[i + 1].y : pg.H;
-        addQBox(div, pg, s, col, s.y, yBottom, s.__color, i, colSlices);
+      var autoSlices = pg.slices.filter(function (s) { return s.col === col && !s.free; }).sort(function (a, b) { return a.y - b.y; });
+      // 컬럼 상단 빈 영역(지문/헤더) — 자동 인식 결과가 있을 때만 의미가 있다
+      if (autoSlices.length && autoSlices[0].y > pg.H * 0.02) addGapBox(div, pg, col, 0, autoSlices[0].y, autoSlices[0]);
+      autoSlices.forEach(function (s, i) {
+        var yBottom = (i + 1 < autoSlices.length) ? autoSlices[i + 1].y : pg.H;
+        addQBox(div, pg, s, col, s.y, yBottom, s.__color, i, autoSlices);
+      });
+      pg.slices.filter(function (s) { return s.col === col && s.free; }).forEach(function (s) {
+        addQBox(div, pg, s, col, s.y, s.yEnd, s.__color, 0, []);
       });
     });
     // 역행/쪽번호 의심 후보 — 경계는 만들지 않고 '의심' 표시만
@@ -1175,7 +1245,8 @@ function readingOrderEntries() {
     pgCols(pg).forEach(function (_c, col) {
       var cs = pg.slices.filter(function (s) { return s.col === col; }).sort(function (a, b) { return a.y - b.y; });
       if (!cs.length) return;
-      if (cs[0].y > pg.H * 0.02) entries.push({ type: 'gap', pg: pg, pi: pi, col: col, yTop: 0, yBottom: cs[0].y, below: cs[0] });
+      var firstAuto = cs.filter(function (s) { return !s.free; })[0];
+      if (firstAuto && firstAuto.y > pg.H * 0.02) entries.push({ type: 'gap', pg: pg, pi: pi, col: col, yTop: 0, yBottom: firstAuto.y, below: firstAuto });
       cs.forEach(function (s) {
         if (s.groupId) { if (seenGid[s.groupId]) return; seenGid[s.groupId] = true; }  // 묶음은 첫 멤버 자리에 카드 하나로
         entries.push({ type: 'q', pg: pg, pi: pi, col: col, s: s });
@@ -1498,7 +1569,7 @@ function updateGapBadge() {
   var hasGap = false;
   sliceState.pages.forEach(function (pg) {
     pgCols(pg).forEach(function (_c, col) {
-      var cs = pg.slices.filter(function (s) { return s.col === col; }).sort(function (a, b) { return a.y - b.y; });
+      var cs = pg.slices.filter(function (s) { return s.col === col && !s.free; }).sort(function (a, b) { return a.y - b.y; });
       if (cs.length && cs[0].y > pg.H * 0.02) hasGap = true;
     });
   });
@@ -1521,6 +1592,142 @@ document.getElementById('sliceMergeBtn').addEventListener('click', function () {
   sliceSel = [];
   renderSliceEditor();
 });
+
+// ================= 직접 그리기(수동 영역) =================
+// 표·OX 학습지처럼 자동 인식이 통하지 않는 양식은 교사가 사각형을 직접 그린다.
+// 그린 영역도 자동 인식 영역과 '같은 slice 객체'다 — 리사이즈·묶기·삭제·되돌리기·미리보기·저장·
+// HTML 변환이 전부 그대로 적용된다(파싱이 실패하면 기존대로 이미지 폴백).
+var drawMode = false;
+
+// 다음에 붙일 번호 = 현재 최대 번호 + 1 (빈 페이지에서 시작하면 그린 순서대로 1, 2, 3...)
+function nextSliceNum() {
+  var maxNum = 0;
+  sliceState.pages.forEach(function (p) { p.slices.forEach(function (s) { maxNum = Math.max(maxNum, s.num); }); });
+  return maxNum + 1;
+}
+
+function setDrawMode(on) {
+  drawMode = !!on;
+  document.getElementById('sliceDrawBtn').classList.toggle('on', drawMode);
+  document.getElementById('sliceDrawHint').style.display = drawMode ? 'block' : 'none';
+  if (drawMode && sliceView !== 'grid') {          // 그리기는 원본 배치 뷰에서만(읽기 순서 뷰엔 페이지가 없다)
+    sliceView = 'grid';
+    try { sessionStorage.setItem('sliceView', 'grid'); } catch (e) { }
+  }
+  renderSliceEditor();
+}
+document.getElementById('sliceDrawBtn').addEventListener('click', function () { setDrawMode(!drawMode); });
+
+// [처음부터 직접 그리기] — 자동 인식 결과를 전부 버리고 빈 페이지에서 시작(Ctrl+Z 로 복구 가능)
+document.getElementById('sliceBlankBtn').addEventListener('click', function () {
+  if (!sliceState) return;
+  var n = 0; sliceState.pages.forEach(function (pg) { n += pg.slices.length; });
+  if (n && !confirm('자동 인식으로 만든 영역 ' + n + '개를 모두 지우고 빈 페이지에서 시작할까요?\n(Ctrl+Z 로 되돌릴 수 있어요)')) return;
+  pushUndo();
+  sliceState.pages.forEach(function (pg) { pg.slices = []; pg.suspects = []; });
+  sliceSel = [];
+  document.getElementById('sliceLowConf').style.display = 'none';
+  setDrawMode(true);
+  document.getElementById('sliceStatus').textContent = '✏️ 직접 그리기 — 페이지 위에서 드래그해 문항 영역을 그리세요.';
+});
+
+// 드래그 = 사각형 하나. 그리는 중 반투명 미리보기, Esc 취소, 놓으면 자동 선택 상태.
+function startDraw(e, pageDiv, pg) {
+  if (e.button !== 0) return;
+  e.preventDefault();
+  var pageRect = pageDiv.getBoundingClientRect();
+  var sx = e.clientX, sy = e.clientY, cancelled = false;
+  var ghost = document.createElement('div'); ghost.className = 'drawghost';
+  pageDiv.appendChild(ghost);
+
+  function toPage(cx, cy) {
+    return {
+      x: Math.min(Math.max(0, (cx - pageRect.left) / pageRect.width * pg.W), pg.W),
+      y: Math.min(Math.max(0, (cy - pageRect.top) / pageRect.height * pg.H), pg.H)
+    };
+  }
+  function rectNow(ev) {
+    var a = toPage(sx, sy), b = toPage(ev.clientX, ev.clientY);
+    return { x0: Math.min(a.x, b.x), x1: Math.max(a.x, b.x), y0: Math.min(a.y, b.y), y1: Math.max(a.y, b.y) };
+  }
+  function mv(ev) {
+    var r = rectNow(ev);
+    ghost.style.left = (r.x0 / pg.W * 100) + '%';
+    ghost.style.top = (r.y0 / pg.H * 100) + '%';
+    ghost.style.width = ((r.x1 - r.x0) / pg.W * 100) + '%';
+    ghost.style.height = ((r.y1 - r.y0) / pg.H * 100) + '%';
+  }
+  function done(ev) {
+    var r = rectNow(ev);
+    cleanup();
+    if (cancelled) { renderSliceEditor(); return; }
+    if (r.x1 - r.x0 < MIN_W || r.y1 - r.y0 < MIN_H) return;   // 클릭·너무 작은 드래그는 영역으로 치지 않는다
+    pushUndo();
+    var s = {
+      col: colAt(pg, (r.x0 + r.x1) / 2), y: r.y0, yEnd: r.y1, x0: r.x0, x1: r.x1,
+      num: nextSliceNum(), free: true, groupId: null
+    };
+    pg.slices.push(s);
+    sliceSel = [s];                                            // 그린 직후 선택 상태 → 바로 리사이즈·묶기
+    renderSliceEditor();
+    showSlicePreview(pg, s);
+  }
+  function esc(ev) { if (ev.key === 'Escape') { cancelled = true; cleanup(); renderSliceEditor(); } }
+  function cleanup() {
+    document.removeEventListener('pointermove', mv);
+    document.removeEventListener('pointerup', done);
+    document.removeEventListener('keydown', esc, true);
+    if (ghost.parentNode) ghost.parentNode.removeChild(ghost);
+  }
+  document.addEventListener('pointermove', mv);
+  document.addEventListener('pointerup', done);
+  document.addEventListener('keydown', esc, true);
+}
+
+// ---- 자동 인식 신뢰도 — 낮으면 직접 그리기를 권한다 ----
+// 표 학습지에서 자동 인식은 표의 가로줄을 문항 경계로 오인해 '문장 한가운데'를 자른다.
+// 그 징후를 두 가지로 잡는다: ① 경계가 글자 줄을 관통 ② 글이 있는데 영역이 하나도 안 잡힌 단.
+// ※ 줄 묶기는 반드시 '단 안에서' 해야 한다. 페이지 전체로 묶으면 좌·우 단의 같은 높이 문장이
+//   한 줄로 합쳐져(2단 학습지) 단별 글줄 수도, 경계 관통 판정도 엉뚱해진다.
+function lowConfidenceReport(pages) {
+  var pierce = 0, total = 0, emptyCols = 0;
+  pages.forEach(function (pg) {
+    pgCols(pg).forEach(function (c, ci) {
+      var items = (pg.items || []).filter(function (t) {
+        var cx = t.x + (t.w || 0) / 2;
+        return cx >= c.x0 && cx <= c.x1;
+      });
+      var lines = groupLinesX(items);
+      var slices = pg.slices.filter(function (s) { return s.col === ci; });
+      slices.forEach(function (s) {
+        total++;
+        if (lines.some(function (l) { return s.y > (l.y - l.h) + 1 && s.y < l.y - 1; })) pierce++;   // 경계가 글자 높이 안을 지난다
+      });
+      // 글이 충분히 있는데 영역이 하나도 안 잡힌 단 — 머리글만 있는 칸은 정상이므로 5줄 이상일 때만
+      if (lines.length >= 5 && !slices.length) emptyCols++;
+    });
+  });
+  var ratio = total ? pierce / total : 0;
+  return { pierce: pierce, total: total, ratio: ratio, emptyCols: emptyCols, low: total === 0 || ratio >= 0.3 || emptyCols > 0 };
+}
+function renderLowConfidence(pages) {
+  var box = document.getElementById('sliceLowConf');
+  var rep = lowConfidenceReport(pages);
+  console.info('[slice] 자동 인식 신뢰도', rep);
+  if (!rep.low) { box.style.display = 'none'; box.innerHTML = ''; return; }
+  var why = [];
+  if (rep.total === 0) why.push('문항 번호를 하나도 못 찾았어요');
+  if (rep.ratio >= 0.3) why.push('경계 ' + rep.total + '개 중 ' + rep.pierce + '개가 문장 한가운데를 지나요');
+  if (rep.emptyCols) why.push('글이 있는데 영역이 안 잡힌 칸이 ' + rep.emptyCols + '곳이에요');
+  box.style.display = 'block';
+  box.className = 'lowconf';
+  box.innerHTML = '⚠ <b>이 문서는 자동 인식이 어려워요.</b> (' + why.join(' · ') + ') 표·비정형 학습지는 직접 그리는 편이 빠르고 정확해요.';
+  var b = document.createElement('button');
+  b.className = 'btn-blue btn-sm';
+  b.textContent = '✏️ 처음부터 직접 그리기';
+  b.addEventListener('click', function () { document.getElementById('sliceBlankBtn').click(); });
+  box.appendChild(b);
+}
 
 // 현재 문항이 잘려 나올 조각 미리보기
 function showSlicePreview(pg, s) {
@@ -1565,12 +1772,16 @@ function isCrossPage(s) {
   return pis.length > 1 && Math.min.apply(null, pis) !== Math.max.apply(null, pis);
 }
 // 같은 컬럼에서 s 바로 다음 문항(없으면 null) / 다음 경계 y(없으면 페이지 끝)
+// ※ 직접 그린 영역(free)은 연쇄에서 빼고 본다 — 자동 인식 박스의 '끝 = 다음 문항 시작' 규칙이
+//   같은 단에 수동 박스를 하나 얹었다고 해서 흔들리면 안 된다(자동+수동 혼용).
 function sameColNext(pg, s) {
-  var after = pg.slices.filter(function (x) { return x.col === s.col && x.y > s.y; }).sort(function (a, b) { return a.y - b.y; });
+  if (s.free) return null;
+  var after = pg.slices.filter(function (x) { return !x.free && x.col === s.col && x.y > s.y; }).sort(function (a, b) { return a.y - b.y; });
   return after.length ? after[0] : null;
 }
 function sameColPrev(pg, s) {
-  var before = pg.slices.filter(function (x) { return x.col === s.col && x.y < s.y; }).sort(function (a, b) { return b.y - a.y; });
+  if (s.free) return null;
+  var before = pg.slices.filter(function (x) { return !x.free && x.col === s.col && x.y < s.y; }).sort(function (a, b) { return b.y - a.y; });
   return before.length ? before[0] : null;
 }
 function sameColNextY(pg, s) {
@@ -1583,6 +1794,11 @@ function sameColNextY(pg, s) {
 // ※ 아래에 다음 문항이 있으면 끝 = 다음 문항 시작(연동) → 겹침·빈틈이 생기지 않는다.
 function sliceRect(pg, s) {
   var cs = pgCols(pg), c = cs[Math.min(s.col, cs.length - 1)];
+  // 직접 그린 영역(free)은 교사가 네 변을 다 정한 독립 사각형이다 — 아래 문항과 연동하지 않는다.
+  // (연동하면 표 문항처럼 일부러 띄워 그린 영역이 다음 박스까지 늘어난다)
+  if (s.free) {
+    return { x0: s.x0, x1: s.x1, y0: s.y, y1: (s.yEnd != null ? s.yEnd : pg.H) };
+  }
   var next = sameColNext(pg, s);
   return {
     x0: (s.x0 != null ? s.x0 : c.x0),
@@ -1711,8 +1927,92 @@ function linesInRect(pg, rect) {
       var cy = l.y - l.h / 2;
       if (cy < rect.y0 || cy > rect.y1) return false;            // 줄 중심이 박스 밖 → 이웃 문항 것
       return !isPageNumberText(pg, l);                           // 쪽번호 잔재 제거
-    });
+    })
+    .map(function (l) { l.pg = pg; return l; });                 // 밑줄 잉크 검사에 원본 페이지 캔버스가 필요
 }
+
+// ---- 강조 서식 복원(굵게 · 밑줄) ----
+// 굵게: pdf.js 가 준 폰트 이름(Bold/Black/Heavy…)으로 판정한다.
+// 밑줄: 텍스트 레이어에 없다 → 글자 바로 아래 띠의 '잉크'를 캔버스에서 직접 읽어 복원한다.
+//       표 괘선·답란 밑줄과 헷갈리지 않게, 그 띠가 '글줄 바깥'까지 이어지면 밑줄로 보지 않는다.
+var UL_DARK = 200, UL_MIN_COVER = 0.7;
+function bandInkCover(pg, x0, x1, y0, y1) {
+  var w = Math.round(x1 - x0), h = Math.round(y1 - y0);
+  if (!pg.canvas || w <= 0 || h <= 0) return 0;
+  var data;
+  try { data = pg.canvas.getContext('2d').getImageData(Math.round(x0), Math.round(y0), w, h).data; } catch (e) { return 0; }
+  var darkCols = 0;
+  for (var cx = 0; cx < w; cx++) {
+    for (var cy = 0; cy < h; cy++) {
+      var i = (cy * w + cx) * 4;
+      if (data[i] < UL_DARK && data[i + 1] < UL_DARK && data[i + 2] < UL_DARK) { darkCols++; break; }
+    }
+  }
+  return darkCols / w;
+}
+function isUnderlined(pg, it, line) {
+  if (!pg || !pg.canvas || !it.w || it.w < 4) return false;
+  var top = it.y + Math.max(1, it.h * 0.06);
+  var bot = it.y + Math.max(3, it.h * 0.30);
+  if (bandInkCover(pg, it.x, it.x + it.w, top, bot) < UL_MIN_COVER) return false;
+  // 글줄 좌·우 바깥에도 같은 띠가 이어지면 그건 표 괘선/답란 선이지 이 낱말의 밑줄이 아니다
+  var pad = Math.max(8, it.h * 0.6);
+  var outL = bandInkCover(pg, line.x - pad, line.x - 2, top, bot);
+  var outR = bandInkCover(pg, line.x + line.w + 2, line.x + line.w + pad, top, bot);
+  return !(outL > 0.5 && outR > 0.5);
+}
+
+// 한 줄 → 굵게·밑줄을 살린 HTML(띄어쓰기 규칙은 joinParts 와 같다)
+function markupLine(l) {
+  var parts = (l.parts || []);
+  if (!parts.length) return escapeHtmlText(l.text || '');
+  var pg = l.pg, acw = avgCharWidth(parts), segs = [], sp = false;
+  for (var i = 0; i < parts.length; i++) {
+    var p = parts[i], s = p.str || '';
+    if (!s) continue;
+    if (i > 0) {
+      var prev = parts[i - 1];
+      var gap = p.x - (prev.x + (prev.w || 0));
+      sp = (acw > 0 ? gap >= acw * JOIN_GAP_RATIO : gap > 0) && !NO_SPACE_BEFORE.test(s);
+    }
+    var b = !!p.bold, u = isUnderlined(pg, p, l);
+    var last = segs[segs.length - 1];
+    if (last && last.b === b && last.u === u) last.text += (sp ? ' ' : '') + s;
+    else segs.push({ b: b, u: u, text: s, sp: sp && segs.length > 0 });
+    sp = false;
+  }
+  return segs.map(function (sg) {
+    var h = escapeHtmlText(tidyText(sg.text));
+    if (sg.u) h = '<u>' + h + '</u>';
+    if (sg.b) h = '<strong>' + h + '</strong>';
+    return (sg.sp ? ' ' : '') + h;
+  }).join('');
+}
+
+// 부정형 발문 보정: 원본에서 강조를 못 살렸을 때만, '않은/아닌/틀린'을 굵게+밑줄로 되살린다.
+// (부정형은 학생이 놓치면 통째로 틀리는 자리라 시각 장치가 없으면 안 된다. 교사가 편집기에서 지울 수 있다.)
+var NEG_RE = /(옳지\s*않은|알맞지\s*않은|적절하지\s*않은|바르지\s*않은|맞지\s*않은|않은|아닌|틀린)/;
+function emphasizeNegation(html) {
+  if (/<u>/.test(html)) return html;              // 원본 밑줄을 이미 살렸으면 건드리지 않는다
+  var done = false;
+  return String(html).replace(/(<[^>]+>)|([^<]+)/g, function (m, tag, text) {
+    if (tag || done || !text) return m;
+    return text.replace(NEG_RE, function (w) { done = true; return '<strong><u>' + w + '</u></strong>'; });
+  });
+}
+
+// 발문 첫머리의 인쇄 번호("16." "16)")는 파트 단위로 떼어낸다(마크업 전에 제거해야 태그가 안 깨진다)
+function dropLeadingNumParts(l) {
+  var parts = (l.parts || []).slice();
+  while (parts.length && /^\s*\d{1,2}\s*[.)]?\s*$/.test(parts[0].str || '')) parts.shift();
+  if (parts.length && parts.length !== (l.parts || []).length) return { y: l.y, h: l.h, x: parts[0].x, w: l.w, pg: l.pg, parts: parts, text: joinParts(parts) };
+  // 번호가 첫 글자와 한 아이템에 붙어 있는 경우(예: "16. 다음 중") — 텍스트에서만 떼어낸다
+  var t = (l.text || '').replace(/^\s*\d{1,2}\s*[.)]?\s*/, '');
+  return { y: l.y, h: l.h, x: l.x, w: l.w, pg: l.pg, parts: parts, text: t, numStripped: t !== l.text };
+}
+
+// 답란 괄호 "( )" — 발문은 여기서 끝난다. 뒤에 이어지는 문장은 이 문항의 지문이다.
+var ANS_BLANK_RE = /[(（][\s_ㆍ·.．]*[)）]/;
 // 확정 쪽번호(영역 단계와 같은 기준: 하단 5% + 가로 중앙 부근 + 고립된 단독 숫자)는 본문 텍스트에서도 뺀다.
 // 페이지를 걸친 묶음은 합성 이미지에 쪽번호가 딸려와 본문에 섞이던 문제가 있었다.
 function isPageNumberText(pg, l) {
@@ -1780,12 +2080,24 @@ function parseSliceToQuestion(num, parts, nums) {
     : parseSingleItem(num, lines, figs, raw);
 }
 
-// 선지 줄 → 선지 배열(한 줄에 여러 개면 쪼갠다)
+// 선지 줄 → 선지 배열(한 줄에 여러 개면 쪼갠다).
+// 원문 마커(①②③…)를 순서 정보로 흡수해 버리지 않고 그대로 보존한다 —
+// 학생 화면·정답표·통계가 모두 이 마커를 그대로 쓴다.
+var MARKERS = ['①', '②', '③', '④', '⑤', '⑥', '⑦', '⑧', '⑨', '⑩'];
 function splitChoices(text) {
   return text.split(/(?=[①②③④⑤⑥⑦⑧⑨⑩])/)
     .map(function (x) { return x.trim(); })
     .filter(function (c) { return c && CHOICE_RE.test(c[0]); })
-    .map(function (c) { return c.replace(/^[①②③④⑤⑥⑦⑧⑨⑩]\s*/, '').trim(); });
+    .map(function (c) {
+      return { marker: c[0], text: tidyText(c.slice(1).trim()) };
+    });
+}
+// 마커가 없던 선지(다른 조판)는 순서대로 ①②③… 을 부여한다
+function normalizeChoices(choices) {
+  return choices.map(function (c, i) {
+    var marker = c.marker || MARKERS[i] || String(i + 1);
+    return { marker: marker, text: c.text || '' };
+  });
 }
 function typeOf(stem, choices) {
   if (choices.length >= 2) return 'choice';
@@ -1828,14 +2140,37 @@ function parseSingleItem(num, lines, figs, raw) {
       lastChoiceY = l.y; inPassage = false;
       return;
     }
-    if (firstChoiceY != null) { stemLines.push(t); return; }   // 선지 뒤 꼬리말은 발문에 붙인다
+    if (firstChoiceY != null) { stemLines.push(l); return; }   // 선지 뒤 꼬리말은 발문에 붙인다
     if (PASSAGE_RE.test(t)) { inPassage = true; passageY = l.y; return; }   // 표시줄 자체는 버린다
-    (inPassage ? passageLines : stemLines).push(t);
+    (inPassage ? passageLines : stemLines).push(l);
   });
 
-  if (stemLines.length) stemLines[0] = stemLines[0].replace(/^\s*\d{1,2}\s*[.)]?\s*/, '');   // 인쇄 번호 분리
-  q.stem = stemLines.join(' ').replace(/\s+/g, ' ').trim();
-  q.passage = passageLines.join(' ').replace(/\s+/g, ' ').trim();
+  if (stemLines.length) stemLines[0] = dropLeadingNumParts(stemLines[0]);   // 인쇄 번호 분리
+  // 발문은 답란 괄호 "( )" 에서 끝난다 — 그 뒤 문장은 발문이 아니라 이 문항의 지문이다.
+  // ("...어디입니까? ( ) 북한강과 남한강의..." 처럼 한 문단으로 붙어 나오던 것)
+  var cutAt = -1;
+  for (var si = 0; si < stemLines.length; si++) {
+    if (ANS_BLANK_RE.test(stemLines[si].text || '')) { cutAt = si; break; }
+  }
+  if (cutAt >= 0) {
+    var head = stemLines[cutAt], m = (head.text || '').match(ANS_BLANK_RE);
+    var idx = (head.text || '').indexOf(m[0]) + m[0].length;
+    var tail = tidyText((head.text || '').slice(idx));
+    var rest = stemLines.slice(cutAt + 1);
+    stemLines = stemLines.slice(0, cutAt).concat([{ y: head.y, h: head.h, x: head.x, w: head.w, pg: head.pg, parts: null, text: tidyText((head.text || '').slice(0, idx)) }]);
+    // 괄호 뒤 같은 줄의 꼬리 + 이후 줄들 = 지문(앞에 붙인다 — ※·<보기> 로 시작하는 지문보다 먼저 나온 몫)
+    var tailLines = [];
+    if (tail) tailLines.push({ y: head.y, h: head.h, x: head.x, w: head.w, pg: head.pg, parts: null, text: tail });
+    passageLines = tailLines.concat(rest, passageLines);
+    if (passageY == null && (tail || rest.length)) passageY = head.y;
+  }
+
+  q.stem = tidyText(stemLines.map(function (l) { return l.text; }).join(' '));
+  q.passage = tidyText(passageLines.map(function (l) { return l.text; }).join(' '));
+  // 굵게·밑줄을 살린 HTML(파트 정보가 없는 줄은 평문으로). 부정형 발문은 강조가 없으면 보정한다.
+  q.stemHtml = emphasizeNegation(stemLines.map(lineHtml).join(' ').replace(/\s+/g, ' ').trim());
+  q.passageHtml = passageLines.map(lineHtml).join(' ').replace(/\s+/g, ' ').trim();
+  q.choices = normalizeChoices(q.choices);
   q.images = figs.map(function (f) {
     var pos = 'stem';
     if (lastChoiceY != null && f.y > lastChoiceY) pos = 'after_choices';
@@ -1845,6 +2180,8 @@ function parseSingleItem(num, lines, figs, raw) {
   q.type = typeOf(q.stem, q.choices);
   return q;
 }
+// 줄 → HTML: 파트가 남아 있으면 서식을 살리고, 잘라 만든 줄(파트 없음)은 평문으로
+function lineHtml(l) { return l.parts ? markupLine(l) : escapeHtmlText(l.text || ''); }
 // 마지막 선지(없으면 마지막 줄) 뒤에 나오는 지문 표시줄 위치 — 여기부터는 다음 문항 몫이다
 function trailingPassageStart(lines) {
   var lastChoice = -1;
@@ -1876,7 +2213,8 @@ function parseGroupItem(firstNum, nums, lines, figs, raw) {
   // 첫 번호 앞 = 공통 지문(㉠~㉤·※·<보 기> 등). 표시줄만 있는 줄은 버린다.
   var head = lines.slice(0, marks[0].i);
   var passageLines = head.filter(function (l) { return !/^\s*(<\s*보\s*기\s*>|\[\s*보\s*기\s*\]|보\s*기)\s*$/.test(l.text.trim()); });
-  var passage = passageLines.map(function (l) { return l.text.trim(); }).join(' ').replace(/\s+/g, ' ').trim();
+  var passage = tidyText(passageLines.map(function (l) { return l.text.trim(); }).join(' '));
+  var passageHtml = passageLines.map(lineHtml).join(' ').replace(/\s+/g, ' ').trim();
   var passageImages = figs.filter(function (f) { return f.y < marks[0].y; }).map(function (f) { return { src: f.src, position: 'passage' }; });
 
   var questions = [];
@@ -1887,15 +2225,29 @@ function parseGroupItem(firstNum, nums, lines, figs, raw) {
       figs.filter(function (f) { return f.y >= yFrom && f.y < yTo; }), '');
     if (sub.type === 'unparsed') return fail;     // 하위 문항 하나라도 못 읽으면 그룹 전체 실패
     // 하위 문항 안의 지문 표시는 공통 지문으로 올린다(문항별 지문은 따로 두지 않는다)
-    if (sub.passage) { passage = (passage + ' ' + sub.passage).trim(); sub.passage = ''; }
-    questions.push({ number: sub.number, stem: sub.stem, choices: sub.choices, images: sub.images, type: sub.type });
+    if (sub.passage) {
+      passage = tidyText(passage + ' ' + sub.passage);
+      passageHtml = (passageHtml + ' ' + (sub.passageHtml || '')).replace(/\s+/g, ' ').trim();
+      sub.passage = ''; sub.passageHtml = '';
+    }
+    questions.push({ number: sub.number, stem: sub.stem, stemHtml: sub.stemHtml, choices: sub.choices, images: sub.images, type: sub.type });
   }
   return {
     number: firstNum, isGroup: true, group: label, nums: nums, type: 'group',
-    passage: passage, passageImages: passageImages, questions: questions,
+    passage: passage, passageHtml: passageHtml, passageImages: passageImages, questions: questions,
     stem: '', choices: [], images: [], raw_text: raw
   };
 }
+
+// 선지 → <li> — 마커(①②③)를 눈에 보이게 두고, 학생 화면이 답으로 기록할 값도 data-marker 로 함께 싣는다.
+function choicesToHtml(choices) {
+  return '<ol class="choices">' + normalizeChoices(choices).map(function (c) {
+    return '<li data-marker="' + escapeHtmlText(c.marker) + '">' +
+      '<span class="cmark">' + escapeHtmlText(c.marker) + '</span>' + escapeHtmlText(c.text) + '</li>';
+  }).join('') + '</ol>';
+}
+// 발문·지문은 서식(굵게·밑줄)을 살린 HTML 이 있으면 그것을, 없으면 평문을 쓴다.
+function richText(html, plain) { return html ? html : escapeHtmlText(plain || ''); }
 
 // 구조 → HTML(허용 태그만)
 function questionToHtml(q) {
@@ -1904,13 +2256,11 @@ function questionToHtml(q) {
     return q.images.filter(function (im) { return im.position === pos; })
       .map(function (im) { return '<img src="' + im.src + '" alt="문항 그림" />'; }).join('');
   };
-  var h = '<div class="q">';
-  if (q.stem) h += '<p class="stem">' + escapeHtmlText(q.stem) + '</p>';
+  var h = '<div class="q" data-num="' + q.number + '">';
+  if (q.stem) h += '<p class="stem">' + richText(q.stemHtml, q.stem) + '</p>';
   h += imgs('stem');
-  if (q.passage) h += '<div class="passage">' + escapeHtmlText(q.passage) + imgs('passage') + '</div>';
-  if (q.choices.length) {
-    h += '<ol class="choices">' + q.choices.map(function (c) { return '<li>' + escapeHtmlText(c) + '</li>'; }).join('') + '</ol>';
-  }
+  if (q.passage) h += '<div class="passage">' + richText(q.passageHtml, q.passage) + imgs('passage') + '</div>';
+  if (q.choices.length) h += choicesToHtml(q.choices);
   h += imgs('after_choices');
   h += '</div>';
   return h;
@@ -1919,17 +2269,15 @@ function questionToHtml(q) {
 function groupToHtml(g) {
   var h = '<div class="q group">';
   if (g.passage || (g.passageImages || []).length) {
-    h += '<div class="passage">' + escapeHtmlText(g.passage) +
+    h += '<div class="passage">' + richText(g.passageHtml, g.passage) +
       (g.passageImages || []).map(function (im) { return '<img src="' + im.src + '" alt="지문 그림" />'; }).join('') +
       '</div>';
   }
   g.questions.forEach(function (sub) {
-    h += '<div class="subq"><div class="subnum">' + sub.number + '번</div>';
-    if (sub.stem) h += '<p class="stem">' + escapeHtmlText(sub.stem) + '</p>';
+    h += '<div class="subq" data-num="' + sub.number + '"><div class="subnum">' + sub.number + '번</div>';
+    if (sub.stem) h += '<p class="stem">' + richText(sub.stemHtml, sub.stem) + '</p>';
     (sub.images || []).forEach(function (im) { h += '<img src="' + im.src + '" alt="문항 그림" />'; });
-    if (sub.choices.length) {
-      h += '<ol class="choices">' + sub.choices.map(function (c) { return '<li>' + escapeHtmlText(c) + '</li>'; }).join('') + '</ol>';
-    }
+    if (sub.choices.length) h += choicesToHtml(sub.choices);
     h += '</div>';
   });
   return h + '</div>';

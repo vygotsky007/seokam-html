@@ -788,6 +788,10 @@ function renderStudentPage(activity) {
   #__ttsBar .lab { font-size: 13px; color: #718096; font-weight: 700; }
   #__ttsBar button, #__ttsBar select { padding: 6px 10px; font-size: 14px; font-weight: 700; border: 1px solid #cbd5e1; background: #f7fafc; border-radius: 7px; cursor: pointer; }
   .tts-play { margin-right: 6px; padding: 2px 8px !important; font-size: 13px !important; background: #ebf8ff !important; border: 1px solid #bee3f8 !important; border-radius: 6px; cursor: pointer; }
+  /* 선지 클릭 = 답 선택(변환된 문항에만 선지 <li data-marker> 가 있다) */
+  ol.choices li.pick { min-height: 44px; display: flex; align-items: center; cursor: pointer; user-select: none; }
+  ol.choices li.pick.on { border: 2px solid #2b6cb0; background: #ebf8ff; font-weight: 700; }
+  .cmark { font-weight: 800; color: #2b6cb0; margin-right: 6px; }
 </style>
 </head>
 <body>
@@ -825,6 +829,29 @@ ${body}
   var nickEl = document.getElementById('__nickname');
   var resultEl = document.getElementById('result');
   var bodyEl = document.getElementById('__activityBody');
+
+  // 선지 클릭 = 답 선택 — 해당 문항의 답칸(input[name=qN])에 마커('③')를 그대로 넣는다.
+  // 답칸은 그대로 두므로(직접 타이핑도 가능) collectAnswers 는 손댈 필요가 없다.
+  (function bindChoicePick() {
+    bodyEl.querySelectorAll('ol.choices li[data-marker]').forEach(function (li) {
+      var block = li.closest('[data-num]');
+      if (!block) return;
+      var num = block.getAttribute('data-num');
+      var input = bodyEl.querySelector('input[name="q' + num + '"]');
+      if (!input) return;
+      li.classList.add('pick');
+      var mk = li.getAttribute('data-marker');
+      if (input.value === mk) li.classList.add('on');
+      li.addEventListener('click', function () {
+        var same = input.value === mk;
+        input.value = same ? '' : mk;                      // 같은 선지 재클릭 = 해제
+        bodyEl.querySelectorAll('ol.choices li[data-marker]').forEach(function (o) {
+          var ob = o.closest('[data-num]');
+          if (ob && ob.getAttribute('data-num') === num) o.classList.toggle('on', o.getAttribute('data-marker') === input.value);
+        });
+      });
+    });
+  })();
 
   function collectAnswers() {
     var answers = {};
@@ -1019,11 +1046,29 @@ function renderStudentSinglePage(activity, questions) {
   .qhtml .subnum { font-weight: 800; color: #2b6cb0; margin-bottom: 6px; }
   .qhtml ol.choices { list-style: none; padding: 0; margin: 10px 0 0; }
   .qhtml ol.choices li { padding: 7px 10px; border: 1px solid #e2e8f0; border-radius: 8px; margin-bottom: 6px; background: #fff; }
+  .qhtml .cmark { font-weight: 800; color: #2b6cb0; margin-right: 6px; }
+  /* 선지 클릭 = 답 선택. 폰에서 눌리는 크기(44px 이상)와 즉각적인 시각 피드백. */
+  .qhtml ol.choices li.pick { min-height: 44px; display: flex; align-items: center; cursor: pointer; user-select: none; transition: background .12s, border-color .12s; }
+  .qhtml ol.choices li.pick:active { background: #ebf8ff; }
+  .qhtml ol.choices li.pick.on { border-color: #2b6cb0; border-width: 2px; background: #ebf8ff; font-weight: 700; }
   .qhtml img { width: auto; max-width: 100%; margin: 8px 0; }
   .answers { margin-top: 12px; }
   .arow { display: flex; align-items: center; gap: 10px; margin-bottom: 8px; }
   .arow label { flex: 0 0 46px; font-weight: 800; }
   .arow input { flex: 1; padding: 11px 12px; font-size: 16px; border: 1px solid #cbd5e1; border-radius: 8px; }
+  /* 객관식: 입력칸 대신 선택 상태만 보여준다 */
+  .picked { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; font-weight: 700; color: #2b6cb0; min-height: 32px; }
+  .picked .none { color: #a0aec0; font-weight: 400; }
+  .picked .mk { font-size: 20px; }
+  .picked button { margin-left: auto; padding: 6px 10px; font-size: 13px; font-weight: 700; border: 1px solid #cbd5e1; background: #fff; border-radius: 8px; cursor: pointer; }
+  .counter { font-size: 13px; color: #4a5568; font-weight: 700; margin-top: 6px; }
+  .autonext { display: flex; align-items: center; gap: 6px; font-size: 12px; color: #4a5568; margin-top: 6px; }
+  .autonext button { padding: 4px 10px; font-size: 12px; font-weight: 700; border: 1px solid #cbd5e1; background: #fff; color: #4a5568; border-radius: 999px; cursor: pointer; }
+  .autonext button.on { background: #2b6cb0; color: #fff; border-color: #2b6cb0; }
+  .donehint { margin-top: 10px; padding: 10px 12px; background: #f0fff4; border: 1px solid #9ae6b4; border-radius: 8px; font-weight: 700; color: #22543d; }
+  .donehint button { margin-left: 8px; padding: 8px 14px; font-size: 14px; font-weight: 800; border: 0; border-radius: 8px; background: #2f855a; color: #fff; cursor: pointer; }
+  .misslist { display: flex; flex-wrap: wrap; gap: 6px; justify-content: center; margin: 0 0 16px; }
+  .misslist button { width: auto; min-width: 40px; padding: 8px 10px; margin: 0; font-weight: 800; background: #fed7d7; border-color: #feb2b2; color: #c53030; }
   .nav { display: flex; gap: 8px; margin-top: 14px; }
   .nav button { flex: 1; padding: 13px; font-size: 15px; font-weight: 800; border: 1px solid #cbd5e1; background: #fff; border-radius: 10px; cursor: pointer; }
   .nav button.later.on { background: #fefcbf; border-color: #ecc94b; color: #975a16; }
@@ -1047,6 +1092,10 @@ function renderStudentSinglePage(activity, questions) {
     <div id="updateBanner">🔔 선생님이 문제를 수정했어요. <button id="reloadBtn">새로고침</button></div>
     <div class="prog"><div id="progFill"></div></div>
     <div class="chips" id="chips"></div>
+    <div class="counter" id="counter"></div>
+    <div class="autonext">답을 고르면 다음 문제로
+      <button id="autoNextBtn" type="button">자동 넘김 켬</button>
+    </div>
   </div>
   <div class="wrap">
     <div class="slide" id="slide"></div>
@@ -1114,12 +1163,27 @@ function renderStudentSinglePage(activity, questions) {
     return slides.map(function (_, i) { return i; }).filter(function (i) { return slides[i].nums.some(function (n) { return wrong[n]; }); });
   }
 
-  function render() {
-    // 진행바
+  // ---- 자동 넘김(학생이 끌 수 있다 — 검토하며 푸는 학생을 막지 않는다) ----
+  var autoNext = true, nextTimer = null;
+  try { autoNext = localStorage.getItem('autoNext') !== 'off'; } catch (e) { }
+  function syncAutoNextBtn() {
+    var b = document.getElementById('autoNextBtn');
+    b.textContent = autoNext ? '자동 넘김 켬' : '자동 넘김 끔';
+    b.classList.toggle('on', autoNext);
+  }
+  document.getElementById('autoNextBtn').onclick = function () {
+    autoNext = !autoNext;
+    try { localStorage.setItem('autoNext', autoNext ? 'on' : 'off'); } catch (e) { }
+    if (!autoNext && nextTimer) { clearTimeout(nextTimer); nextTimer = null; }
+    syncAutoNextBtn();
+  };
+
+  // 진행바·번호바·카운터만 갱신(슬라이드는 건드리지 않는다 — 입력 중 재렌더하면 포커스가 날아간다)
+  function renderChrome() {
     var total = allNums().length;
     var done = allNums().filter(hasAnswer).length;
     document.getElementById('progFill').style.width = total ? Math.round(done / total * 100) + '%' : '0';
-    // 칩
+    document.getElementById('counter').textContent = done + '/' + total + ' 답함';
     var chips = document.getElementById('chips'); chips.innerHTML = '';
     var curNums = slides[cur] ? slides[cur].nums : [];
     QUESTIONS.forEach(function (q) {
@@ -1131,6 +1195,93 @@ function renderStudentSinglePage(activity, questions) {
       b.onclick = function () { goQuestion(q.num); };
       chips.appendChild(b);
     });
+    syncAutoNextBtn();
+  }
+
+  // ---- 선지 클릭 = 답 선택 ----
+  // 선지 <li data-marker="③"> 를 눌러 답한다. 저장값은 마커 그대로('③') — 교사 정답표·통계와 같은 표기다.
+  // (채점은 grade.js 가 ①→1 로 정규화하므로 정답표가 '3' 이어도 맞는다)
+  function choiceEls(el, n, s) {
+    var scope = el.querySelector('.qhtml [data-num="' + n + '"]');
+    if (!scope && s.nums.length === 1) scope = el.querySelector('.qhtml');   // 단일 문항(예전 저장분엔 data-num 이 없다)
+    if (!scope) return [];
+    return Array.prototype.slice.call(scope.querySelectorAll('li[data-marker]'));
+  }
+  function isChoice(el, n, s) { return choiceEls(el, n, s).length > 0; }
+
+  function pickChoice(n, mk, el, s) {
+    var same = answers['q' + n] === mk;
+    if (same) delete answers['q' + n];      // 같은 선지 재클릭 = 해제
+    else answers['q' + n] = mk;
+    choiceEls(el, n, s).forEach(function (li) {
+      li.classList.toggle('on', li.getAttribute('data-marker') === answers['q' + n]);
+    });
+    renderChrome();
+    renderAnswers(el, s);
+    if (!same && autoNext) scheduleNext(el, s);
+  }
+  function bindChoices(el, s) {
+    s.nums.forEach(function (n) {
+      choiceEls(el, n, s).forEach(function (li) {
+        li.classList.add('pick');
+        var mk = li.getAttribute('data-marker');
+        if (answers['q' + n] === mk) li.classList.add('on');
+        li.addEventListener('click', function () { pickChoice(n, mk, el, s); });
+      });
+    });
+  }
+  // 이 슬라이드의 객관식을 다 풀었을 때만 넘어간다(묶음 8·9 는 둘 다 답해야 다음으로)
+  function scheduleNext(el, s) {
+    if (s.nums.some(function (n) { return isChoice(el, n, s) && !hasAnswer(n); })) return;
+    var nav = navigable(), pos = nav.indexOf(cur);
+    if (nextTimer) clearTimeout(nextTimer);
+    if (pos < 0 || pos === nav.length - 1) {          // 마지막 문항 → 넘기지 않고 마무리를 권한다
+      var box = el.querySelector('#doneHint');
+      if (box) {
+        box.innerHTML = '<div class="donehint">다 풀었어요! <button id="hintSubmit" type="button">제출하기</button></div>';
+        document.getElementById('hintSubmit').onclick = function () { finish(); };
+      }
+      return;
+    }
+    nextTimer = setTimeout(function () { nextTimer = null; step(1); }, 400);
+  }
+
+  // 답 입력 영역 — 객관식은 입력칸 대신 '선택: ③' 상태만, 단답·서술형은 기존 입력칸 유지
+  function renderAnswers(el, s) {
+    var box = el.querySelector('#answers');
+    if (!box) return;
+    var html = '';
+    s.nums.forEach(function (n) {
+      if (isChoice(el, n, s)) {
+        var mk = answers['q' + n];
+        html += '<div class="picked" data-num="' + n + '"><span>' + n + '번</span>' +
+          (mk
+            ? '<span class="mk">선택: ' + escapeHtml(mk) + '</span><button type="button" data-clear="' + n + '">선택 지우기</button>'
+            : '<span class="none">선지를 눌러 답하세요</span>') + '</div>';
+      } else {
+        html += '<div class="arow"><label>' + n + '번</label>' +
+          '<input type="text" data-num="' + n + '" value="' + escapeHtml(answers['q' + n] || '') + '" placeholder="답 입력" autocomplete="off" /></div>';
+      }
+    });
+    box.innerHTML = html;
+    box.querySelectorAll('input[data-num]').forEach(function (inp) {
+      inp.addEventListener('input', function () {
+        answers['q' + inp.getAttribute('data-num')] = inp.value;
+        renderChrome();      // 슬라이드는 다시 그리지 않는다(포커스 유지)
+      });
+    });
+    box.querySelectorAll('button[data-clear]').forEach(function (b) {
+      b.onclick = function () {
+        var n = Number(b.getAttribute('data-clear'));
+        delete answers['q' + n];
+        choiceEls(el, n, s).forEach(function (li) { li.classList.remove('on'); });
+        renderChrome(); renderAnswers(el, s);
+      };
+    });
+  }
+
+  function render() {
+    renderChrome();
     // 슬라이드
     var s = slides[cur]; var el = document.getElementById('slide');
     var html = '';
@@ -1147,17 +1298,10 @@ function renderStudentSinglePage(activity, questions) {
     } else {
       html += '<div class="noimg" style="color:#e11d48;">🙏 문항을 불러올 수 없어요</div>';
     }
-    html += '<div class="answers">';
-    s.nums.forEach(function (n) {
-      var q = QUESTIONS.filter(function (x) { return x.num === n; })[0] || { type: 'short' };
-      html += '<div class="arow"><label>' + n + '번</label>' +
-        '<input type="text" data-num="' + n + '" value="' + escapeHtml(answers['q' + n] || '') + '" placeholder="답 입력" autocomplete="off" /></div>';
-    });
-    html += '</div>';
+    html += '<div class="answers" id="answers"></div><div id="doneHint"></div>';
     el.innerHTML = html;
-    el.querySelectorAll('input[data-num]').forEach(function (inp) {
-      inp.addEventListener('input', function () { answers['q' + inp.getAttribute('data-num')] = inp.value; render(); });
-    });
+    bindChoices(el, s);        // 선지 클릭 = 답 선택(선지가 있는 문항만)
+    renderAnswers(el, s);      // 객관식이면 입력칸 대신 선택 상태
     el.querySelectorAll('.fontbar button').forEach(function (b) {
       b.addEventListener('click', function () { setFont(b.getAttribute('data-f')); });
     });
@@ -1176,6 +1320,7 @@ function renderStudentSinglePage(activity, questions) {
       psg.parentNode.insertBefore(t, psg);
     }
     // 나중에 다시 버튼 상태(현재 슬라이드 첫 문항 기준)
+    var curNums = slides[cur] ? slides[cur].nums : [];
     var laterOn = curNums.some(function (n) { return later[n]; });
     document.getElementById('laterBtn').classList.toggle('on', laterOn);
     var nav = navigable();
@@ -1209,7 +1354,11 @@ function renderStudentSinglePage(activity, questions) {
     var sheet = document.getElementById('finishSheet');
     var h;
     if (unanswered.length) {
-      h = '<h2>잠깐만요 🙂</h2><p>아직 안 푼 문제가 ' + unanswered.length + '개 있어요. 한 번 더 살펴볼까요?</p>' +
+      // 안 푼 문항을 번호로 짚어 준다 — 번호를 누르면 그 문항으로 바로 간다
+      h = '<h2>잠깐만요 🙂</h2><p>' + unanswered.length + '개를 안 풀었어요(' + unanswered.join(', ') + '번). 그래도 제출할까요?</p>' +
+        '<div class="misslist">' + unanswered.map(function (n) {
+          return '<button type="button" data-go="' + n + '">' + n + '</button>';
+        }).join('') + '</div>' +
         '<button class="primary" id="fGo">안 푼 문제로 가기</button><button id="fSubmit">그래도 제출</button>';
     } else if (laterNums.length) {
       h = '<h2>거의 다 됐어요 ✨</h2><p>다시 볼 문제가 ' + laterNums.length + '개 있어요. 확인해볼까요?</p>' +
@@ -1220,6 +1369,9 @@ function renderStudentSinglePage(activity, questions) {
     }
     sheet.innerHTML = h;
     document.getElementById('finishOverlay').classList.add('show');
+    sheet.querySelectorAll('button[data-go]').forEach(function (b) {
+      b.onclick = function () { hide('finishOverlay'); goQuestion(Number(b.getAttribute('data-go'))); };
+    });
     document.getElementById('fSubmit').onclick = function () { hide('finishOverlay'); submit(); };
     document.getElementById('fGo').onclick = function () {
       hide('finishOverlay');

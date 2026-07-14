@@ -1,0 +1,149 @@
+// 검증용 시험지 PDF 생성기.
+//
+// 왜 이렇게까지 하나: 실제 시험지 PDF 는 글자를 '낱개 아이템'으로 흩어 놓는다("것","입","니","까").
+// 한 문자열을 통째로 drawText 하면 pdf.js 가 아이템 하나로 돌려주기 때문에, 실물에서 터지는
+// 띄어쓰기 버그가 픽스처에서는 재현되지 않는다(= 픽스처만 통과하고 실물에서 깨지는 상황).
+// 그래서 여기서는 글자를 하나씩, 실제 조판처럼 x 를 계산해 찍는다.
+//
+//   node test/make-fixture.js  →  test/fixtures/exam-synth.pdf
+const fs = require('fs');
+const path = require('path');
+const { PDFDocument, rgb } = require('pdf-lib');
+const fontkit = require('@pdf-lib/fontkit');
+
+const OUT = path.join(__dirname, 'fixtures', 'exam-synth.pdf');
+const REG = 'C:/Windows/Fonts/malgun.ttf';
+const BOLD = 'C:/Windows/Fonts/malgunbd.ttf';
+
+const SIZE = 11;
+const LEAD = 22;          // 줄 간격
+const WORD_GAP = 4.2;     // 어절 사이 여백(= 인쇄된 띄어쓰기). 글자 사이(0)와 뚜렷이 구분돼야 한다.
+
+// 한 줄을 '어절 단위'로 받아 글자 하나씩 찍는다. 반환: 그린 낱말들의 x 범위(밑줄 그을 때 쓴다)
+function drawLine(page, words, x0, y, fonts) {
+  let x = x0;
+  const spans = [];
+  for (const w of words) {
+    const font = w.bold ? fonts.bold : fonts.reg;
+    const start = x;
+    for (const ch of w.t) {
+      page.drawText(ch, { x, y, size: SIZE, font });
+      x += font.widthOfTextAtSize(ch, SIZE);
+    }
+    spans.push({ t: w.t, x0: start, x1: x, y });
+    x += w.gapAfter != null ? w.gapAfter : WORD_GAP;
+  }
+  return spans;
+}
+const W = (t, opt) => Object.assign({ t }, opt || {});
+
+(async () => {
+  const doc = await PDFDocument.create();
+  doc.registerFontkit(fontkit);
+  const fonts = {
+    reg: await doc.embedFont(fs.readFileSync(REG), { subset: true }),
+    bold: await doc.embedFont(fs.readFileSync(BOLD), { subset: true }),
+  };
+
+  // ================= 1페이지: 2단 시험지 =================
+  const p1 = doc.addPage([595, 842]);        // A4
+  const L = 50, R = 320;                     // 왼단 / 오른단 좌측 기준선
+  let y = 780;
+
+  // --- 왼단: 16번(부정형 발문 + 선지 5개) ---
+  // "옳지 않은" = 굵게 + 밑줄(원본 강조). 밑줄은 텍스트 레이어에 없으므로 '잉크'로 직접 긋는다.
+  const s16 = drawLine(p1, [
+    W('16.'), W('다음'), W('중'), W('옳지', { bold: true }), W('않은', { bold: true }), W('것입니까?'),
+  ], L, y, fonts);
+  const ul = s16.filter((s) => s.t === '옳지' || s.t === '않은');
+  p1.drawLine({                                   // ← 실제 시험지의 밑줄(가는 수평선)
+    start: { x: ul[0].x0, y: y - 2.2 }, end: { x: ul[ul.length - 1].x1, y: y - 2.2 },
+    thickness: 0.9, color: rgb(0, 0, 0),
+  });
+  y -= LEAD;
+
+  // 선지: ①~⑤. ①은 마침표 앞을 일부러 벌려 놓는다("...이다 ." 가 나오던 조판) → 공백 제거 규칙 검증용.
+  const CH16 = [
+    [W('①'), W('우리나라의'), W('최고법이다'), W('.', { gapAfter: 0 })],
+    [W('②'), W('국민의'), W('권리를'), W('보장한다')],
+    [W('③'), W('국회에서'), W('만든다')],
+    [W('④'), W('재판의'), W('기준이'), W('된다')],
+    [W('⑤'), W('개정할'), W('수'), W('없다')],
+  ];
+  // ① 의 마침표 앞 간격을 넓게(= 어절 경계로 보일 만큼) — 그래도 "이다." 로 붙어야 한다
+  CH16[0][2].gapAfter = 9;
+  for (const c of CH16) { drawLine(p1, c, L + 6, y, fonts); y -= LEAD; }
+  y -= 8;
+
+  // --- 왼단: 17번(답란 괄호 뒤에 지문이 붙어 나오던 문항) ---
+  drawLine(p1, [W('17.'), W('한강의'), W('발원지는'), W('어디입니까?'), W('(     )')], L, y, fonts);
+  y -= LEAD;
+  drawLine(p1, [W('북한강과'), W('남한강이'), W('만나'), W('한강을'), W('이룬다.')], L, y, fonts);
+  y -= LEAD * 2;
+
+  // --- 왼단: 20번(원본에 강조가 없는 부정형 → 휴리스틱이 강조를 되살려야 한다) ---
+  drawLine(p1, [W('20.'), W('다음'), W('중'), W('알맞지'), W('않은'), W('것은'), W('무엇입니까?')], L, y, fonts);
+  y -= LEAD;
+  for (const c of [
+    [W('①'), W('물은'), W('얼면'), W('부피가'), W('준다')],
+    [W('②'), W('물은'), W('100도에서'), W('끓는다')],
+  ]) { drawLine(p1, c, L + 6, y, fonts); y -= LEAD; }
+
+  // --- 오른단: 8~9 묶음(공통 지문 + 하위 2문항, 각 선지 5개) ---
+  let ry = 780;
+  drawLine(p1, [W('※'), W('다음'), W('글을'), W('읽고'), W('물음에'), W('답하시오.'), W('(8~9)')], R, ry, fonts); ry -= LEAD;
+  for (const t of [
+    [W('㉠'), W('석고'), W('가루를'), W('그릇에'), W('담는다.')],
+    [W('㉡'), W('물을'), W('부어'), W('섞는다.')],
+    [W('㉢'), W('굳을'), W('때까지'), W('기다린다.')],
+  ]) { drawLine(p1, t, R + 6, ry, fonts); ry -= LEAD; }
+  ry -= 6;
+
+  drawLine(p1, [W('8.'), W('석고'), W('가루가'), W('물과'), W('만나면'), W('어떻게'), W('됩니까?')], R, ry, fonts); ry -= LEAD;
+  for (const c of [
+    [W('①'), W('굳는다')], [W('②'), W('녹는다')], [W('③'), W('끓는다')], [W('④'), W('언다')], [W('⑤'), W('타오른다')],
+  ]) { drawLine(p1, c, R + 6, ry, fonts); ry -= LEAD; }
+  ry -= 8;
+
+  drawLine(p1, [W('9.'), W('위'), W('과정에서'), W('알'), W('수'), W('있는'), W('것은'), W('어느'), W('것입니까?')], R, ry, fonts); ry -= LEAD;
+  for (const c of [
+    [W('①'), W('상태가'), W('변한다')], [W('②'), W('색이'), W('변한다')], [W('③'), W('무게가'), W('준다')],
+    [W('④'), W('냄새가'), W('난다')], [W('⑤'), W('소리가'), W('난다')],
+  ]) { drawLine(p1, c, R + 6, ry, fonts); ry -= LEAD; }
+
+  // 쪽번호(가운데 아래) — 본문에 섞여 들어오면 안 되는 것
+  drawLine(p1, [W('1')], 295, 30, fonts);
+
+  // ================= 2페이지: 표 기반 OX 학습지(자동 인식이 통하지 않는 양식) =================
+  const p2 = doc.addPage([595, 842]);
+  drawLine(p2, [W('OX'), W('퀴즈'), W('학습지')], 50, 790, fonts);
+
+  // 왼쪽: 번호 | 문장 | 답칸 표 — 가로 괘선이 문항 경계처럼 보이는 게 오인의 원인이었다
+  let ty = 750;
+  const rows = [
+    ['1', '지구는 둥글다'], ['2', '물은 100도에서 끓는다'], ['3', '해는 서쪽에서 뜬다'],
+    ['4', '식물은 광합성을 한다'], ['5', '소금은 물에 녹는다'], ['6', '달은 스스로 빛난다'],
+  ];
+  for (const [n, s] of rows) {
+    p2.drawLine({ start: { x: 45, y: ty + 15 }, end: { x: 290, y: ty + 15 }, thickness: 0.8, color: rgb(0, 0, 0) });
+    drawLine(p2, [W(n)], 52, ty, fonts);
+    drawLine(p2, s.split(' ').map((w) => W(w)), 75, ty, fonts);
+    p2.drawLine({ start: { x: 250, y: ty + 15 }, end: { x: 250, y: ty - 8 }, thickness: 0.8, color: rgb(0, 0, 0) });
+    ty -= 30;
+  }
+  p2.drawLine({ start: { x: 45, y: ty + 15 }, end: { x: 290, y: ty + 15 }, thickness: 0.8, color: rgb(0, 0, 0) });
+
+  // 오른쪽: 번호 없는 문장 목록 — 자동 인식이 통째로 '빈 영역' 처리하던 자리
+  let ry2 = 750;
+  for (const s of [
+    '고래는 물고기가 아니다', '식초는 산성이다', '공기는 무게가 있다',
+    '얼음은 물보다 가볍다', '소리는 진공에서 전달된다', '자석은 철을 끌어당긴다',
+  ]) {
+    drawLine(p2, s.split(' ').map((w) => W(w)), 320, ry2, fonts);
+    ry2 -= 30;
+  }
+
+  fs.mkdirSync(path.dirname(OUT), { recursive: true });
+  fs.writeFileSync(OUT, await doc.save());
+  console.log('✅ 픽스처 생성:', OUT);
+})();
