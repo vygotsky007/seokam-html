@@ -373,6 +373,26 @@ async function drag(page, box, x0, y0, x1, y1) {   // 페이지 px 좌표로 드
   ok('[선택 문항 이미지로] 일괄 전환이 동작한다', bulk[0] === true && bulk[1] === true, JSON.stringify(bulk));
   await page.evaluate(() => { window.qHtml['35'].useImage = false; renderHtmlEditor(); });   // 대조군 복원
 
+  // --- [어절 복원] 양방향: 촘촘한 조판(붙음)과 흩어진 조판(과잉 공백) 둘 다 ---
+  ok('촘촘한 조판(어절 간격 = 글자폭의 26%)에서도 어절이 갈라진다',
+    /다음 중 약수가 가장 많은 수를 찾아 써 보세요/.test(P('57').stem || ''), 'stem=' + P('57').stem);
+  ok('흩어진 조판(글자 단위)에서는 어절이 붙는다', /것입니까/.test(P('16').stem || '') && !/것 입 니 까/.test(P('16').stem || ''));
+
+  // --- [실물에서 놓쳤던 패턴들] 회귀 고정 ---
+  const pat = await page.evaluate(() => ({
+    interactive: window.INTERACTIVE_RE.test('관계있는 것끼리 이어 보세요.'),
+    interactive2: window.INTERACTIVE_RE.test('알맞은 것끼리 짝지어 보세요.'),
+    essay: window.ESSAY_RE.test('풀이 과정을 쓰고 답을 구하세요.'),
+    labels: window.labeledBlanks('하나의 식으로 나타내고 답을 구하세요. 식 ( ) 답 ( )원'),
+    passageMarker: window.PASSAGE_RE.test('보기'),
+    passageNotStem: window.PASSAGE_RE.test('보기와 같이 계산 순서를 나타내고, 계산해 보세요.'),
+  }));
+  ok('선긋기 감지: "이어 보세요"·"짝지어 보세요" 를 잡는다', pat.interactive && pat.interactive2, JSON.stringify(pat));
+  ok('서술형 감지: "풀이 과정을 쓰고" 를 잡는다', pat.essay);
+  ok('복수 답란: "식 ( ) 답 ( )원" → 라벨 [식, 답]', pat.labels.join(',') === '식,답', JSON.stringify(pat.labels));
+  ok('보기 표시줄("보기")은 지문으로 본다', pat.passageMarker);
+  ok('"보기와 같이…" 로 시작하는 발문은 지문 표시줄이 아니다(발문을 삼키면 안 된다)', !pat.passageNotStem);
+
   // --- [실물 지목 3유형] 마커-온리 / 복수 답 / 기호 채우기 ---
   const meta51 = await page.evaluate(() => window.qHtml['51'] && window.qHtml['51'].meta);
   ok('51번(선지가 ①~⑤ 뿐) → 번호 버튼 유형', P('51').type === 'marker_only' && meta51 && meta51.count === 5,

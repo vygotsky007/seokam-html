@@ -262,6 +262,15 @@ const W = (t, opt) => Object.assign({ t }, opt || {});
   // 56. 단답형은 끝 괄호를 그대로 둔다(빈칸에 쓰라는 신호)
   drawLine(p6, [W('56.'), W('7과'), W('9의'), W('합을'), W('구하시오.'), W('(     )')], 320, 620, fonts);
 
+  // 57. 촘촘한 조판 — 어절 간격이 평균 글자폭의 26% 밖에 안 된다(실물 시험지가 이렇다).
+  //     절대 비율 임계로는 전부 붙어 "다음중약수가가장많은수를" 가 된다.
+  const TIGHT = 3.0;
+  drawLine(p6, [
+    W('57.', { gapAfter: TIGHT }), W('다음', { gapAfter: TIGHT }), W('중', { gapAfter: TIGHT }),
+    W('약수가', { gapAfter: TIGHT }), W('가장', { gapAfter: TIGHT }), W('많은', { gapAfter: TIGHT }),
+    W('수를', { gapAfter: TIGHT }), W('찾아', { gapAfter: TIGHT }), W('써', { gapAfter: TIGHT }), W('보세요.'),
+  ], 320, 560, fonts);
+
   fs.mkdirSync(path.dirname(OUT), { recursive: true });
   fs.writeFileSync(OUT, await doc.save());
   console.log('✅ 픽스처 생성:', OUT);
