@@ -1172,6 +1172,18 @@ function renderLivePage(activity) {
   .msglog .m .meta { font-size: 11px; color: #718096; margin-top: 3px; }
   .msglog .m.unread { background: #fffaf0; border-color: #f6ad55; }
   .msglog .m .badge2 { font-size: 11px; font-weight: 800; color: #975a16; }
+  /* 셀 클릭 → 이동 요청 팝오버 */
+  table.matrix td.cell { cursor: pointer; }
+  #pop { display: none; position: absolute; z-index: 50; background: #fff; border: 1px solid #cbd5e1;
+    border-radius: 10px; box-shadow: 0 6px 20px rgba(0,0,0,.14); padding: 12px; font-size: 13px; }
+  #pop.show { display: block; }
+  #pop .pt { font-weight: 800; margin-bottom: 8px; white-space: nowrap; }
+  #pop .pa { display: flex; gap: 6px; }
+  #pop button { padding: 7px 12px; font-size: 13px; font-weight: 800; border-radius: 8px; cursor: pointer; border: 1px solid #cbd5e1; background: #fff; }
+  #pop button.go { background: #2b6cb0; color: #fff; border-color: #2b6cb0; }
+  .gotorow { display: flex; gap: 6px; align-items: center; margin-top: 8px; }
+  .gotorow select { flex: 1; padding: 8px; font-size: 13px; border: 1px solid #cbd5e1; border-radius: 8px; }
+  .gotorow button { padding: 8px 12px; font-weight: 800; color: #fff; background: #2f855a; border: 0; border-radius: 8px; cursor: pointer; }
 </style>
 </head>
 <body>
@@ -1206,6 +1218,7 @@ function renderLivePage(activity) {
     <button class="close" id="stuClose" type="button">✕</button>
     <div id="stuBody"></div>
   </div>
+  <div id="pop"></div>
 <script>
 (function () {
   var ACTIVITY_ID = ${JSON.stringify(activity.id)};
@@ -1238,7 +1251,7 @@ function renderLivePage(activity) {
       qs.forEach(function (q) {
         var cls = hasAns(st, q.num) ? 'a' : (st.current_q === q.num ? 'c' : 'u');
         if (st.current_q === q.num && cls === 'a') cls = 'a c';
-        h += '<td class="cell ' + cls + '"></td>';
+        h += '<td class="cell ' + cls + '" data-nick="' + esc(st.nickname) + '" data-q="' + q.num + '"></td>';
       });
       h += '</tr>';
     });
@@ -1250,10 +1263,20 @@ function renderLivePage(activity) {
     h += '</tr></tfoot>';
     document.getElementById('matrix').innerHTML = h;
     document.querySelectorAll('th.qh').forEach(function (th) {
-      th.onclick = function () { pickedQ = Number(th.getAttribute('data-q')); renderDist(); };
+      var q = Number(th.getAttribute('data-q'));
+      th.onclick = function () { pickedQ = q; renderDist(); };
+      // 열 머리글 우클릭/길게 누르기 = "다 같이 N번 보세요"
+      th.oncontextmenu = function (e) { e.preventDefault(); showPop(e, null, q); return false; };
+      var timer = null;
+      th.onpointerdown = function (e) { timer = setTimeout(function () { showPop(e, null, q); }, 550); };
+      th.onpointerup = th.onpointerleave = function () { clearTimeout(timer); };
     });
     document.querySelectorAll('#matrix td.name').forEach(function (td) {
       td.onclick = function () { openStu = td.getAttribute('data-nick'); renderStu(); };
+    });
+    // 셀 클릭 = 이 학생을 이 문항으로 보내기(행 × 열 = 직관 그대로)
+    document.querySelectorAll('#matrix td.cell').forEach(function (td) {
+      td.onclick = function (e) { showPop(e, td.getAttribute('data-nick'), Number(td.getAttribute('data-q'))); };
     });
     if (openStu) renderStu();
 
@@ -1265,6 +1288,35 @@ function renderLivePage(activity) {
     document.getElementById('closeBtn').disabled = !!state.closed;
 
     if (pickedQ != null) renderDist();
+  }
+
+  // ---- 문항 이동 요청 ----
+  // nickname = null → 전체. 학생 화면은 배너로 '부탁'만 하고, 학생이 [가기] 를 눌러야 이동한다.
+  // 실제로 이동했는지는 매트릭스의 파랑 셀이 따라 움직이는 것으로 확인된다(별도 확인 UI 불필요).
+  var pop = document.getElementById('pop');
+  function showPop(e, nickname, q) {
+    pop.classList.add('show');
+    pop.style.left = Math.min(e.pageX + 8, window.innerWidth - 240) + 'px';
+    pop.style.top = (e.pageY + 8) + 'px';
+    pop.innerHTML = '<div class="pt">' + (nickname ? esc(nickname) + ' 학생을 ' : '전체를 ') + q + '번으로 보낼까요?</div>' +
+      '<div class="pa"><button type="button" class="go" id="popGo">이동 요청</button>' +
+      '<button type="button" id="popNo">취소</button></div>';
+    document.getElementById('popGo').onclick = function () { hidePop(); requestGoto(nickname ? [nickname] : null, q); };
+    document.getElementById('popNo').onclick = hidePop;
+  }
+  function hidePop() { pop.classList.remove('show'); }
+  document.addEventListener('click', function (e) {
+    if (!pop.contains(e.target) && !e.target.closest('td.cell') && !e.target.closest('th.qh')) hidePop();
+  });
+
+  function requestGoto(nicknames, q) {
+    fetch('/api/live/goto', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ activityId: ACTIVITY_ID, nicknames: nicknames, q: q }),
+    }).then(function (r) { return r.json(); }).then(function (d) {
+      if (!d.ok) throw new Error(d.error || '실패');
+      poll();
+    }).catch(function (e) { alert('이동 요청 실패: ' + e.message); });
   }
 
   // ---- 학생 패널: 상태 · 답 목록 · 개별 메시지(전체 공지와 다른 채널) ----
@@ -1299,6 +1351,11 @@ function renderLivePage(activity) {
         '<span class="v' + (v ? '' : ' none') + '">' + (v ? esc(v) : '—') + '</span></div>';
     }).join('');
 
+    h += '<div class="lbl" style="font-weight:800;font-size:13px;margin:14px 0 4px;">문항 이동 요청</div>';
+    h += '<div class="gotorow"><select id="stuGotoQ">' +
+      qs.map(function (q) { return '<option value="' + q.num + '">' + q.num + '번</option>'; }).join('') +
+      '</select><button type="button" id="stuGoto">이동 요청</button></div>';
+
     h += '<div class="lbl" style="font-weight:800;font-size:13px;margin:14px 0 4px;">개별 메시지</div>';
     h += '<div class="quick">' + QUICK.map(function (t, i) {
       return '<button type="button" data-quick="' + i + '">' + esc(t) + '</button>';
@@ -1317,6 +1374,9 @@ function renderLivePage(activity) {
       : '<div class="muted">보낸 메시지가 없어요.</div>') + '</div>';
 
     document.getElementById('stuBody').innerHTML = h;
+    document.getElementById('stuGoto').onclick = function () {
+      requestGoto([st.nickname], Number(document.getElementById('stuGotoQ').value));
+    };
     document.getElementById('stuSend').onclick = function () {
       var el = document.getElementById('stuMsg');
       sendMessage(st.nickname, el.value);
@@ -1530,6 +1590,13 @@ function renderStudentSinglePage(activity, questions) {
   #dmBanner .dmtext { font-weight: 800; }
   #dmBanner .dmact { margin-top: 8px; display: flex; gap: 6px; }
   #dmBanner button { padding: 8px 14px; font-size: 13px; font-weight: 800; border: 0; border-radius: 8px; background: #2b6cb0; color: #fff; cursor: pointer; min-height: 40px; }
+  /* 문항 이동 요청 — 초록 계열. 학생이 [가기] 를 눌러야 이동한다(강제 이동 없음) */
+  #gotoBanner { display: none; background: #f0fff4; color: #22543d; border: 2px solid #38a169; border-radius: 8px; padding: 10px 12px; margin: 8px 0; font-size: 14px; }
+  #gotoBanner .gtext { font-weight: 800; }
+  #gotoBanner .gact { margin-top: 8px; display: flex; gap: 6px; }
+  #gotoBanner button { padding: 8px 14px; font-size: 13px; font-weight: 800; border: 0; border-radius: 8px; cursor: pointer; min-height: 40px; }
+  #gotoBanner .go { background: #2f855a; color: #fff; }
+  #gotoBanner .later { background: #fff; color: #4a5568; border: 1px solid #cbd5e1; }
   #closedOverlay { display: none; position: fixed; inset: 0; background: rgba(0,0,0,.55); z-index: 60; align-items: center; justify-content: center; padding: 20px; }
   #closedOverlay.show { display: flex; }
 </style>
@@ -1542,6 +1609,7 @@ function renderStudentSinglePage(activity, questions) {
     <div id="updateBanner">🔔 선생님이 문제를 수정했어요. <button id="reloadBtn">새로고침</button></div>
     <div id="noticeBanner"></div>
     <div id="dmBanner"></div>
+    <div id="gotoBanner"></div>
     <div class="prog"><div id="progFill"></div></div>
     <div class="chips" id="chips"></div>
     <div class="counter" id="counter"></div>
@@ -2070,7 +2138,11 @@ function renderStudentSinglePage(activity, questions) {
     }).then(function (r) { return r.json(); }).then(function (d) {
       if (!d || !d.ok) return;
       showNotice((d.notices || [])[0]);
-      showDm((d.messages || [])[0]);         // 본인 앞으로 온 것만 서버가 보내 준다
+      // 본인 앞으로 온 것만 서버가 보내 준다. 그냥 메시지와 이동 요청은 배너가 따로다.
+      var mine = d.messages || [];
+      showDm(mine.filter(function (m) { return m.type !== 'goto'; })[0]);
+      var gotos = mine.filter(function (m) { return m.type === 'goto'; });
+      showGoto(gotos[gotos.length - 1]);     // 새 요청이 이전 요청을 대체한다(배너 중첩 금지)
       if (d.closed) onClosed();
     }).catch(function () {});
   }
@@ -2095,11 +2167,37 @@ function renderStudentSinglePage(activity, questions) {
     var el = document.getElementById('dmBanner');
     el.style.display = 'none';
     dmShown = null;                            // 새 메시지가 오면 다시 뜬다
+    markSeen(id);
+  }
+  function markSeen(id) {
     var nick = (document.getElementById('nick').value || '').trim();
     fetch('/api/live/message/seen', {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ activityId: ACTIVITY_ID, nickname: nick, messageId: id }),
     }).catch(function () {});
+  }
+
+  // ---- 문항 이동 요청 — '부탁'이지 강제가 아니다. 작성 중이던 답은 어떤 경우에도 건드리지 않는다. ----
+  var gotoShown = null;
+  function showGoto(m) {
+    var el = document.getElementById('gotoBanner');
+    if (!m) { if (!gotoShown) el.style.display = 'none'; return; }
+    if (gotoShown === m.id) return;
+    gotoShown = m.id;                          // 새 요청이 오면 이전 배너를 덮어쓴다(중첩 금지)
+    el.style.display = 'block';
+    el.innerHTML = '<div class="gtext">🙋 선생님이 ' + m.q + '번 문제로 이동을 요청했어요</div>' +
+      '<div class="gact"><button type="button" class="go" id="gotoGo">' + m.q + '번으로 가기</button>' +
+      '<button type="button" class="later" id="gotoLater">나중에</button></div>';
+    document.getElementById('gotoGo').onclick = function () {
+      closeGoto(m.id);
+      goQuestion(Number(m.q));                 // 답은 answers 에 그대로 남아 있다
+    };
+    document.getElementById('gotoLater').onclick = function () { closeGoto(m.id); };
+  }
+  function closeGoto(id) {
+    document.getElementById('gotoBanner').style.display = 'none';
+    gotoShown = null;
+    markSeen(id);
   }
   function showNotice(n) {
     var el = document.getElementById('noticeBanner');

@@ -53,30 +53,71 @@ router.post('/live/heartbeat', async (req, res) => {
 
 // ---- 교사 → 한 학생에게 보내는 개별 메시지 ----
 // 연결이 끊긴 학생에게 보내도 세션 행에 남는다 → 재접속하면 다음 하트비트에서 그대로 받는다.
+// type: 'text'(그냥 메시지) | 'goto'(문항 이동 요청 — q 번으로 가자고 '부탁'한다. 강제 이동은 하지 않는다)
+async function pushMessage(activityId, nickname, msg) {
+  const { data: sess, error: e1 } = await supabase
+    .from('live_sessions').select('messages')
+    .eq('activity_id', activityId).eq('nickname', nickname).single();
+  if (e1) throw new Error(e1.message);
+
+  const messages = ((sess && sess.messages) || []).concat([msg]);
+  const { error } = await supabase
+    .from('live_sessions').update({ messages })
+    .eq('activity_id', activityId).eq('nickname', nickname);
+  if (error) throw new Error(error.message);
+  return messages;
+}
+function newMessage(fields) {
+  return Object.assign({
+    id: 'm' + Date.now() + '-' + Math.floor(Math.random() * 1000),
+    type: 'text',
+    at: new Date().toISOString(),
+    seen_at: null,                        // 학생이 [확인] 누르기 전까지 교사에겐 '미확인'
+  }, fields);
+}
+
 router.post('/live/message', async (req, res) => {
   const { activityId, nickname, text } = req.body || {};
   const msg = String(text || '').trim();
   if (!activityId || !nickname || !msg) {
     return res.status(400).json({ ok: false, error: 'activityId·nickname·내용이 필요합니다.' });
   }
+  try {
+    const messages = await pushMessage(activityId, nickname, newMessage({ type: 'text', text: msg }));
+    return res.json({ ok: true, messages });
+  } catch (e) {
+    return res.status(500).json({ ok: false, error: e.message });
+  }
+});
 
-  const { data: sess, error: e1 } = await supabase
-    .from('live_sessions').select('messages')
-    .eq('activity_id', activityId).eq('nickname', nickname).single();
-  if (e1) return res.status(500).json({ ok: false, error: e1.message });
+// ---- 문항 이동 요청 ----
+// nicknames 를 주면 그 학생들에게, 없으면 이 활동의 모든 학생에게(= "다 같이 5번 보세요").
+// 학생 화면은 배너로 '부탁'만 하고, 학생이 [가기] 를 눌러야 이동한다(작성 중인 답은 어떤 경우에도 보존).
+router.post('/live/goto', async (req, res) => {
+  const { activityId, nicknames, q } = req.body || {};
+  const num = Number(q);
+  if (!activityId || !num) return res.status(400).json({ ok: false, error: 'activityId·q 가 필요합니다.' });
 
-  const messages = ((sess && sess.messages) || []).concat([{
-    id: 'm' + Date.now() + '-' + Math.floor(Math.random() * 1000),
-    text: msg,
-    at: new Date().toISOString(),
-    seen_at: null,                        // 학생이 [확인] 누르기 전까지 교사에겐 '미확인'
-  }]);
+  let targets = Array.isArray(nicknames) ? nicknames.filter(Boolean) : [];
+  if (!targets.length) {
+    const { data: sessions, error } = await supabase
+      .from('live_sessions').select('nickname').eq('activity_id', activityId);
+    if (error) return res.status(500).json({ ok: false, error: error.message });
+    targets = (sessions || []).map((s) => s.nickname).filter(Boolean);
+  }
 
-  const { error } = await supabase
-    .from('live_sessions').update({ messages })
-    .eq('activity_id', activityId).eq('nickname', nickname);
-  if (error) return res.status(500).json({ ok: false, error: error.message });
-  return res.json({ ok: true, messages });
+  let sent = 0;
+  for (const nick of targets) {
+    try {
+      await pushMessage(activityId, nick, newMessage({
+        type: 'goto', q: num, text: num + '번 문제로 이동을 요청했어요',
+      }));
+      sent++;
+    } catch (e) {
+      console.error('[live] 이동 요청 실패:', nick, e.message);
+    }
+  }
+  return res.json({ ok: true, sent: sent, q: num });
 });
 
 // ---- 학생이 메시지를 확인함 ----

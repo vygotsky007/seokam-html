@@ -793,6 +793,70 @@ async function drag(page, box, x0, y0, x1, y1) {   // 페이지 px 좌표로 드
   await back.close();
   await tp.click('#stuClose');
 
+  // --- 문항 이동 요청: 매트릭스 셀 클릭(행=학생 × 열=문항) ---
+  // 가영이 서술형(47번)에 답을 쓰는 중에 요청을 받는다 → 이동해도 쓰던 답이 남아야 한다
+  await s1.click('.chip:has-text("47")');
+  await s1.waitForSelector('#slide textarea[data-num]');
+  await s1.fill('#slide textarea[data-num]', '쓰다 만 답');
+  await s1.waitForTimeout(700);                       // 하트비트로 서버에 반영
+
+  await tp.click('#matrix td.cell[data-nick="가영"][data-q="8"]');
+  await tp.waitForSelector('#pop.show');
+  const popTxt = await tp.textContent('#pop .pt');
+  ok('셀을 누르면 "○○ 학생을 8번으로 보낼까요?" 팝오버가 뜬다', /가영 학생을 8번으로 보낼까요\?/.test(popTxt), popTxt);
+  await tp.click('#popGo');
+
+  await s1.waitForSelector('#gotoBanner', { state: 'visible', timeout: 9000 });
+  ok('요청받은 학생에게만 이동 배너가 뜬다', /8번 문제로 이동을 요청했어요/.test(await s1.textContent('#gotoBanner')));
+  ok('다른 학생(나온)에게는 이동 배너가 뜨지 않는다', !(await s2.isVisible('#gotoBanner')));
+
+  await s1.click('#gotoGo');
+  await s1.waitForFunction(() => document.querySelector('.chip.cur').textContent === '8', null, { timeout: 5000 });
+  ok('[N번으로 가기] 를 누르면 그 문항으로 이동한다', (await s1.textContent('.chip.cur')) === '8');
+  ok('이동 후 배너가 닫힌다', !(await s1.isVisible('#gotoBanner')));
+
+  await s1.click('.chip:has-text("47")');
+  await s1.waitForSelector('#slide textarea[data-num]');
+  ok('이동해도 작성 중이던 서술형 답이 보존된다', (await s1.inputValue('#slide textarea[data-num]')) === '쓰다 만 답');
+
+  // --- [나중에] 후 새 요청 → 배너는 하나만 ---
+  await tp.click('#matrix td.cell[data-nick="가영"][data-q="16"]');
+  await tp.waitForSelector('#pop.show');
+  await tp.click('#popGo');
+  await s1.waitForSelector('#gotoBanner', { state: 'visible', timeout: 9000 });
+  await s1.click('#gotoLater');
+  ok('[나중에] 를 누르면 배너가 닫히고 이동하지 않는다',
+    !(await s1.isVisible('#gotoBanner')) && (await s1.textContent('.chip.cur')) === '47');
+
+  await tp.click('#matrix td.cell[data-nick="가영"][data-q="20"]');
+  await tp.waitForSelector('#pop.show');
+  await tp.click('#popGo');
+  await s1.waitForSelector('#gotoBanner', { state: 'visible', timeout: 9000 });
+  ok('새 요청이 오면 배너는 하나만 뜬다(중첩 없음)', (await s1.locator('#gotoBanner').count()) === 1 &&
+    /20번 문제로/.test(await s1.textContent('#gotoBanner')));
+  await s1.click('#gotoLater');
+
+  // --- 전체 이동 요청(열 머리글 우클릭) — "다 같이 5번 보세요" ---
+  await tp.click('#matrix th.qh:has-text("9")', { button: 'right' });
+  await tp.waitForSelector('#pop.show');
+  ok('열 머리글 우클릭 = "전체를 N번으로" 팝오버', /전체를 9번으로/.test(await tp.textContent('#pop .pt')));
+  await tp.click('#popGo');
+  await s1.waitForFunction(() => {
+    const el = document.getElementById('gotoBanner');
+    return el.style.display === 'block' && /9번 문제로/.test(el.textContent);
+  }, null, { timeout: 9000 });
+  await s2.waitForFunction(() => {
+    const el = document.getElementById('gotoBanner');
+    return el.style.display === 'block' && /9번 문제로/.test(el.textContent);
+  }, null, { timeout: 9000 });
+  ok('전체 이동 요청은 두 학생 모두에게 배너가 뜬다', true);
+  await s1.click('#gotoGo');
+  await s1.waitForFunction(() => document.querySelector('.chip.cur').textContent === '8', null, { timeout: 5000 })
+    .catch(() => {});
+  const cur9 = await s1.evaluate(() => [...document.querySelectorAll('.chip.cur')].map((c) => c.textContent).join(','));
+  ok('전체 요청도 [가기] 로 해당 문항(묶음 8~9)으로 이동한다', /8|9/.test(cur9), 'cur=' + cur9);
+  await s2.click('#gotoLater');
+
   // --- 마감: 학생 화면 전환 + 미제출분 자동 제출 ---
   const subsBefore = state.submissions.length;
   tp.on('dialog', (d) => d.accept());
