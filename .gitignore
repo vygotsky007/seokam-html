@@ -1,2 +1,5 @@
 node_modules/
 .env
+
+# 실물 시험지(실제 학교 평가지) — 공개 저장소에 올릴지는 별도 판단
+test/fixtures/real/

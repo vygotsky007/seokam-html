@@ -6,7 +6,9 @@
   "scripts": {
     "start": "node server.js",
     "fixture": "node test/make-fixture.js",
-    "test": "node test/make-fixture.js && node test/e2e.js"
+    "test": "node test/make-fixture.js && node test/e2e.js && node test/real-regression.js",
+    "test:real": "node test/real-regression.js --table",
+    "analyze": "node test/analyze-real.js"
   },
   "engines": {
     "node": "22.x"
