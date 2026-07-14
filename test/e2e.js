@@ -629,6 +629,88 @@ async function drag(page, box, x0, y0, x1, y1) {   // 페이지 px 좌표로 드
 
   ok('대시보드에서 자바스크립트 오류가 없다', terrors.length === 0, terrors.join(' | '));
 
+  // =========================================================
+  console.log('\n[5부] 발표 모드 — 즉석 채점 + 유연 답 매칭');
+  // =========================================================
+  // 실전 상황: 정답이 ㉡ 인데 아이들은 폰에서 원문자를 못 쳐서 "ㄴ", "ㄷ" 라고 낸다.
+  state.submissions.length = 0;
+  state.questions.forEach((q) => { if (q.num === 21) q.answer = ''; });   // 정답 미입력 상태로 시작
+  // 가영 "ㄴ"(=㉡ 정답) · 나온 "ㄷ"(다른 선지 → 그냥 오답) · 다솔 식으로 답 · 라온 식에 오타(⚠ 후보)
+  ['가영', '나온', '다솔', '라온'].forEach((n, i) => {
+    state.submissions.push({
+      id: 'sub-' + (i + 1), activity_id: ACT_ID, nickname: n,
+      answers: { q21: ['ㄴ', 'ㄷ', '28-(17+6)', '28-(17+5)'][i] },
+      manual_correct: {}, auto_score: 0, created_at: '2026-07-14T0' + i + ':00:00Z',
+    });
+  });
+
+  const pp = await ctx.newPage();
+  const perrors = [];
+  pp.on('pageerror', (e) => perrors.push(String(e)));
+  await pp.goto(`http://127.0.0.1:${APP_PORT}/present/${ACT_ID}`);
+  await pp.waitForSelector('#qAnswer');
+  // 21번으로 이동
+  await pp.click('.qbtn:has-text("21")').catch(async () => {
+    await pp.evaluate(() => { const b = [...document.querySelectorAll('.qbtn')].find((x) => x.textContent.trim() === '21'); if (b) b.click(); });
+  });
+  await pp.waitForSelector('#keyInput');
+
+  ok('정답 미입력이면 판정하지 않는다', /0%/.test(await pp.textContent('#qAnswer .rate')));
+
+  // 정답 "㉡" 입력 → 즉시 채점(가림 상태에서도). 4명 중 "ㄴ" 만 정답 → 25%
+  await pp.fill('#keyInput', '㉡');
+  await pp.click('#keySave');
+  await pp.waitForFunction(() => /25%/.test(document.querySelector('#qAnswer .rate').textContent), null, { timeout: 5000 });
+  const rate = await pp.textContent('#qAnswer .rate');
+  const revealBtn = await pp.textContent('#revealBtn');
+  ok('정답 가림 상태에서도 교사 쪽 채점은 되어 있다', /가림/.test(revealBtn), revealBtn);
+  ok('정답 "㉡" → "ㄴ" 은 정답으로 채점된다(정답률 25% = 1/4)', /25%/.test(rate) && /1 \/ 4/.test(rate), rate);
+
+  const items = await pp.evaluate(() => [...document.querySelectorAll('#list .item')].map((el) => ({
+    ans: el.querySelector('.ans').textContent.trim(),
+    cls: el.className, mark: el.querySelector('.mark').textContent.trim(),
+  })));
+  const byAns = (a) => items.find((x) => x.ans === a) || {};
+  ok('"ㄴ" → ✅', /correct/.test(byAns('ㄴ').cls), JSON.stringify(byAns('ㄴ')));
+  ok('"ㄷ" → ❌', /wrong/.test(byAns('ㄷ').cls), JSON.stringify(byAns('ㄷ')));
+  ok('학생답 원문이 그대로 보인다("ㄴ" 이 "㉡" 으로 바뀌지 않는다)', !!byAns('ㄴ').ans && !items.some((x) => x.ans === '㉡'), JSON.stringify(items.map((x) => x.ans)));
+
+  ok('다른 선지를 고른 답("ㄷ")은 오타(⚠)가 아니라 그냥 오답이다',
+    (await pp.locator('#list .mark.warn').count()) === 0, 'warn=' + (await pp.locator('#list .mark.warn').count()));
+
+  // 정답 여러 개 등록 → 식으로 낸 학생도 정답(2/4 = 50%)
+  await pp.fill('#keyInput', '㉡|28-(17+6)');
+  await pp.click('#keySave');
+  await pp.waitForFunction(() => /50%/.test(document.querySelector('#qAnswer .rate').textContent), null, { timeout: 5000 });
+  const rate2 = await pp.textContent('#qAnswer .rate');
+  ok('정답 여러 개("㉡|28-(17+6)") 등록 시 어느 쪽이든 정답', /50%/.test(rate2) && /2 \/ 4/.test(rate2), rate2);
+
+  // 애매 판정(⚠): "28-(17+5)" 는 식의 오타 → 교사가 보고 판단
+  const warnCount = await pp.locator('#list .mark.warn').count();
+  ok('오타 수준 답("28-(17+5)")은 ⚠ 로 표시된다(자동 정답 처리 안 함)', warnCount === 1, 'warn=' + warnCount);
+  await pp.locator('#list .mark.warn').first().click();
+  await pp.waitForFunction(() => document.querySelectorAll('#list .mark.warn').length === 0, null, { timeout: 5000 });
+  ok('⚠ 를 눌러 수동 정답 인정이 된다(3/4 = 75%)', /75%/.test(await pp.textContent('#qAnswer .rate')));
+  const saved = state.submissions.find((s) => s.nickname === '라온');
+  ok('수동 인정이 그 학생 그 문항에 저장된다', saved && saved.manual_correct && saved.manual_correct['21'] === true,
+    JSON.stringify(saved && saved.manual_correct));
+
+  // 필터가 이 판정 기준으로 동작
+  await pp.click('.filters button[data-f="wrong"]');
+  const wrongHead = await pp.textContent('#panelHead');
+  ok('[틀린 사람] 필터가 이 판정 기준으로 동작한다', /틀린 사람 \(1명\)/.test(wrongHead), wrongHead);
+
+  // 정답표에 정답이 있는 문항은 발표 진입 시 이미 채점된 상태
+  const pp2 = await ctx.newPage();
+  await pp2.goto(`http://127.0.0.1:${APP_PORT}/present/${ACT_ID}`);
+  await pp2.waitForSelector('#qAnswer .rate');
+  await pp2.evaluate(() => { const b = [...document.querySelectorAll('.qbtn')].find((x) => x.textContent.trim() === '21'); if (b) b.click(); });
+  await pp2.waitForTimeout(300);
+  const key = await pp2.inputValue('#keyInput');
+  ok('입력한 정답이 활동에 저장돼 다시 열어도 유지된다', key === '㉡|28-(17+6)', key);
+  ok('정답표에 정답이 있으면 채점된 상태로 시작한다(수동 인정 포함 75%)', /75%/.test(await pp2.textContent('#qAnswer .rate')));
+  ok('발표 모드에서 자바스크립트 오류가 없다', perrors.length === 0, perrors.join(' | '));
+
   // ---- 정리 ----
   await browser.close();
   app.kill();

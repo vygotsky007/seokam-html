@@ -366,7 +366,7 @@ router.get('/present/:id', async (req, res) => {
 
   const { data: subs, error: sErr } = await supabase
     .from('submissions')
-    .select('id, nickname, answers, created_at')
+    .select('id, nickname, answers, manual_correct, created_at')
     .eq('activity_id', id)
     .order('created_at', { ascending: true }); // 제출 순서대로 익명 번호 부여
 
@@ -374,12 +374,18 @@ router.get('/present/:id', async (req, res) => {
     return res.status(500).json({ ok: false, error: sErr.message });
   }
 
-  // 각 제출을 grade.js 로 채점해 문항번호별 {given, correct} 매핑
+  // 각 제출을 grade.js 로 채점해 문항번호별 {given, correct} 매핑.
+  // 발표 모드는 정답을 즉석에서 바꿔 가며 채점하므로 판정은 화면에서 다시 계산한다(lib/match.js 공용).
+  // 여기서는 원문 답과 '수동 인정' 여부를 그대로 실어 보낸다.
   const students = (subs || []).map((s, i) => {
-    const { results } = grade(questions || [], s.answers || {});
+    const manual = s.manual_correct || {};
+    const { results } = grade(
+      (questions || []).map((q) => Object.assign({}, q, { manual_correct: manual[String(q.num)] === true })),
+      s.answers || {}
+    );
     const byNum = {};
     results.forEach((r) => { byNum[r.num] = { given: r.given, correct: r.correct }; });
-    return { no: i + 1, nickname: s.nickname || null, byNum };
+    return { no: i + 1, id: s.id, nickname: s.nickname || null, byNum, manual };
   });
 
   return res.json({ ok: true, activity, questions: questions || [], students });
@@ -395,6 +401,38 @@ router.delete('/activities/:id', async (req, res) => {
     return res.status(500).json({ ok: false, error: error.message });
   }
   return res.json({ ok: true });
+});
+
+// POST /api/present/answer — 발표 중 교사가 정답을 입력·수정한다(교사 정답표에 그대로 저장)
+// 다음에 다시 열어도 유지되고, 정답표에 이미 있던 정답은 발표 진입 시 그대로 채점에 쓰인다.
+router.post('/present/answer', async (req, res) => {
+  const { activityId, num, answer } = req.body || {};
+  if (!activityId || num == null) return res.status(400).json({ ok: false, error: 'activityId·num 이 필요합니다.' });
+
+  const { error } = await supabase
+    .from('questions')
+    .update({ answer: answer == null ? '' : String(answer) })
+    .eq('activity_id', activityId)
+    .eq('num', Number(num));
+  if (error) return res.status(500).json({ ok: false, error: error.message });
+  return res.json({ ok: true });
+});
+
+// POST /api/present/manual — 애매 판정(⚠)을 교사가 손으로 정답 인정/취소. 그 학생 그 문항에만 저장.
+router.post('/present/manual', async (req, res) => {
+  const { submissionId, num, correct } = req.body || {};
+  if (!submissionId || num == null) return res.status(400).json({ ok: false, error: 'submissionId·num 이 필요합니다.' });
+
+  const { data: sub, error: e1 } = await supabase
+    .from('submissions').select('manual_correct').eq('id', submissionId).single();
+  if (e1) return res.status(500).json({ ok: false, error: e1.message });
+
+  const manual = Object.assign({}, (sub && sub.manual_correct) || {});
+  if (correct) manual[String(num)] = true; else delete manual[String(num)];
+
+  const { error } = await supabase.from('submissions').update({ manual_correct: manual }).eq('id', submissionId);
+  if (error) return res.status(500).json({ ok: false, error: error.message });
+  return res.json({ ok: true, manual });
 });
 
 module.exports = router;

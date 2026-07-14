@@ -214,6 +214,13 @@ function renderPresentPage(activity, sliceByNum) {
   .item.neutral { border-left: 4px solid #64748b; }
   .mark.ok { color: #22c55e; }
   .mark.no { color: #ef4444; }
+  /* 발표 중 정답 입력 — 가림 상태에서도 교사는 넣을 수 있다(넣는 즉시 채점) */
+  .q-answer .keyrow { display: flex; gap: 6px; margin-top: 10px; }
+  .q-answer .keyrow input { flex: 1; min-width: 0; padding: 8px 10px; font-size: 14px; border: 1px solid #475569; background: #0f172a; color: #e2e8f0; border-radius: 8px; }
+  .q-answer .keyrow button { padding: 8px 12px; font-size: 13px; font-weight: 800; border: 0; background: #3b82f6; color: #fff; border-radius: 8px; cursor: pointer; }
+  /* 애매 판정(오타 의심) — 자동 정답 처리하지 않고 교사가 눌러서 인정한다 */
+  .item.near { background: #422006; }
+  .mark.warn { color: #f59e0b; border: 0; background: transparent; font-size: 18px; cursor: pointer; }
   .empty { color: #64748b; padding: 24px; text-align: center; }
 
   /* 교실 도우미 플로팅 패널 */
@@ -231,6 +238,7 @@ function renderPresentPage(activity, sliceByNum) {
   .helper-row select, .helper-row button { padding: 7px 10px; font-size: 13px; font-weight: 700; border: 1px solid #475569; background: #334155; color: #e2e8f0; border-radius: 8px; cursor: pointer; }
   .helper-row #customSpeak { background: #2563eb; border-color: #2563eb; }
 </style>
+<script src="/lib/match.js"></script>
 </head>
 <body>
   <div class="topbar">
@@ -367,7 +375,30 @@ ${body}
   }
 
   function curQ() { return state.questions[state.curIdx]; }
-  function isCorrect(stu, num) { var c = stu.byNum && stu.byNum[num]; return c ? c.correct : null; }
+  function qByNum(num) { return state.questions.filter(function (q) { return q.num === num; })[0]; }
+  function givenOf(stu, num) { var c = stu.byNum && stu.byNum[num]; return c ? String(c.given || '') : ''; }
+  function manualOk(stu, num) { return !!(stu.manual && stu.manual[String(num)]); }
+
+  // 판정은 화면에서 다시 계산한다 — 교사가 정답을 입력하는 즉시 ✅/❌ 와 정답률이 바뀌어야 하고,
+  // '정답 가림' 상태에서도 교사 쪽 채점은 이미 되어 있어야 한다(공개 타이밍을 정답률 보고 정한다).
+  // 규칙은 채점기와 같은 lib/match.js (㉡=ㄴ, 5=5개, "ㄱ,ㄷ"="ㄷ ㄱ", 정답 여러 개는 "㉡|28-(17+6)").
+  function isCorrect(stu, num) {
+    var q = qByNum(num);
+    if (!q || q.type === 'essay') return null;
+    var g = givenOf(stu, num);
+    if (!g.trim()) return null;                         // 무응답 → 판정 없음
+    if (manualOk(stu, num)) return true;                // 교사가 손으로 인정
+    if (!String(q.answer || '').trim()) return null;    // 정답 미입력 → 아직 채점 못 함
+    return window.answerMatch.isCorrect(g, q.answer);
+  }
+  // 정답은 아니지만 오타 수준(편집거리 1) — 교사 눈에 띄게만 하고 자동 정답 처리는 하지 않는다
+  function isNearMiss(stu, num) {
+    var q = qByNum(num);
+    if (!q || q.type === 'essay' || manualOk(stu, num)) return false;
+    var g = givenOf(stu, num);
+    if (!g.trim() || !String(q.answer || '').trim()) return false;
+    return window.answerMatch.isNearMiss(g, q.answer);
+  }
 
   function render() { renderParticipation(); renderNav(); renderAnswer(); renderRight(); }
 
@@ -431,14 +462,66 @@ ${body}
     if (q.type === 'essay') {
       valHtml = '<div class="val essay">— (서술형: 정답 없음)</div>';
     } else if (!state.reveal) {
+      // 가려도 '교사만 보는 입력칸'은 살아 있다 — 정답을 넣는 즉시 채점되고, 공개는 따로 결정한다
       valHtml = '<div class="val" style="letter-spacing:4px;color:#64748b">●●●</div>';
     } else {
       valHtml = '<div class="val">' + escapeHtml(q.answer || '(정답 미입력)') + '</div>';
     }
 
+    var keyHtml = q.type === 'essay' ? '' :
+      '<div class="keyrow">' +
+      '<input id="keyInput" type="text" placeholder="정답 입력 (여러 개면 ㉡|28-(17+6))" value="' + escapeHtml(q.answer || '') + '" autocomplete="off" />' +
+      '<button id="keySave" type="button">저장</button>' +
+      '</div>';
+
     el.innerHTML =
       '<div><span class="qnum">' + q.num + '번 문항</span><span class="qtype">' + typeLabel + '</span></div>' +
-      '<div class="lbl">정답</div>' + valHtml + rateHtml;
+      '<div class="lbl">정답</div>' + valHtml + keyHtml + rateHtml;
+
+    var inp = document.getElementById('keyInput');
+    if (inp) {
+      var save = function () { saveAnswerKey(q.num, inp.value); };
+      document.getElementById('keySave').onclick = save;
+      inp.addEventListener('keydown', function (e) { if (e.key === 'Enter') save(); });
+      // 타이핑하는 동안에도 바로 채점해 보여준다(저장은 [저장]/Enter 에서)
+      inp.addEventListener('input', function () { q.answer = inp.value; renderRate(); renderRight(); });
+    }
+  }
+  // 정답률만 다시 그린다(입력칸 포커스를 잃지 않게 renderAnswer 전체를 다시 그리지 않는다)
+  function renderRate() {
+    var q = curQ(); if (!q) return;
+    var el = document.querySelector('#qAnswer .rate');
+    if (!el) return;
+    var total = 0, correct = 0;
+    state.students.forEach(function (s) {
+      var c = isCorrect(s, q.num);
+      if (c === null) return;
+      total++; if (c === true) correct++;
+    });
+    el.innerHTML = q.type === 'essay'
+      ? '서술형 — 정답률 없음 (제출 ' + countAnswered(q.num) + '명)'
+      : '정답률 <b>' + (total ? Math.round(correct / total * 100) : 0) + '%</b> (' + correct + ' / ' + total + ')';
+  }
+  function saveAnswerKey(num, answer) {
+    fetch('/api/present/answer', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ activityId: ACTIVITY_ID, num: num, answer: answer }),
+    }).then(function (r) { return r.json(); }).then(function (d) {
+      if (!d.ok) throw new Error(d.error || '저장 실패');
+      var q = qByNum(num); if (q) q.answer = answer;      // 다음에 열어도 유지된다
+      render();
+    }).catch(function (e) { alert('정답 저장 실패: ' + e.message); });
+  }
+  // 애매 판정을 교사가 손으로 인정 — 그 학생 그 문항에만 저장된다
+  function acceptManual(stu, num) {
+    fetch('/api/present/manual', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ submissionId: stu.id, num: num, correct: true }),
+    }).then(function (r) { return r.json(); }).then(function (d) {
+      if (!d.ok) throw new Error(d.error || '실패');
+      stu.manual = d.manual || {};
+      render();
+    }).catch(function (e) { alert('정답 인정 실패: ' + e.message); });
   }
 
   function countAnswered(num) {
@@ -469,18 +552,25 @@ ${body}
     if (!rows.length) { list.innerHTML = '<div class="empty">해당하는 제출이 없습니다.</div>'; return; }
 
     var html = '';
-    rows.forEach(function (s) {
-      var cell = s.byNum && s.byNum[q.num];
-      var given = cell ? (cell.given || '') : '';
-      var c = cell ? cell.correct : null;
+    rows.forEach(function (s, i) {
+      var given = givenOf(s, q.num);
+      var c = isCorrect(s, q.num);
+      var near = isNearMiss(s, q.num);
       var cls = c === true ? 'correct' : c === false ? 'wrong' : 'neutral';
-      var mark = c === true ? '<span class="mark ok">✔</span>' : c === false ? '<span class="mark no">✘</span>' : '<span class="mark">·</span>';
-      html += '<div class="item ' + cls + '">' +
+      // 학생이 뭐라고 썼는지가 정보다 — 원문을 그대로 보여준다("ㄴ" 을 "㉡" 으로 바꿔 보이면 안 된다)
+      var mark = c === true
+        ? '<span class="mark ok">' + (manualOk(s, q.num) ? '✅손' : '✔') + '</span>'
+        : near ? '<button class="mark warn" data-accept="' + i + '" title="오타 같아요 — 눌러서 정답 인정">⚠</button>'
+          : c === false ? '<span class="mark no">✘</span>' : '<span class="mark">·</span>';
+      html += '<div class="item ' + cls + (near ? ' near' : '') + '">' +
         '<div class="no">' + s.no + '번</div>' +
         '<div class="ans">' + (given ? escapeHtml(given) : '<i style="color:#64748b">무응답</i>') + '</div>' +
         mark + '</div>';
     });
     list.innerHTML = html;
+    list.querySelectorAll('button[data-accept]').forEach(function (b) {
+      b.onclick = function () { acceptManual(rows[Number(b.getAttribute('data-accept'))], q.num); };
+    });
   }
 
   function labelOf(f) { return f === 'correct' ? '맞은 사람' : f === 'wrong' ? '틀린 사람' : '전체'; }

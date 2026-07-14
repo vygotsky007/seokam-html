@@ -1,18 +1,7 @@
 // 자동채점 유틸 — choice/short 는 정답 대조, essay 는 채점 제외
-// 비교는 관대하게: 공백·괄호·마침표·쉼표 제거, 소문자화, 원문자(①②③④⑤)→숫자 정규화
-
-function normalize(v) {
-  if (v == null) return '';
-  let s = String(v);
-  // 원문자 동그라미 숫자 → 일반 숫자 (①=1 ...)
-  const circled = { '①': '1', '②': '2', '③': '3', '④': '4', '⑤': '5',
-                    '⑥': '6', '⑦': '7', '⑧': '8', '⑨': '9', '⑩': '10' };
-  s = s.replace(/[①②③④⑤⑥⑦⑧⑨⑩]/g, (m) => circled[m]);
-  s = s.toLowerCase();
-  // 공백·괄호·마침표·쉼표·기타 흔한 기호 제거
-  s = s.replace(/[\s().,·、。！!?？'"“”‘’\-_/\\]/g, '');
-  return s;
-}
+// 정답 대조 규칙은 lib/match.js 한 곳에 모아 두고, 발표 모드·결과 화면도 같은 것을 쓴다
+// (㉡=ㄴ, ①=1=(1), "5"="5개", "ㄱ,ㄷ"="ㄷ ㄱ", 정답 여러 개는 "㉡|28-(17+6)").
+const { normalize, isCorrect } = require('./lib/match');
 
 // questions: [{ num, type, answer, graded }], answers: { q1:'...', q2:'...' } 또는 { '1':'...' }
 // 채점 제외 규칙: 서술형(essay) / graded===false / 정답(answer) 미입력 → correct=null, gradable 에서 제외
@@ -42,7 +31,9 @@ function grade(questions, answers) {
     }
 
     gradable += 1;
-    const correct = normalize(given) !== '' && normalize(given) === normalize(q.answer);
+    // 교사가 발표 모드에서 손으로 인정한 답은 그대로 정답으로 친다
+    const manual = q.manual_correct === true;
+    const correct = manual || isCorrect(given, q.answer);
     if (correct) auto_score += 1;
     results.push({ num, type: q.type, given, expected: q.answer ?? '', correct, excluded: false });
   }
