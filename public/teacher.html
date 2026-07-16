@@ -181,6 +181,9 @@
   .drawhint { padding: 8px 12px; background: #ebf8ff; border: 1px solid #90cdf4; border-radius: 8px; }
   .lowconf { padding: 10px 12px; background: #fffaf0; border: 1px solid #f6ad55; border-radius: 8px; }
   .lowconf button { margin-left: 8px; }
+  .lowconf.imagemode { background: #ebf8ff; border-color: #63b3ed; color: #2a4365; }
+  .slice-page.cover { outline: 2px dashed #a0aec0; }
+  .slice-page .cover-badge { position: absolute; top: 8px; left: 8px; background: rgba(45,55,72,.85); color: #fff; font-size: 12px; font-weight: 700; padding: 4px 8px; border-radius: 6px; z-index: 3; }
   #sliceDrawBtn.on, #sliceBlankBtn.on { background: #2b6cb0; color: #fff; border-color: #2b6cb0; }
   .qprev ol.choices { list-style: none; padding: 0; margin: 8px 0 0; }
   .qprev ol.choices li { padding: 5px 8px; border: 1px solid var(--line); border-radius: 6px; margin-bottom: 5px; background: #fff; }
@@ -770,14 +773,23 @@ function runSlicing() {
     }
     return chain;
   }).then(function () {
-    resolveNumbering(pages);   // 읽기 순서(페이지→단→y)로 영역 생성 + 같은 단 안에서만 역행 판정
+    computeFurniture(pages);   // 머리글·꼬리말(주최/저작 문구, 여러 페이지 반복) 확정 → 크롭·텍스트에서 제외
+    dropRunningHeaders(pages); // 모든 페이지 상단에 반복되는 장식 숫자(양식 "1" 등)를 문항 번호에서 제외
+    // 표지/간지: 텍스트 아이템이 거의 없는(그림 위주) 페이지 → 문항 0개 + '건너뜀'. 번호 매기기 전에 확정한다
+    // (그래야 표지의 양식 숫자 "1" 이 1번 문항으로 새지 않는다). 실물: 표지 1~4개, 본문 페이지는 11개 이상.
+    pages.forEach(function (pg) { pg.isCover = (pg.items || []).length <= 4; });
+    resolveNumbering(pages);   // 읽기 순서(페이지→단→y)로 영역 생성 + 같은 단 안에서만 역행 판정(표지는 건너뜀)
+    // 조판 인코딩 깨짐 → 문서 단위 이미지 모드(영역은 정상, HTML 변환만 전 문항 이미지 폴백)
+    var _tlr = textLayerReport(pages);
+    // 이미지 모드에선 본문 숫자행이 번호로 오인되므로 ① 강한 앵커 열만 남기고 ② 전역 오름차순 사슬만 문항으로 남긴다
+    if (_tlr.broken) { filterToAnchorColumns(pages); enforceGlobalNumbering(pages); }
     pages.forEach(function (pg, i) {
       console.info('[slice v5] page', i + 1, pg.cols.length + '단',
         'cols=', pg.cols.map(function (c) { return Math.round(c.x0 / pg.W * 100) + '~' + Math.round(c.x1 / pg.W * 100) + '%'; }),
         'starts=', pg.slices.map(function (s) { return s.col + ':' + s.num; }),
         'suspects=', pg.suspects.map(function (s) { return s.num + '(' + s.reason + ')'; }));
     });
-    sliceState = { pages: pages };
+    sliceState = { pages: pages, textLayer: _tlr, imageMode: _tlr.broken };
     sliceSel = [];
     clearUndo();
     var total = pages.reduce(function (a, pg) { return a + pg.slices.length; }, 0);
@@ -785,11 +797,14 @@ function runSlicing() {
     var colInfo = pages.map(function (pg) { return pg.cols.length + '단'; }).join(' · ');
     // 인쇄 번호를 그대로 쓰되, 읽기 순서와 어긋나면 교사에게 알려 라벨 클릭으로 고치게 한다(자동 재번호 금지)
     var bad = outOfOrderNums(pages);
+    var coverCnt = pages.filter(function (pg) { return pg.isCover; }).length;
     status.textContent = total === 0
       ? '⚠ 문항 번호를 자동으로 못 찾았어요. 각 페이지 이미지를 더블클릭해 경계를 직접 추가하세요. [단 판정: ' + colInfo + ']'
       : '✅ ' + total + '개 문항 인식 · 단 판정: ' + colInfo + ' · 박스 조정 후 [이대로 저장]'
+        + (coverCnt ? ' · 표지/간지 ' + coverCnt + '쪽 건너뜀' : '')
+        + (_tlr.broken ? ' · 🖼 이미지 모드(조판 인코딩)' : '')
         + (bad.length ? ' ⚠ 인쇄 번호가 읽기 순서와 어긋남: ' + bad.join(', ') + '번 — 라벨을 클릭해 수정하세요.' : '');
-    renderDropSummary(pages);   // 조용히 제외한 쪽번호는 상단 한 줄 요약으로만
+    renderDropSummary(pages);   // 조용히 제외한 쪽번호·머리글/꼬리말은 상단 한 줄 요약으로만
     renderLowConfidence(pages); // 자동 인식이 통하지 않는 양식(표·비정형)이면 직접 그리기를 권한다
     renderSliceEditor();
     var card = document.getElementById('sliceCard');
@@ -821,9 +836,20 @@ function detectSlicesForPage(items, W, H, forcedCols) {
     //    본문 문항 번호는 단의 좌측 기준선에 붙어 있어(중앙 아님) 여기 절대 안 걸린다.
     //    ※ 기준선 계산보다 먼저 해야 한다 — 가운데 찍힌 쪽번호가 '번호줄 최좌단'을 왼쪽으로 끌어내리면
     //      정작 진짜 문항 번호가 '들여쓴 숫자'로 오판돼 통째로 사라진다.
+    var medLineH = medianOf(lines.map(function (l) { return l.h; })) || medH;
     var numLines = [];
     lines.forEach(function (l, li) {
       var num = matchQNum(l.text);
+      // 크기 이상치 신호: 장식 번호는 본문보다 큰 글자로 좌측에 찍힌다. matchQNum 이 놓쳐도(뒤에
+      // 깨진 조판 토큰이 붙어 형식이 어긋난 경우) '본문보다 큰 글자 + 앞자리 1~2숫자 + 뒤에 한글 없음'
+      // 이면 번호로 받아들인다. 뒤에 한글이 오는 진짜 발문("3 다음 …")은 여기서 걸러진다.
+      if (num == null && l.h > medLineH * 1.3) {
+        var lead = l.text.match(/^\s*(\d{1,2})(?![\d.])/);
+        if (lead && !/[가-힣]/.test(l.text.replace(/^\s*\d{1,2}/, ''))) {
+          var bn = parseInt(lead[1], 10);
+          if (bn >= 1 && bn <= 99) num = bn;
+        }
+      }
       if (num != null) numLines.push({ l: l, li: li, num: num });
     });
     if (!numLines.length) return;
@@ -917,6 +943,45 @@ function repairColumnsByNumbers(items, cols, W, H, medH) {
   return cols;
 }
 
+// ================= 머리글·꼬리말(furniture) 제외 =================
+// "주최 : KMA 한국수학학력평가 연구원 …" 같은 꼬리말이 단의 마지막 문항 조각에 딸려 들어간다.
+// 쪽번호(고립 숫자)만 걸러서는 못 잡는다 — 문장이기 때문이다.
+// 두 신호로 판정한다: ① 발행처·저작권 문구 패턴 ② 여러 페이지의 같은 자리에서 반복되는 문구.
+var FURNITURE_RE = /(주최|주관|후원|저작권|무단\s*복제|무단\s*전재|연구원|평가원|학력평가|올림피아드|ⓒ|©|Copyright|All\s*rights)/i;
+var BAND_TOP = 0.14, BAND_BOT = 0.86;      // 머리글/꼬리말이 있을 수 있는 띠(4% 로는 못 잡는다 — 실물은 10.6% / 93.2%)
+
+function computeFurniture(pages) {
+  var seen = {};                            // 정규화한 문구 → 나온 페이지 수
+  var perPage = pages.map(function (pg) {
+    var lines = groupLinesX(pg.items || []).filter(function (l) {
+      return l.y < pg.H * BAND_TOP || l.y > pg.H * BAND_BOT;
+    });
+    lines.forEach(function (l) {
+      var k = (l.text || '').replace(/[\s\d]/g, '');
+      if (k.length >= 4) seen[k] = (seen[k] || 0) + 1;
+    });
+    return lines;
+  });
+
+  pages.forEach(function (pg, pi) {
+    var furn = perPage[pi].filter(function (l) {
+      var k = (l.text || '').replace(/[\s\d]/g, '');
+      return FURNITURE_RE.test(l.text || '') || (k.length >= 4 && seen[k] >= 2);
+    });
+    pg.furniture = furn;
+    // 크롭·영역이 침범하지 않을 본문 범위
+    var tops = furn.filter(function (l) { return l.y < pg.H * BAND_TOP; }).map(function (l) { return l.y; });
+    var bots = furn.filter(function (l) { return l.y > pg.H * BAND_BOT; }).map(function (l) { return l.y - l.h; });
+    pg.bodyTop = tops.length ? Math.max.apply(null, tops) + 2 : 0;
+    pg.bodyBottom = bots.length ? Math.min.apply(null, bots) - 2 : pg.H;
+  });
+  return pages;
+}
+// 이 줄이 머리글·꼬리말인가(텍스트 추출에서 제외)
+function isFurnitureLine(pg, l) {
+  return (pg.furniture || []).some(function (f) { return Math.abs(f.y - l.y) < 2 && f.text === l.text; });
+}
+
 // ================= 단 검증 =================
 // 과분할이 미분할보다 훨씬 나쁘다 — 미분할은 문항이 묶여 나올 뿐이지만,
 // 과분할은 문항이 세로로 찢어지고(좌우 반쪽이 딴 박스로) 번호까지 뒤섞인다.
@@ -989,10 +1054,23 @@ function ascendingByY(nums) {
 // 줄(또는 텍스트 항목) 앞머리의 문항 번호("1" "1." "1)") → 번호, 아니면 null
 // ※ 번호가 본문과 다른 텍스트 런으로 찍히는 PDF 가 흔해 "1." "1)" 단독도 받는다.
 function matchQNum(text) {
-  var m = text.match(/^\s*(\d{1,2})\s*[.)]\s*\S/) || text.match(/^\s*(\d{1,2})\s+\S/) || text.match(/^\s*(\d{1,3})\s*[.)]?\s*$/);
+  var s = String(text || '');
+  // 0-패딩 장식 번호("01".."09") + 조판 인코딩에서 번호가 분수 토큰에 바로 붙은 경우("09;4#;" "30;3!3&;").
+  // 앞자리 0 도, '숫자 뒤에 곧바로 붙는 세미콜론'도 본문 값에는 나오지 않는 강한 문항번호 신호다.
+  // (실물 KMA 모의: 09·18·30 번이 분수에 붙어 통째로 탈락하던 자리)
+  var deco = s.match(/^\s*(0\d|\d{1,2}(?=;))/);
+  if (deco) { var dn = parseInt(deco[1], 10); if (dn >= 1 && dn <= 99) return dn; }
+  // "1." 뒤에 숫자가 오면 그건 번호가 아니라 소수점이다("1.5") → (?!\d) 로 막는다
+  var m = s.match(/^\s*(\d{1,2})\s*[.)](?!\d)\s*\S/) ||
+    s.match(/^\s*(\d{1,2})\s+\S/) ||
+    s.match(/^\s*(\d{1,3})\s*[.)]?\s*$/);
   if (!m) return null;
   var num = parseInt(m[1], 10);
   return (num >= 1 && num <= 99) ? num : null;
+}
+// 번호 형식이 '정식'인가 — "1." "1)" 처럼 구두점이 붙은 것. 표 안의 맨숫자("1")와 구별하는 신호다.
+function isFormalQNum(text) {
+  return /^\s*\d{1,2}\s*[.)](?!\d)/.test(text || '');
 }
 
 function medianOf(arr) {
@@ -1094,6 +1172,65 @@ function leftMarginOf(lines) {
   return xs[Math.floor(xs.length * 0.15)];
 }
 
+// 페이지마다 거의 같은 자리(상단)에 같은 값이 반복되는 고립 숫자 = 머리글 장식(양식 번호·로고 숫자).
+// 문항 번호가 아니다. (KMA 모의 조판본은 모든 페이지 최상단에 "1" 이 찍혀 표지가 1번 문항이 되고,
+//  그 "1" 이 각 페이지 단 맨 위에 끼어 번호가 4,5,6,1,2 처럼 뒤섞였다.)
+// num·x·y 클러스터로 판정해 '진짜 1번(다른 y)' 은 건드리지 않는다.
+function dropRunningHeaders(pages) {
+  var pool = [];
+  pages.forEach(function (pg, pi) {
+    (pg.cands || []).forEach(function (c) {
+      if (c.drop) return;
+      if (c.y > pg.H * 0.14) return;              // 상단 밴드만 후보
+      pool.push({ pi: pi, c: c, num: c.num, rx: c.x / pg.W, ry: c.y / pg.H });
+    });
+  });
+  var thr = Math.max(3, Math.round(pages.length * 0.4));
+  pool.forEach(function (a) {
+    if (a.c.drop) return;
+    var cluster = pool.filter(function (b) {
+      return b.num === a.num && Math.abs(b.rx - a.rx) < 0.06 && Math.abs(b.ry - a.ry) < 0.04;
+    });
+    var hitPages = {};
+    cluster.forEach(function (b) { hitPages[b.pi] = 1; });
+    if (Object.keys(hitPages).length >= thr) {
+      cluster.forEach(function (b) { b.c.drop = true; b.c.silent = true; b.c.reason = 'header'; });
+    }
+  });
+  return pages;
+}
+
+// ================= 텍스트 레이어 신뢰도(조판 인코딩 깨짐 감지) =================
+// 출판 조판 PDF 는 분수·수식을 커스텀 인코딩으로 찍어 텍스트 레이어가 ";4!;" 같은 쓰레기가 된다.
+// 이때 좌표·번호로 영역은 정상 나누되, HTML 변환은 전 문항을 원본 이미지로 폴백해야 한다.
+// 실측 임계(정상 2종: 세미콜론비율 0·한글비율 0.47~0.56 / 깨진본: 세미콜론 0.135·한글 0.000).
+var TL_SPECIAL_RE = /[¶ª∞£¢§¤¥•]/;
+function textLayerReport(pages) {
+  var items = 0, semi = 0, special = 0, chars = 0, hangul = 0;
+  pages.forEach(function (pg) {
+    (pg.items || []).forEach(function (it) {
+      var s = (it.str || '');
+      if (!s.trim()) return;
+      items++;
+      if (s.indexOf(';') >= 0) semi++;
+      if (TL_SPECIAL_RE.test(s)) special++;
+      for (var i = 0; i < s.length; i++) {
+        var ch = s.charAt(i);
+        chars++;
+        if (ch >= '가' && ch <= '힣') hangul++;
+      }
+    });
+  });
+  var semiRatio = items ? semi / items : 0;
+  var specialRatio = items ? special / items : 0;
+  var hangulRatio = chars ? hangul / chars : 0;
+  var broken = items >= 20 && (semiRatio >= 0.06 || (hangulRatio < 0.05 && specialRatio >= 0.02));
+  return {
+    items: items, semiRatio: +semiRatio.toFixed(3), specialRatio: +specialRatio.toFixed(3),
+    hangulRatio: +hangulRatio.toFixed(3), broken: broken
+  };
+}
+
 // 인쇄된 번호를 그대로 문항 번호로 쓰고, 영역은 읽기 순서(페이지 → 단 → y)로 만든다.
 // 역행(번호 되돌아감) 판정은 '같은 단 안에서만' — 단이 바뀌면 y 는 다시 위로 올라가는 게 정상이라
 // 단을 무시하고 y 만 보면 '왼단 5 → 오른단 6' 같은 정상 진행이 역행으로 오판된다.
@@ -1101,6 +1238,7 @@ function leftMarginOf(lines) {
 function resolveNumbering(pages) {
   pages.forEach(function (pg) {
     pg.slices = []; pg.suspects = []; pg.dropped = [];
+    if (pg.isCover) return;                 // 표지/간지는 문항 0개 — 양식 숫자가 문항으로 새지 않게 건너뛴다
     var byCol = {};
     (pg.cands || []).forEach(function (c) {
       // 확정 쪽번호는 화면에 표시하지 않고 조용히 제외(상단 요약에만 개수로 집계)
@@ -1117,6 +1255,57 @@ function resolveNumbering(pages) {
       });
     });
     pg.slices.sort(function (a, b) { return a.col - b.col || a.y - b.y; }); // 읽기 순서
+  });
+  return pages;
+}
+
+// 이미지 모드 앵커 열 필터 — 진짜 문항 번호는 열 좌측 기준선에 정렬돼 한 x 에 강하게 모인다.
+// 본문 숫자행(분수·선지)은 들여쓴 위치라 산발적인 약한 앵커가 된다. 강한 앵커 근처만 남긴다.
+// (실물 KMA 모의: 진짜 번호 rx≈0.10 에 27개, 노이즈는 rx0.38~0.48 에 1~2개씩 흩어짐.)
+// 진짜 2단 문서면 좌·우 두 열 모두 강한 앵커라 둘 다 살아남는다.
+function filterToAnchorColumns(pages) {
+  var xs = [];
+  pages.forEach(function (pg) {
+    if (pg.isCover) return;
+    pg.slices.forEach(function (s) { xs.push({ pg: pg, s: s, rx: (s.x || 0) / pg.W }); });
+  });
+  if (xs.length < 5) return pages;
+  var bins = {};
+  xs.forEach(function (o) { var b = Math.round(o.rx / 0.04); bins[b] = (bins[b] || 0) + 1; });
+  var maxCount = Math.max.apply(null, Object.keys(bins).map(function (k) { return bins[k]; }));
+  var strong = {};
+  Object.keys(bins).forEach(function (k) { if (bins[k] >= Math.max(3, maxCount * 0.4)) strong[+k] = true; });
+  xs.forEach(function (o) {
+    var b = Math.round(o.rx / 0.04);
+    if (strong[b] || strong[b - 1] || strong[b + 1]) return;   // 강한 앵커 근처 → 진짜 번호
+    o.pg.slices = o.pg.slices.filter(function (x) { return x !== o.s; });
+    o.pg.suspects.push({ col: o.s.col, y: o.s.y, num: o.s.num, reason: 'order' });
+  });
+  return pages;
+}
+
+// 이미지 모드 전역 번호 강제 — 텍스트 신뢰 불가라 좌표·번호만 믿는다.
+// 인쇄 번호는 ASCII 라 읽히고 문서 전체에서 1..N 로 단조 증가한다. 본문 숫자행(분수·선지 "1 2 3 4 5")이
+// 문항 번호로 오인돼 섞이므로, 읽기 순서(페이지→단→y) 전체에서 최장 오름차순 번호 사슬만 문항으로 남기고
+// 나머지는 '의심'으로 돌린다. (2단 오검출·중복 번호·되돌아가는 양식 숫자가 여기서 한꺼번에 걸러진다.)
+function enforceGlobalNumbering(pages) {
+  var seq = [];
+  pages.forEach(function (pg, pi) {
+    if (pg.isCover) return;
+    pg.slices.slice().sort(function (a, b) { return a.col - b.col || a.y - b.y; })
+      .forEach(function (s) { seq.push({ pi: pi, s: s, num: s.num }); });
+  });
+  if (seq.length < 2) return pages;
+  var keep = longestAscendingByNum(seq);
+  var demote = {};
+  seq.forEach(function (o, i) { if (!keep[i]) (demote[o.pi] = demote[o.pi] || []).push(o.s); });
+  pages.forEach(function (pg, pi) {
+    if (!demote[pi]) return;
+    var bad = demote[pi];
+    pg.slices = pg.slices.filter(function (s) {
+      if (bad.indexOf(s) >= 0) { pg.suspects.push({ col: s.col, y: s.y, num: s.num, reason: 'order' }); return false; }
+      return true;
+    });
   });
   return pages;
 }
@@ -1455,8 +1644,13 @@ function renderGridView(wrap) {
   wrap.innerHTML = '';
   sliceState.pages.forEach(function (pg, pi) {
     wrap.appendChild(colBar(pg, pi));      // 단 인식 결과 + 교사가 직접 지정하는 안전장치
-    var div = document.createElement('div'); div.className = 'slice-page' + (drawMode ? ' drawing' : '') + (pg.gutterMode ? ' gutting' : '');
+    var div = document.createElement('div'); div.className = 'slice-page' + (drawMode ? ' drawing' : '') + (pg.gutterMode ? ' gutting' : '') + (pg.isCover ? ' cover' : '');
     var img = document.createElement('img'); img.className = 'pageimg'; img.src = pg.dataUrl; div.appendChild(img);
+    if (pg.isCover) {
+      var cb = document.createElement('div'); cb.className = 'cover-badge';
+      cb.textContent = '📄 표지/간지로 보임 — 건너뜀 (문항 0개)';
+      div.appendChild(cb);
+    }
     // 직접 선 긋기: 페이지를 클릭한 자리에 거터를 놓는다(다시 클릭하면 그 선 삭제)
     if (pg.gutterMode) {
       div.addEventListener('click', function (e) {
@@ -1907,17 +2101,20 @@ function addGapBox(div, pg, col, yTop, yBottom, belowSlice) {
   div.appendChild(box);
 }
 
-// 확정 쪽번호(조용히 제외)는 상단에 개수만 — 펼치면 목록
+// 조용히 제외한 것(쪽번호 + 머리글·꼬리말)은 상단에 개수만 — 펼치면 목록
 function renderDropSummary(pages) {
   var box = document.getElementById('sliceDropInfo');
   var all = [];
   pages.forEach(function (pg, pi) {
-    (pg.dropped || []).forEach(function (d) { all.push({ pi: pi, num: d.num }); });
+    (pg.dropped || []).forEach(function (d) { all.push({ pi: pi, what: '쪽번호 “' + d.num + '”' }); });
+    (pg.furniture || []).forEach(function (f) {
+      all.push({ pi: pi, what: '머리글/꼬리말 “' + (f.text || '').slice(0, 24) + '”' });
+    });
   });
   if (!all.length) { box.style.display = 'none'; box.innerHTML = ''; return; }
   box.style.display = 'block';
-  box.innerHTML = '<details class="dropsum"><summary>🗑 쪽번호 ' + all.length + '개 제외됨</summary><div class="droplist">'
-    + all.map(function (d) { return (d.pi + 1) + '페이지 하단 “' + d.num + '”'; }).join(' · ') + '</div></details>';
+  box.innerHTML = '<details class="dropsum"><summary>🗑 쪽번호·머리글/꼬리말 ' + all.length + '개 제외됨</summary><div class="droplist">'
+    + all.map(function (d) { return (d.pi + 1) + '페이지 ' + d.what; }).join(' · ') + '</div></details>';
 }
 
 // 의심 후보(애매한 쪽번호·번호 역행) — 세로 공간을 차지하지 않는 작은 회색 점선 표시.
@@ -2088,12 +2285,29 @@ function lowConfidenceReport(pages) {
     });
   });
   var ratio = total ? pierce / total : 0;
-  return { pierce: pierce, total: total, ratio: ratio, emptyCols: emptyCols, low: total === 0 || ratio >= 0.3 || emptyCols > 0 };
+  var tlr = textLayerReport(pages);
+  var coverCnt = pages.filter(function (pg) { return pg.isCover; }).length;
+  return {
+    pierce: pierce, total: total, ratio: ratio, emptyCols: emptyCols,
+    broken: tlr.broken, textLayer: tlr, coverCount: coverCnt,
+    low: total === 0 || ratio >= 0.3 || emptyCols > 0
+  };
 }
 function renderLowConfidence(pages) {
   var box = document.getElementById('sliceLowConf');
   var rep = lowConfidenceReport(pages);
   console.info('[slice] 자동 인식 신뢰도', rep);
+  // 조판 인코딩 깨짐 → 이미지 모드 안내(직접 그리기 권유가 아니라, 전 문항 이미지 변환 예고).
+  // 영역 나누기는 좌표·번호로 정상 동작하므로 '직접 그리기' 를 권하지 않는다.
+  if (rep.broken) {
+    box.style.display = 'block';
+    box.className = 'lowconf imagemode';
+    box.innerHTML = '🖼 <b>이 문서는 이미지 모드로 처리돼요.</b> 조판 인코딩이라 텍스트를 읽을 수 없어(분수·수식이 깨져 추출됨) '
+      + '문항 영역은 번호·좌표로 정상 나누되, HTML 변환은 <b>전 문항을 원본 이미지</b>로 넣어요. '
+      + '필요하면 문항별로 [🤖 AI로 변환]을 눌러 텍스트로 바꿀 수 있어요.'
+      + (rep.total === 0 ? ' <b style="color:#c53030;">⚠ 문항 번호도 하나도 못 찾았어요 — 직접 그리기를 권해요.</b>' : '');
+    return;
+  }
   if (!rep.low) { box.style.display = 'none'; box.innerHTML = ''; return; }
   var why = [];
   if (rep.total === 0) why.push('문항 번호를 하나도 못 찾았어요');
@@ -2101,7 +2315,8 @@ function renderLowConfidence(pages) {
   if (rep.emptyCols) why.push('글이 있는데 영역이 안 잡힌 칸이 ' + rep.emptyCols + '곳이에요');
   box.style.display = 'block';
   box.className = 'lowconf';
-  box.innerHTML = '⚠ <b>이 문서는 자동 인식이 어려워요.</b> (' + why.join(' · ') + ') 표·비정형 학습지는 직접 그리는 편이 빠르고 정확해요.';
+  box.innerHTML = (rep.total === 0 ? '⛔ <b>문항 번호를 하나도 못 찾았어요.</b> ' : '⚠ <b>이 문서는 자동 인식이 어려워요.</b> ')
+    + '(' + why.join(' · ') + ') 표·비정형 학습지는 직접 그리는 편이 빠르고 정확해요.';
   var b = document.createElement('button');
   b.className = 'btn-blue btn-sm';
   b.textContent = '✏️ 처음부터 직접 그리기';
@@ -2180,11 +2395,12 @@ function sliceRect(pg, s) {
     return { x0: s.x0, x1: s.x1, y0: s.y, y1: (s.yEnd != null ? s.yEnd : pg.H) };
   }
   var next = sameColNext(pg, s);
+  var pageEnd = (pg.bodyBottom != null ? pg.bodyBottom : pg.H);   // 꼬리말 위까지만 — 주최/저작 문구가 조각에 딸려오지 않게
   return {
     x0: (s.x0 != null ? s.x0 : c.x0),
     x1: (s.x1 != null ? s.x1 : c.x1),
     y0: s.y,
-    y1: next ? next.y : (s.yEnd != null ? s.yEnd : pg.H)
+    y1: next ? next.y : (s.yEnd != null ? s.yEnd : pageEnd)
   };
 }
 // 박스가 단 경계를 벗어났는가(그림이 단 폭을 넘는 문항 → 점선 경고)
@@ -2233,6 +2449,7 @@ function cropGroupGlobal(members, acc) {
     var pg = m.pg, r = sliceRect(pg, m.s);   // 교사가 늘린 박스 좌표 그대로 크롭
     var x0 = Math.round(Math.max(0, r.x0)), x1 = Math.round(Math.min(pg.W, r.x1));
     var yTop = Math.round(Math.max(0, r.y0)), yBottom = Math.round(Math.min(pg.H, r.y1));
+    yBottom = trimBottomBlank(pg, x0, x1, yTop, yBottom);   // 영역은 그대로, 크롭만 여백 절삭
     return { canvas: pg.canvas, x0: x0, y: yTop, w: x1 - x0, h: yBottom - yTop };
   }).filter(function (r) { return r.w > 0 && r.h > 2; });
   if (!rects.length) { acc.missing.push(firstNum); return; }
@@ -2249,6 +2466,30 @@ function cropGroupGlobal(members, acc) {
   acc.parts[firstNum] = members.map(function (m) { return { pg: m.pg, rect: sliceRect(m.pg, m.s) }; });
   acc.nums[firstNum] = nums;
   acc.count++;
+}
+
+// ---- 크롭 하단 여백 절삭 ----
+// KMA 류는 문항 아래 '풀이 공간'이 크다. 영역(다음 문항 시작까지)은 그대로 두되,
+// 조각 이미지에서는 잉크 없는 아래쪽 연속 여백을 여유(60px)만 남기고 잘라낸다.
+// → 학생 화면에서 빈 공간만 스크롤하는 일이 없어진다. 영역 데이터는 건드리지 않는다.
+var TRIM_KEEP = 60;
+function trimBottomBlank(pg, x0, x1, yTop, yBottom) {
+  if (!pg.canvas || yBottom - yTop < TRIM_KEEP * 2) return yBottom;
+  var w = Math.max(1, x1 - x0);
+  var ctx = pg.canvas.getContext('2d');
+  var data;
+  try { data = ctx.getImageData(x0, yTop, w, yBottom - yTop).data; } catch (e) { return yBottom; }
+  var lastInk = -1;
+  for (var y = 0; y < yBottom - yTop; y++) {
+    var inked = false;
+    for (var x = 0; x < w; x += 3) {                      // 3픽셀마다 표본
+      var i = (y * w + x) * 4;
+      if (data[i] < 230 || data[i + 1] < 230 || data[i + 2] < 230) { inked = true; break; }
+    }
+    if (inked) lastInk = y;
+  }
+  if (lastInk < 0) return yBottom;                        // 통째로 빈 영역이면 손대지 않는다
+  return Math.min(yBottom, yTop + lastInk + TRIM_KEEP);
 }
 
 // 전체 페이지를 통틀어 그룹 단위로 1회씩 크롭(페이지 걸친 그룹도 한 번만)
@@ -2306,6 +2547,7 @@ function linesInRect(pg, rect) {
     .filter(function (l) {
       var cy = l.y - l.h / 2;
       if (cy < rect.y0 || cy > rect.y1) return false;            // 줄 중심이 박스 밖 → 이웃 문항 것
+      if (isFurnitureLine(pg, l)) return false;                  // 머리글·꼬리말(주최/저작 문구) 제거
       return !isPageNumberText(pg, l);                           // 쪽번호 잔재 제거
     })
     .map(function (l) { l.pg = pg; return l; });                 // 밑줄 잉크 검사에 원본 페이지 캔버스가 필요
@@ -3030,13 +3272,15 @@ function convertSlicesToHtml() {
       q.choices = [];
       q.type = typeOf(q.stem, q.choices);
     }
-    var reason = fallbackReason(q);
+    // 조판 인코딩 깨짐(이미지 모드): 텍스트 추출을 믿을 수 없으니 전 문항을 원본 이미지로 폴백한다.
+    var imageMode = !!(sliceState && sliceState.imageMode);
+    var reason = imageMode ? '조판 인코딩 — 텍스트 추출 불가' : fallbackReason(q);
     q.fallback_reason = reason;
     qHtml[num] = {
       parsed: q, html: questionToHtml(q), reason: reason,
       meta: q.meta || (prev && prev.meta) || null,
       // 자동 판정은 '처음 변환할 때'만 — 교사가 손으로 바꾼 선택은 존중한다
-      useImage: prev ? prev.useImage : (q.type === 'unparsed' || !!reason),
+      useImage: prev ? prev.useImage : (imageMode || q.type === 'unparsed' || !!reason),
     };
     syncTypeToTable(num, q.type);
   });
@@ -3061,6 +3305,23 @@ function renderHtmlEditor() {
   document.getElementById('htmlSummary').textContent =
     all.length + '문항 중 텍스트 ' + (all.length - asImage.length) + ' · 이미지 ' + asImage.length +
     (asImage.length ? ' (그림 중심 ' + byReason.length + ', 변환 실패 ' + failed.length + ')' : '');
+
+  // 이미지 모드 안내 배너 — 조판 인코딩이라 전 문항을 원본 이미지로 넣었음을 상단에 알린다
+  var banner = document.getElementById('htmlImageModeBanner');
+  if (!banner) {
+    banner = document.createElement('div');
+    banner.id = 'htmlImageModeBanner';
+    banner.className = 'lowconf imagemode';
+    banner.style.margin = '0 0 10px';
+    wrap.parentNode.insertBefore(banner, wrap);
+  }
+  if (sliceState && sliceState.imageMode) {
+    banner.style.display = 'block';
+    banner.innerHTML = '🖼 <b>이 문서는 이미지 모드로 처리돼요.</b> 조판 인코딩이라 텍스트 추출을 믿을 수 없어 '
+      + '전 문항을 원본 이미지로 넣었어요. 문항별 [🤖 AI로 변환] 또는 상단 [이미지 문항 전체 AI 변환]으로 텍스트화할 수 있어요.';
+  } else {
+    banner.style.display = 'none';
+  }
 
   renderHtmlTools(all);
   var nums = htmlOnlyOdd ? all.filter(function (n) { return qHtml[n].useImage || qHtml[n].reason; }) : all;
