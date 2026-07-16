@@ -8,6 +8,7 @@ const supabase = require('./db');
 const submitRouter = require('./routes/submit');
 const activitiesRouter = require('./routes/activities');
 const liveRouter = require('./routes/live');
+const aiRouter = require('./routes/ai');
 const { sanitizeHtml } = require('./lib/sanitize');
 
 const app = express();
@@ -30,6 +31,7 @@ app.get('/api/health', (req, res) => {
 app.use('/api', submitRouter);
 app.use('/api', activitiesRouter);
 app.use('/api', liveRouter);
+app.use('/api', aiRouter);   // 비전 AI 변환(이미지 폴백 문항 → 구조화 텍스트)
 
 // 교사용 실시간 교실 대시보드
 app.get('/live/:id', async (req, res) => {

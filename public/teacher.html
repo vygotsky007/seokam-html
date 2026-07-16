@@ -3288,6 +3288,11 @@ function convertSlicesToHtml() {
   var card = document.getElementById('htmlCard');
   card.style.display = 'block';
   card.scrollIntoView({ behavior: 'smooth' });
+  // AI 변환 버튼 상태(키 유무·한도) 확인 → 도구바만 갱신(카드는 다시 그리지 않는다: 편집 중 경합 방지)
+  refreshAiStatus().then(function () {
+    if (!document.getElementById('htmlTools')) return;
+    renderHtmlTools(Object.keys(qHtml).map(Number).sort(function (a, b) { return a - b; }));
+  });
 }
 
 var htmlOnlyOdd = false;      // '이상한 문항만 모아보기' 필터
@@ -3406,6 +3411,23 @@ function renderHtmlEditor() {
         note.textContent = '이 문항은 변환하지 않고 원본 조각 이미지를 그대로 씁니다.';
         right.appendChild(note);
       }
+      // 🤖 AI로 변환 — 규칙 파서가 못 푼 이미지 문항을 Claude 비전으로 텍스트화
+      var aiBox = document.createElement('div'); aiBox.style.marginTop = '6px';
+      var aiBtn = document.createElement('button');
+      aiBtn.className = 'btn-blue btn-sm';
+      aiBtn.textContent = rec.aiBusy ? '⏳ AI 변환 중…' : '🤖 AI로 변환';
+      aiBtn.disabled = rec.aiBusy || (aiStatus.checked && !aiStatus.enabled) || aiBatchRunning;
+      if (aiStatus.checked && !aiStatus.enabled) { aiBtn.textContent = '🤖 AI 변환 — API 키 설정 필요'; aiBtn.title = 'ANTHROPIC_API_KEY 환경변수 설정 필요'; }
+      aiBtn.addEventListener('click', function () {
+        aiBtn.disabled = true; aiBtn.textContent = '⏳ AI 변환 중…';
+        aiConvertOne(num, false).then(function () { renderHtmlEditor(); });
+      });
+      aiBox.appendChild(aiBtn);
+      if (rec.aiError) {
+        var ae = document.createElement('span'); ae.className = 'qwarn'; ae.style.marginLeft = '8px';
+        ae.textContent = '⚠ ' + rec.aiError; aiBox.appendChild(ae);
+      }
+      right.appendChild(aiBox);
     } else if (q.type === 'unparsed') {
       var warn = document.createElement('div'); warn.className = 'qwarn';
       warn.textContent = '⚠ 자동 변환 실패 — 원문을 그대로 두었습니다. 아래에 직접 입력하거나 [이미지로 되돌리기]를 누르세요.';
@@ -3419,6 +3441,31 @@ function renderHtmlEditor() {
       });
       right.appendChild(raw);
     } else {
+      // AI 변환 결과 — 교사가 [확인 완료] 눌러야 확정. 조용히 저장에 쓰지 않는다.
+      if (rec.aiConverted && !rec.aiConfirmed) {
+        var aiBadge = document.createElement('div'); aiBadge.className = 'qwarn fallback';
+        aiBadge.style.background = '#fffaf0'; aiBadge.style.borderColor = '#f6ad55'; aiBadge.style.color = '#7b341e';
+        aiBadge.appendChild(document.createTextNode('🤖 AI 변환 — 확인 필요' + (rec.aiCached ? ' (캐시)' : '') + '. 원본 이미지와 비교해 맞으면 확정하세요.'));
+        var okBtn = document.createElement('button'); okBtn.className = 'btn-green btn-sm'; okBtn.textContent = '확인 완료';
+        okBtn.addEventListener('click', function () { rec.aiConfirmed = true; renderHtmlEditor(); });
+        var reBtn = document.createElement('button'); reBtn.className = 'btn-outline btn-sm'; reBtn.textContent = '🤖 다시 변환';
+        reBtn.addEventListener('click', function () {
+          if (!confirm(num + '번을 다시 AI 변환할까요? (호출 1회 추가)')) return;
+          reBtn.disabled = true; reBtn.textContent = '⏳…';
+          aiConvertOne(num, true).then(function () { renderHtmlEditor(); });
+        });
+        aiBadge.appendChild(okBtn); aiBadge.appendChild(reBtn);
+        right.appendChild(aiBadge);
+        // has_figure=true → 그림은 이미지로 유지 안내 + 원본 축소본
+        if (rec.aiHasFigure && sliceImages[num]) {
+          var figNote = document.createElement('div'); figNote.className = 'muted'; figNote.style.marginTop = '4px';
+          figNote.textContent = '🖼 그림·도형이 있는 문항이에요 — 그림은 이미지로 유지하세요(아래 원본 참고).';
+          right.appendChild(figNote);
+          var fig = document.createElement('img'); fig.src = sliceImages[num];
+          fig.style.maxWidth = '220px'; fig.style.display = 'block'; fig.style.margin = '4px 0'; fig.style.border = '1px solid #e2e8f0';
+          right.appendChild(fig);
+        }
+      }
       // 다음 문항의 지문이 이 박스에 걸려 있어 잘라냈다면 조용히 넘기지 않고 알린다
       if (q.cutTrailing) {
         var cutNote = document.createElement('div'); cutNote.className = 'qwarn';
@@ -3628,7 +3675,104 @@ function renderHtmlTools(all) {
     htmlSel = {}; renderHtmlEditor();
   });
   bar.appendChild(toTxt);
+
+  // 이미지 문항 전체 AI 변환 — 규칙 파서가 못 푼 이미지 폴백 문항을 Claude 비전으로 텍스트화
+  var imgNums = all.filter(function (n) { return qHtml[n].useImage; });
+  var aiBulk = document.createElement('button');
+  aiBulk.className = 'btn-blue btn-sm'; aiBulk.id = 'aiBulkBtn';
+  aiBulk.textContent = '🤖 이미지 문항 전체 AI 변환 (' + imgNums.length + ')';
+  aiBulk.disabled = !imgNums.length || !aiStatus.enabled || aiBatchRunning;
+  if (aiStatus.checked && !aiStatus.enabled) { aiBulk.disabled = true; aiBulk.title = 'API 키 설정 필요 (ANTHROPIC_API_KEY)'; aiBulk.textContent = '🤖 AI 변환 — API 키 설정 필요'; }
+  aiBulk.addEventListener('click', function () {
+    if (!imgNums.length) return;
+    if (!confirm(imgNums.length + '개 이미지 문항을 AI로 변환할까요? (문항당 1회 호출, 남은 한도 ' + Math.max(0, aiStatus.limit - aiStatus.used) + ')')) return;
+    aiConvertBatch(imgNums);
+  });
+  bar.appendChild(aiBulk);
+
+  var prog = document.createElement('span'); prog.id = 'aiBatchProg'; prog.className = 'muted'; prog.style.marginLeft = '8px';
+  bar.appendChild(prog);
 }
+
+// ================= 비전 AI 변환(이미지 폴백 문항 → 구조화 텍스트) =================
+// 규칙 파서가 불가능한 문서(조판 인코딩 깨짐)의 대안 경로. 서버 경유로 Claude 비전 호출.
+var aiStatus = { enabled: false, checked: false, limit: 200, used: 0, message: '' };
+function refreshAiStatus() {
+  return fetch('/api/ai-status').then(function (r) { return r.json(); }).then(function (s) {
+    aiStatus = { enabled: !!s.enabled, checked: true, limit: s.limit, used: s.used, message: '' };
+    return aiStatus;
+  }).catch(function () { aiStatus = { enabled: false, checked: true, limit: 0, used: 0, message: '상태 확인 실패' }; return aiStatus; });
+}
+try { refreshAiStatus(); } catch (e) { }   // 로드 시 1회 미리 조회(카드 렌더 전에 버튼 상태 준비, 재렌더 없음)
+// parsed(JSON) → 내부 문항 구조 q (questionToHtml 이 그대로 소비)
+function aiParsedToQuestion(num, p) {
+  var typeMap = { choice: 'choice', short: 'short', essay: 'essay', ox: 'ox', order: 'order', unknown: 'short' };
+  var choices = (p.choices || []).map(function (c) { return { marker: String(c.marker || ''), text: String(c.text || '') }; });
+  var t = typeMap[p.type] || (choices.length ? 'choice' : 'short');
+  return {
+    number: num, stem: String(p.stem || ''), passage: String(p.passage || ''),
+    choices: choices, images: [], type: t, raw_text: '', fromAI: true,
+  };
+}
+// 한 문항 AI 변환. force=true 면 캐시 무시(재변환).
+function aiConvertOne(num, force) {
+  var rec = qHtml[num];
+  if (!rec) return Promise.resolve({ ok: false });
+  var img = sliceImages[num];
+  if (!img) { rec.aiError = '조각 이미지가 없어요'; return Promise.resolve({ ok: false }); }
+  rec.aiBusy = true; rec.aiError = '';
+  return fetch('/api/ai-convert', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ image: img, num: num, force: !!force }),
+  }).then(function (r) { return r.json().then(function (d) { return { status: r.status, d: d }; }); })
+    .then(function (res) {
+      rec.aiBusy = false;
+      var d = res.d || {};
+      if (!d.ok) { rec.aiError = d.message || ('오류(' + res.status + ')'); if (d.error === 'no_key') aiStatus.enabled = false; return { ok: false, error: d.error, message: rec.aiError }; }
+      if (typeof d.used === 'number') aiStatus.used = d.used;
+      var q = aiParsedToQuestion(num, d.parsed || {});
+      applyStructuredTypes(num, q);
+      rec.parsed = q;
+      var html = questionToHtml(q);
+      rec.html = window.sanitizeHtml ? window.sanitizeHtml(html) : html;   // 저장 전 sanitize 동일 적용
+      rec.reason = '';
+      rec.useImage = false;                 // 변환 결과(텍스트)를 보여준다
+      rec.aiConverted = true;
+      rec.aiConfirmed = false;              // 교사가 [확인 완료] 눌러야 확정
+      rec.aiHasFigure = !!(d.parsed && d.parsed.has_figure);
+      rec.aiCached = !!d.cached;
+      syncTypeToTable(num, q.type);
+      return { ok: true, num: num };
+    }).catch(function (err) { rec.aiBusy = false; rec.aiError = '호출 실패: ' + err.message; return { ok: false, message: rec.aiError }; });
+}
+// 일괄 변환 — 동시 2개, 진행 표시, 문항당 실패해도 계속(실패 문항은 이미지 유지)
+var aiBatchRunning = false;
+function aiConvertBatch(nums) {
+  if (aiBatchRunning) return;
+  aiBatchRunning = true;
+  var total = nums.length, done = 0, fail = 0, idx = 0;
+  var prog = document.getElementById('aiBatchProg');
+  function paint() { if (prog) prog.textContent = '⏳ AI 변환 ' + done + '/' + total + (fail ? ' (실패 ' + fail + ')' : ''); }
+  paint();
+  function next() {
+    if (idx >= nums.length) return Promise.resolve();
+    var n = nums[idx++];
+    return aiConvertOne(n, false).then(function (r) {
+      done++; if (!r.ok) fail++; paint();
+      renderHtmlEditorCardsOnly();     // 진행 중 카드만 갱신(전체 리렌더 최소화)
+      return next();
+    });
+  }
+  var workers = [];
+  for (var w = 0; w < Math.min(2, nums.length); w++) workers.push(next());
+  Promise.all(workers).then(function () {
+    aiBatchRunning = false;
+    if (prog) prog.textContent = '✅ AI 변환 완료 ' + (total - fail) + '/' + total + (fail ? ' · 실패 ' + fail + '(이미지 유지)' : '') + ' — 각 문항 [확인 완료]로 확정하세요';
+    renderHtmlEditor();
+  });
+}
+// 카드 영역만 다시 그린다(일괄 진행 중 도구바/요약은 유지)
+function renderHtmlEditorCardsOnly() { renderHtmlEditor(); }
 
 function typeLabel(t) {
   var m = {
