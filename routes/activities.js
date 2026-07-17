@@ -4,6 +4,45 @@ const router = express.Router();
 const supabase = require('../db');
 const { grade } = require('../grade');
 const { sanitizeHtml } = require('../lib/sanitize');
+const { sanitizeSheet } = require('../lib/sheet-sanitize');
+
+// ---- HTML 활동지(kind='html_sheet') ----
+// 시험지와 갈라지는 지점은 딱 둘이다: 정제기(문항용이 아니라 문서용)와 fields(문항표 대신).
+// 나머지 수명주기(목록·복제·삭제·발행·입장코드·실시간·마감)는 시험지와 똑같이 흐른다.
+const FIELD_TAGS = ['textarea', 'text', 'checkbox', 'rich'];
+const MAX_LABEL = 160;
+
+function isSheet(kind) { return kind === 'html_sheet'; }
+
+function clipLabel(s) {
+  const t = String(s == null ? '' : s).replace(/\s+/g, ' ').trim();
+  return t.length > MAX_LABEL ? t.slice(0, MAX_LABEL - 1) + '…' : t;
+}
+
+// 교사 화면이 보낸 필드 목록을 그대로 믿지 않는다.
+// 모양이 맞고, 정제를 통과한 HTML 안에 그 data-fid 가 실제로 남아 있는 것만 받는다.
+// (정제기가 지워버린 칸을 계속 들고 있으면 학생 화면에 없는 열이 결과표에 생긴다)
+function normalizeFields(fields, cleanHtml) {
+  const list = Array.isArray(fields) ? fields : [];
+  const out = [];
+  const seen = {};
+  list.forEach((f) => {
+    const id = String((f && f.id) || '').trim();
+    if (!/^f[0-9]{1,4}$/.test(id) || seen[id]) return;
+    if (String(cleanHtml).indexOf('data-fid="' + id + '"') < 0) return;   // 문서에 없는 필드는 버린다
+    seen[id] = 1;
+    const row = {
+      id: id,
+      tag: FIELD_TAGS.indexOf(f.tag) >= 0 ? f.tag : 'text',
+      label: clipLabel(f.label) || id,
+      section: clipLabel(f.section),
+      collect: f.collect === true,
+    };
+    if (Array.isArray(f.options)) row.options = f.options.slice(0, 60).map(clipLabel);
+    out.push(row);
+  });
+  return out;
+}
 
 // (C) html_body 답칸(name="q…") 개수와 채점 문항 수 불일치 경고
 function mismatchWarning(html_body, questions) {
@@ -34,9 +73,10 @@ async function genUniqueJoinCode() {
 
 // POST /api/activities
 // body = { title, html_body, questions:[{num,type,answer}], status? }
+//        | { title, html_body, kind:'html_sheet', fields:[{id,label,tag,collect}], status? }
 // status: 'draft'(임시저장) | 'open'(발행, 기본)
 router.post('/activities', async (req, res) => {
-  const { title, html_body, questions, status, view_mode } = req.body || {};
+  const { title, html_body, questions, status, view_mode, kind, fields } = req.body || {};
 
   if (!title || !html_body) {
     return res.status(400).json({ ok: false, error: 'title 과 html_body 가 필요합니다.' });
@@ -45,6 +85,27 @@ router.post('/activities', async (req, res) => {
   const st = status === 'draft' ? 'draft' : 'open';
   const vm = view_mode === 'single' ? 'single' : 'all';
   const join_code = await genUniqueJoinCode();
+
+  // HTML 활동지: 문서째 정제해서 넣는다. 문항표·view_mode 는 쓰지 않는다.
+  if (isSheet(kind)) {
+    const clean = sanitizeSheet(html_body);
+    const fs = normalizeFields(fields, clean);
+    if (!fs.length) {
+      return res.status(400).json({ ok: false, error: '수집할 응답 칸을 찾지 못했습니다. 활동지에 입력칸(textarea·input)이 있는지 확인하세요.' });
+    }
+
+    const { data: sheet, error: sErr } = await supabase
+      .from('activities')
+      .insert({ title, html_body: clean, status: st, join_code, kind: 'html_sheet', fields: fs })
+      .select('id, join_code')
+      .single();
+
+    if (sErr) {
+      console.error('[activities] 활동지 insert 실패:', sErr.message);
+      return res.status(500).json({ ok: false, error: sErr.message });
+    }
+    return res.json({ ok: true, activityId: sheet.id, join_code: sheet.join_code, status: st, kind: 'html_sheet', fields: fs });
+  }
 
   // 1) 활동 1행 insert
   const { data: act, error: actErr } = await supabase
@@ -93,12 +154,36 @@ router.post('/activities/:id/duplicate', async (req, res) => {
 
   const { data: src, error: sErr } = await supabase
     .from('activities')
-    .select('title, html_body')
+    .select('title, html_body, kind, fields')
     .eq('id', id)
     .single();
 
   if (sErr || !src) {
     return res.status(404).json({ ok: false, error: '원본 활동을 찾을 수 없습니다.' });
+  }
+
+  const join_code = await genUniqueJoinCode();
+
+  // HTML 활동지 복제 — kind·fields 를 함께 옮긴다. 빠뜨리면 kind 가 기본값 'exam' 이 되어
+  // 문항도 정답표도 없는 '빈 시험지'로 되살아난다(화면이 통째로 어긋난다).
+  if (isSheet(src.kind)) {
+    const { data: dup, error: dErr } = await supabase
+      .from('activities')
+      .insert({
+        title: (src.title || '') + ' (복제본)',
+        html_body: src.html_body,
+        status: 'draft',
+        join_code,
+        kind: 'html_sheet',
+        fields: Array.isArray(src.fields) ? src.fields : [],
+      })
+      .select('id, join_code')
+      .single();
+    if (dErr) {
+      console.error('[activities] 활동지 복제 실패:', dErr.message);
+      return res.status(500).json({ ok: false, error: dErr.message });
+    }
+    return res.json({ ok: true, activityId: dup.id, join_code: dup.join_code, kind: 'html_sheet' });
   }
 
   const { data: srcQs, error: qErr } = await supabase
@@ -111,7 +196,6 @@ router.post('/activities/:id/duplicate', async (req, res) => {
     return res.status(500).json({ ok: false, error: qErr.message });
   }
 
-  const join_code = await genUniqueJoinCode();
   const { data: newAct, error: insErr } = await supabase
     .from('activities')
     .insert({ title: (src.title || '') + ' (복제본)', html_body: src.html_body, status: 'draft', join_code })
@@ -140,7 +224,7 @@ router.post('/activities/:id/duplicate', async (req, res) => {
 router.get('/activities', async (req, res) => {
   const { data, error } = await supabase
     .from('activities')
-    .select('id, title, status, join_code, created_at')
+    .select('id, title, status, join_code, created_at, kind')
     .order('created_at', { ascending: false });
 
   if (error) {
@@ -277,7 +361,7 @@ router.get('/activities/:id/version', async (req, res) => {
 // questions 는 기존 삭제 후 재삽입.
 router.put('/activities/:id', async (req, res) => {
   const { id } = req.params;
-  const { title, html_body, questions, status, view_mode } = req.body || {};
+  const { title, html_body, questions, status, view_mode, kind, fields } = req.body || {};
 
   if (!title || !html_body) {
     return res.status(400).json({ ok: false, error: 'title 과 html_body 가 필요합니다.' });
@@ -286,7 +370,7 @@ router.put('/activities/:id', async (req, res) => {
   // 현재 version 조회 후 +1 (컬럼이 있다고 가정)
   const { data: cur, error: curErr } = await supabase
     .from('activities')
-    .select('version')
+    .select('version, kind')
     .eq('id', id)
     .single();
 
@@ -294,6 +378,24 @@ router.put('/activities/:id', async (req, res) => {
     return res.status(404).json({ ok: false, error: '활동을 찾을 수 없습니다.' });
   }
   const nextVersion = (Number(cur.version) || 1) + 1;
+
+  // HTML 활동지 수정 — 종류는 저장된 값을 따른다(요청이 kind 를 바꿔 시험지↔활동지로 둔갑시키지 못하게).
+  if (isSheet(cur.kind)) {
+    const clean = sanitizeSheet(html_body);
+    const fs = normalizeFields(fields, clean);
+    if (!fs.length) {
+      return res.status(400).json({ ok: false, error: '수집할 응답 칸을 찾지 못했습니다.' });
+    }
+    const sheetPatch = { title, html_body: clean, fields: fs, version: nextVersion };
+    if (status === 'draft' || status === 'open') sheetPatch.status = status;
+
+    const { error: sErr } = await supabase.from('activities').update(sheetPatch).eq('id', id);
+    if (sErr) {
+      console.error('[activities] 활동지 수정 실패:', sErr.message);
+      return res.status(500).json({ ok: false, error: sErr.message });
+    }
+    return res.json({ ok: true, activityId: id, version: nextVersion, kind: 'html_sheet', fields: fs });
+  }
 
   const patch = { title, html_body, version: nextVersion };
   if (status === 'draft' || status === 'open') patch.status = status; // 발행/임시저장 전환 허용

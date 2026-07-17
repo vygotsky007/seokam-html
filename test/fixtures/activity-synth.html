@@ -1,0 +1,163 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>합성 활동지 · 자동 검증용</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Jua&display=swap" rel="stylesheet">
+<style>
+/* 실물 활동지(test/fixtures/real/)는 .gitignore 로 빠져 있다 — 그 자리에서만 되는 검증은 검증이 아니다.
+   이 파일은 실물과 '구조가 같은' 합성본이다: textarea 4개 + 체크박스 묶음 2개(5개씩),
+   문서 순서도 같다(f1 글 · f2 체크 · f3 글 · f4 글 · f5 체크 · f6 글).
+   그래서 sheet-e2e.js 의 기대치가 실물이든 합성이든 똑같이 성립한다. */
+:root{ --ink:#22301F; --screen:#FAF6EC; --sprout:#3F8F5B; --lime:#E4EFC9; --clap:#F0A03C; --line:#D8D2C2; }
+*{margin:0;padding:0;box-sizing:border-box}
+body{font-family:'Noto Sans KR',system-ui,sans-serif;background:var(--screen);color:var(--ink);line-height:1.65}
+header.hero{background:var(--ink);color:var(--screen);padding:44px 20px 52px}
+.hero h1{font-family:'Jua',sans-serif;font-size:clamp(28px,5vw,44px)}
+.hero .eyebrow{display:inline-block;background:var(--clap);color:var(--ink);padding:5px 16px;border-radius:999px}
+.progress-wrap{position:sticky;top:0;z-index:50;background:#fff;border-bottom:2px solid var(--ink);padding:10px 20px}
+.progress-inner{max-width:880px;margin:0 auto;display:flex;align-items:center;gap:14px}
+.progress-track{flex:1;height:16px;background:var(--lime);border-radius:999px;border:2px solid var(--ink);overflow:hidden}
+.progress-fill{height:100%;width:0%;background:var(--sprout);transition:width .35s ease}
+.progress-pct{min-width:44px;text-align:right}
+main{max-width:880px;margin:0 auto;padding:36px 20px 80px}
+.scene{margin-bottom:52px}
+.card{background:#fff;border:2px solid var(--ink);border-radius:14px;padding:22px;margin-bottom:18px}
+.card h3{font-family:'Jua',sans-serif;font-size:18px;margin-bottom:10px}
+/* 자식 선택자(>) — 정제기가 CSS 를 글자로 이스케이프하면 여기서 티가 난다 */
+.steps{counter-reset:st;list-style:none;padding:0}
+.steps>li{counter-increment:st;position:relative;padding:12px 12px 12px 52px;background:var(--screen);border:1.5px solid var(--line);border-radius:10px;margin-bottom:8px}
+.steps>li::before{content:counter(st);position:absolute;left:12px;top:12px;width:28px;height:28px;border-radius:50%;background:var(--sprout);color:#fff;display:flex;align-items:center;justify-content:center}
+.prompt{background:var(--ink);color:#EAF3DC;border-radius:12px;padding:16px;margin:12px 0;position:relative}
+.prompt button.copy{position:absolute;top:10px;right:10px;background:var(--screen);color:var(--ink);border:0;border-radius:8px;padding:5px 12px;cursor:pointer}
+.prompt .ptext{white-space:pre-wrap;padding-right:60px}
+.checklist{list-style:none;padding:0}
+.checklist label{display:flex;gap:11px;align-items:flex-start;background:var(--screen);border:1.5px solid var(--line);border-radius:10px;padding:11px 14px;cursor:pointer}
+.checklist input{width:22px;height:22px;flex-shrink:0}
+.ticket{background:#fff;border:2.5px solid var(--ink);border-radius:16px;margin:22px 0;overflow:hidden}
+.ticket-head{background:var(--clap);padding:12px 20px;font-family:'Jua',sans-serif;display:flex;justify-content:space-between}
+.ticket-body{padding:18px 20px 22px}
+.write{width:100%;border:2px solid var(--sprout);border-radius:10px;padding:12px 14px;font-family:inherit;font-size:15px;background:#FDFFF8;min-height:74px;resize:vertical}
+.write.short{min-height:0;height:46px;resize:none}
+.write-label{font-size:14.5px;color:#2E6B44;display:block;margin:12px 0 6px;font-weight:700}
+.grid2{display:grid;grid-template-columns:1fr 1fr;gap:14px}
+@media(max-width:640px){.grid2{grid-template-columns:1fr}}
+footer.nav{background:var(--ink);color:var(--screen);padding:26px 20px;text-align:center}
+</style>
+</head>
+<body>
+<header class="hero">
+  <div class="hero-inner">
+    <span class="eyebrow">🧪 합성 · 검증용</span>
+    <h1>합성 활동지 — 구조 검증판</h1>
+    <p class="sub">실물과 같은 뼈대(히어로·진행률·카드·티켓)를 갖춘 자동 검증용 활동지입니다.</p>
+  </div>
+</header>
+
+<div class="progress-wrap">
+  <div class="progress-inner">
+    <span class="progress-label">오늘의 미션</span>
+    <div class="progress-track"><div class="progress-fill" id="pfill"></div></div>
+    <span class="progress-pct" id="ppct">0%</span>
+  </div>
+</div>
+
+<main>
+<!-- f1: textarea -->
+<section class="scene">
+  <div class="card">
+    <h3>✏️ 좋은 프롬프트의 3원칙</h3>
+    <ol class="steps">
+      <li><b>구체적으로</b> 쓴다</li>
+      <li><b>역할</b>을 정해 준다</li>
+      <li>결과가 아쉬우면 <b>다시</b> 부탁한다</li>
+    </ol>
+    <div class="prompt">
+      <button class="copy" type="button">복사</button>
+      <div class="ptext">너는 초등학생을 위한 이야기 작가야.
+주인공과 배경을 정해 짧은 이야기를 써 줘.</div>
+    </div>
+    <span class="write-label">🖊 직접 해보기 — 내가 AI에게 부탁하고 싶은 것을 한 문장으로 써 보세요.</span>
+    <textarea class="write" placeholder="예: 로봇과 친구가 되는 이야기를 써줘"></textarea>
+  </div>
+</section>
+
+<!-- f2: 체크박스 묶음 5 / f3: textarea -->
+<section class="scene">
+  <div class="card">
+    <h3>🤝 우리 반 AI 약속 5</h3>
+    <ul class="checklist">
+      <li><label><input type="checkbox" class="mission"><span>① 출처를 밝힌다</span></label></li>
+      <li><label><input type="checkbox" class="mission"><span>② 개인정보는 넣지 않는다</span></label></li>
+      <li><label><input type="checkbox" class="mission"><span>③ 남을 아프게 하지 않는다</span></label></li>
+      <li><label><input type="checkbox" class="mission"><span>④ AI 말은 확인한다</span></label></li>
+      <li><label><input type="checkbox" class="mission"><span>⑤ 결정은 내가 한다</span></label></li>
+    </ul>
+    <span class="write-label">🖊 다섯 약속 중 가장 중요한 것과 이유는?</span>
+    <textarea class="write" placeholder="저는 ___번이 가장 중요하다고 생각해요."></textarea>
+  </div>
+</section>
+
+<!-- f4: textarea -->
+<section class="scene">
+  <div class="card">
+    <h3>🦁 로그라인 만들기 (따라 하기)</h3>
+    <p>영화의 핵심을 <b>딱 한 문장</b>으로 요약한 것이 로그라인입니다.</p>
+    <span class="write-label">🏆 나의 최종 로그라인</span>
+    <textarea class="write" placeholder="___한 주인공이 ___하기 위해 ___에 맞서는 이야기"></textarea>
+  </div>
+</section>
+
+<!-- f5: 체크박스 묶음 5 / f6: textarea -->
+<section class="scene">
+  <div class="ticket">
+    <div class="ticket-head"><span>🎟 오늘의 최종 미션</span><span>합성</span></div>
+    <div class="ticket-body">
+      <ul class="checklist">
+        <li><label><input type="checkbox" class="mission"><span>프롬프트 한 문장 쓰기</span></label></li>
+        <li><label><input type="checkbox" class="mission"><span>약속 5가지 읽기</span></label></li>
+        <li><label><input type="checkbox" class="mission"><span>로그라인 1개 확정</span></label></li>
+        <li><label><input type="checkbox" class="mission"><span>이야기 1막 쓰기</span></label></li>
+        <li><label><input type="checkbox" class="mission"><span>짝에게 소개하기</span></label></li>
+      </ul>
+      <span class="write-label">💬 짝에게 받은 피드백 한 줄</span>
+      <textarea class="write short" placeholder="내 로그라인은 ___이야."></textarea>
+    </div>
+  </div>
+</section>
+</main>
+
+<footer class="nav">
+  <div>🧪 합성 활동지 · 자동 검증용</div>
+</footer>
+
+<script>
+// 원본 활동지가 흔히 갖는 인라인 스크립트 — 정제 단계에서 통째로 제거되고,
+// 학생 화면에서는 수집 스크립트가 진행률 바와 복사 버튼을 대신 살려낸다.
+(function(){
+  var boxes = document.querySelectorAll('input.mission');
+  var fill = document.getElementById('pfill');
+  var pct  = document.getElementById('ppct');
+  function update(){
+    var done = 0;
+    boxes.forEach(function(b){ if(b.checked) done++; });
+    var p = Math.round(done/boxes.length*100);
+    fill.style.width = p+'%';
+    pct.textContent = p+'%';
+  }
+  boxes.forEach(function(b){ b.addEventListener('change', update); });
+  update();
+
+  document.querySelectorAll('.prompt .copy').forEach(function(btn){
+    btn.addEventListener('click', function(){
+      var text = btn.parentElement.querySelector('.ptext').innerText;
+      navigator.clipboard.writeText(text);
+      btn.textContent = '복사됨!';
+    });
+  });
+})();
+</script>
+</body>
+</html>

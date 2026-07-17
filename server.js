@@ -10,6 +10,7 @@ const activitiesRouter = require('./routes/activities');
 const liveRouter = require('./routes/live');
 const aiRouter = require('./routes/ai');
 const similarRouter = require('./routes/similar');
+const sheetsRouter = require('./routes/sheets');
 const { sanitizeHtml } = require('./lib/sanitize');
 
 const app = express();
@@ -34,6 +35,7 @@ app.use('/api', activitiesRouter);
 app.use('/api', liveRouter);
 app.use('/api', aiRouter);   // 비전 AI 변환(이미지 폴백 문항 → 구조화 텍스트)
 app.use('/api', similarRouter);
+app.use('/api', sheetsRouter);   // HTML 활동지 결과(행=학생, 열=필드)
 
 // 교사용 실시간 교실 대시보드
 app.get('/live/:id', async (req, res) => {
@@ -49,12 +51,17 @@ app.get('/go/:id', async (req, res) => {
 
   const { data: activity, error } = await supabase
     .from('activities')
-    .select('id, title, html_body, status, version, view_mode')
+    .select('id, title, html_body, status, version, view_mode, kind, fields, closed_at')
     .eq('id', id)
     .single();
 
   if (error || !activity) {
     return res.status(404).send('<h1>활동을 찾을 수 없습니다.</h1>');
+  }
+
+  // HTML 활동지: 시험지 파이프라인을 타지 않는다. 원본 문서를 그대로 내보내고 바만 얹는다.
+  if (activity.kind === 'html_sheet') {
+    return res.type('html').send(renderSheetStudentPage(activity));
   }
 
   // 한 문제씩 모드: 문항 조각(slice_image)들을 불러와 전용 화면 렌더
@@ -116,6 +123,15 @@ function buildSliceByNum(qs) {
   });
   return map;
 }
+
+// HTML 활동지 결과 — 행=학생, 열=필드 (시험지 대시보드와 다른 화면)
+app.get('/sheet/:id', async (req, res) => {
+  const { data: activity, error } = await supabase
+    .from('activities').select('id, title, kind').eq('id', req.params.id).single();
+  if (error || !activity) return res.status(404).send('<h1>활동을 찾을 수 없습니다.</h1>');
+  if (activity.kind !== 'html_sheet') return res.redirect('/dashboard/' + activity.id);   // 시험지는 기존 대시보드로
+  res.type('html').send(renderSheetResultsPage(activity));
+});
 
 // 짧은 입장: 4자리 코드 → 해당 활동 /go/:id 로 리다이렉트
 app.get('/join/:code', async (req, res) => {
@@ -2822,6 +2838,594 @@ function renderDashboardPage(activity) {
 
   fetchData();
   setInterval(fetchData, 5000);
+})();
+</script>
+</body>
+</html>`;
+}
+
+// ───────────────── HTML 활동지(kind='html_sheet') 학생 화면 ─────────────────
+//
+// 시험지 화면(renderStudentPage)과 결정적으로 다른 점: 감싸지 않는다.
+// 시험지 화면은 교사 HTML 을 .wrap/.content 안에 넣고 자기 배경·글꼴·760px 폭을 덮어씌운다.
+// 활동지에 그렇게 하면 교사가 만든 디자인(히어로 헤더·색·반응형)이 통째로 죽는다.
+// 그래서 원본 문서를 그대로 내보내고, <head> 끝과 <body> 끝에만 우리 것을 '얹는다'.
+
+// 원본 문서의 </head>·</body> 앞에 끼워 넣는다. 문자열 replace 는 $& 같은 치환 패턴을
+// 해석하므로(주입 문자열에 CSS·JS 가 들어 있다) 반드시 함수형 replace 로 넣는다.
+function injectIntoSheet(docHtml, headExtra, bodyExtra) {
+  let out = String(docHtml || '');
+
+  if (/<\/head\s*>/i.test(out)) out = out.replace(/<\/head\s*>/i, () => headExtra + '</head>');
+  else if (/<body[^>]*>/i.test(out)) out = out.replace(/<body([^>]*)>/i, (m) => '<head>' + headExtra + '</head>' + m);
+  else out = headExtra + out;
+
+  if (/<\/body\s*>/i.test(out)) out = out.replace(/<\/body\s*>/i, () => bodyExtra + '</body>');
+  else out += bodyExtra;
+
+  return out;
+}
+
+// <script> 안에 안전하게 넣을 JSON. </script> 로 문서를 탈출하지 못하게 '<' 를 escape 한다.
+function jsonForScript(v) {
+  return JSON.stringify(v == null ? null : v).replace(/</g, '\\u003c');
+}
+
+function renderSheetStudentPage(activity) {
+  const activityId = activity.id;
+  const version = Number(activity.version) || 1;
+  const fields = Array.isArray(activity.fields) ? activity.fields : [];
+  const closed = !!activity.closed_at;
+
+  const headExtra = `
+<style>
+  /* 문제샘 표준 바 — 원본 디자인에 섞이지 않도록 전부 __mjs 로 이름을 가르고, 값도 상속받지 않는다. */
+  #__mjsBar, #__mjsBar * { box-sizing: border-box; font-family: system-ui, -apple-system, "Segoe UI", sans-serif; }
+  #__mjsBar {
+    position: fixed; left: 0; right: 0; bottom: 0; z-index: 2147483000;
+    background: #1a202c; color: #fff; padding: 10px 14px;
+    box-shadow: 0 -4px 18px rgba(0,0,0,.28);
+    display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+  }
+  #__mjsBar .g { display: flex; align-items: center; gap: 8px; min-width: 0; }
+  #__mjsBar .g.grow { flex: 1; min-width: 140px; }
+  #__mjsBar label { font-size: 12px; font-weight: 700; color: #a0aec0; white-space: nowrap; margin: 0; }
+  #__mjsNick {
+    flex: 1; min-width: 90px; padding: 9px 10px; font-size: 16px;
+    border: 2px solid #4a5568; border-radius: 8px; background: #2d3748; color: #fff;
+  }
+  #__mjsNick:focus { outline: 2px solid #63b3ed; border-color: #63b3ed; }
+  #__mjsCount { font-size: 13px; font-weight: 700; color: #90cdf4; white-space: nowrap; }
+  #__mjsSave { font-size: 12px; color: #a0aec0; white-space: nowrap; min-width: 72px; }
+  #__mjsSave.on { color: #68d391; }
+  #__mjsSubmit {
+    padding: 11px 20px; font-size: 15px; font-weight: 800; color: #fff;
+    background: #2f855a; border: 0; border-radius: 9px; cursor: pointer; white-space: nowrap;
+  }
+  #__mjsSubmit:disabled { background: #4a5568; cursor: default; }
+  #__mjsNotice {
+    position: fixed; left: 0; right: 0; bottom: 62px; z-index: 2147483000;
+    background: #fefcbf; color: #744210; padding: 10px 14px; font-size: 14px; font-weight: 700;
+    font-family: system-ui, sans-serif; display: none;
+  }
+  /* 바가 문서 끝(푸터)을 가리지 않게 자리를 비운다 */
+  body { padding-bottom: 96px !important; }
+  @media (max-width: 520px) {
+    #__mjsBar { gap: 8px; padding: 8px 10px; }
+    #__mjsSubmit { flex: 1; }
+    body { padding-bottom: 132px !important; }
+  }
+  @media print { #__mjsBar, #__mjsNotice { display: none !important; } }
+</style>`;
+
+  const bodyExtra = `
+<div id="__mjsNotice"></div>
+<div id="__mjsBar">
+  <div class="g grow">
+    <label for="__mjsNick">닉네임</label>
+    <input id="__mjsNick" type="text" placeholder="이름을 입력하세요" autocomplete="off" />
+  </div>
+  <div class="g">
+    <span id="__mjsCount">0/0</span>
+    <span id="__mjsSave">저장 안 됨</span>
+  </div>
+  <button id="__mjsSubmit" type="button">제출하기</button>
+</div>
+<script>
+(function () {
+  var ACTIVITY_ID = ${jsonForScript(activityId)};
+  var VERSION = ${version};
+  var FIELDS = ${jsonForScript(fields)};
+  var CLOSED0 = ${closed ? 'true' : 'false'};
+
+  var COLLECT = FIELDS.filter(function (f) { return f.collect; });
+  var byId = {};
+  FIELDS.forEach(function (f) { byId[f.id] = f; });
+
+  var LSKEY = 'mjs-sheet-' + ACTIVITY_ID;
+  var answers = {};
+  var closed = CLOSED0;
+  var submitted = false;
+
+  var nickEl = document.getElementById('__mjsNick');
+  var countEl = document.getElementById('__mjsCount');
+  var saveEl = document.getElementById('__mjsSave');
+  var submitEl = document.getElementById('__mjsSubmit');
+  var noticeEl = document.getElementById('__mjsNotice');
+
+  // ---- 저장한 것 되살리기 ----
+  // 서버(live_sessions)에도 올리지만, 되살리기는 localStorage 로 한다. 새로고침·창 닫기에
+  // 네트워크 없이도 즉시 복구돼야 하고, 서버 것은 교사 화면·마감용이다.
+  try {
+    var raw = localStorage.getItem(LSKEY);
+    if (raw) {
+      var saved = JSON.parse(raw);
+      if (saved && saved.v === VERSION && saved.answers) answers = saved.answers;
+      if (saved && saved.nickname) nickEl.value = saved.nickname;
+    }
+  } catch (e) {}
+
+  function persist() {
+    try {
+      localStorage.setItem(LSKEY, JSON.stringify({ v: VERSION, nickname: (nickEl.value || '').trim(), answers: answers }));
+    } catch (e) {}
+  }
+
+  // ---- 칸 ↔ 답 ----
+  function readEl(el) {
+    var tag = (el.tagName || '').toLowerCase();
+    if (tag === 'textarea') return el.value;
+    if (tag === 'input') return el.value;
+    return el.innerText != null ? el.innerText : el.textContent;   // contenteditable
+  }
+  function writeEl(el, v) {
+    var tag = (el.tagName || '').toLowerCase();
+    if (tag === 'textarea' || tag === 'input') el.value = v == null ? '' : v;
+    else el.textContent = v == null ? '' : v;
+  }
+
+  function restore() {
+    Array.prototype.forEach.call(document.querySelectorAll('[data-fid]'), function (el) {
+      var fid = el.getAttribute('data-fid');
+      var f = byId[fid];
+      if (!f) return;
+      var v = answers[fid];
+      if (v == null) return;
+      if (f.tag === 'checkbox') {
+        var idx = Number(el.getAttribute('data-fopt'));
+        el.checked = Array.isArray(v) && v.indexOf(idx) >= 0;
+      } else {
+        writeEl(el, v);
+      }
+    });
+  }
+
+  function collectFrom(fid) {
+    var f = byId[fid];
+    if (!f) return;
+    if (f.tag === 'checkbox') {
+      var on = [];
+      Array.prototype.forEach.call(document.querySelectorAll('[data-fid="' + fid + '"]'), function (el) {
+        if (el.checked) on.push(Number(el.getAttribute('data-fopt')));
+      });
+      on.sort(function (a, b) { return a - b; });
+      answers[fid] = on;
+    } else {
+      var el = document.querySelector('[data-fid="' + fid + '"]');
+      if (el) answers[fid] = readEl(el);
+    }
+  }
+
+  function isEmpty(v) {
+    if (v == null) return true;
+    if (Array.isArray(v)) return v.length === 0;
+    return String(v).replace(/\\s+/g, '') === '';
+  }
+  function filled() {
+    var n = 0;
+    COLLECT.forEach(function (f) { if (!isEmpty(answers[f.id])) n++; });
+    return n;
+  }
+
+  // ---- 원본 진행률 바 되살리기 ----
+  // 교사가 넣은 인라인 스크립트는 정제 단계에서 통째로 걷어낸다(그게 안전하다).
+  // 그래서 진행률 바가 0% 에 굳는다 — 수집 스크립트가 대신 움직여 준다.
+  // 이름을 정확히 알 수 없으니 흔한 작명(progress-fill / progress-pct)을 폭넓게 잡는다.
+  var fillEls = document.querySelectorAll('[class*=progress][class*=fill],[class*=prog][class*=fill],[class*=bar][class*=fill]');
+  var pctEls = document.querySelectorAll('[class*=progress][class*=pct],[class*=prog][class*=pct],[class*=percent]');
+  var allBoxes = document.querySelectorAll('input[type=checkbox]');
+
+  function paintProgress() {
+    var done, total;
+    if (allBoxes.length) {                     // 원본 진행률 바는 대개 '미션 체크'를 세던 것이다
+      total = allBoxes.length; done = 0;
+      Array.prototype.forEach.call(allBoxes, function (b) { if (b.checked) done++; });
+    } else {
+      total = COLLECT.length; done = filled();
+    }
+    var p = total ? Math.round(done / total * 100) : 0;
+    Array.prototype.forEach.call(fillEls, function (el) { el.style.width = p + '%'; });
+    Array.prototype.forEach.call(pctEls, function (el) { el.textContent = (p === 100 ? '🎉' : '') + p + '%'; });
+    countEl.textContent = filled() + '/' + COLLECT.length;
+  }
+
+  // ---- 원본 [복사] 버튼 되살리기 ----
+  Array.prototype.forEach.call(document.querySelectorAll('button'), function (btn) {
+    var t = (btn.textContent || '').trim();
+    if (!/^(복사|copy)$/i.test(t)) return;
+    btn.addEventListener('click', function () {
+      var box = btn.parentElement;
+      if (!box) return;
+      var target = box.querySelector('[class*=text]') || box;
+      var text = (target.innerText || target.textContent || '').trim();
+      var done = function () {
+        var old = btn.textContent;
+        btn.textContent = '복사됨!';
+        setTimeout(function () { btn.textContent = old; }, 1500);
+      };
+      if (navigator.clipboard && navigator.clipboard.writeText) {
+        navigator.clipboard.writeText(text).then(done).catch(function () { fallback(text, done); });
+      } else { fallback(text, done); }
+    });
+  });
+  function fallback(text, done) {
+    var ta = document.createElement('textarea');
+    ta.value = text; ta.style.position = 'fixed'; ta.style.opacity = '0';
+    document.body.appendChild(ta); ta.select();
+    try { document.execCommand('copy'); done(); } catch (e) {}
+    document.body.removeChild(ta);
+  }
+
+  // ---- 자동 임시저장 ----
+  var hbTimer = null;
+  function touch(fid) {
+    collectFrom(fid);
+    persist();                                  // 로컬은 즉시 — 제출 전에도 유실 없게
+    paintProgress();
+    saveEl.textContent = '저장 중…'; saveEl.className = '';
+    clearTimeout(hbTimer);
+    hbTimer = setTimeout(push, 600);            // 서버는 타이핑이 멎으면
+  }
+
+  function push() {
+    var nick = (nickEl.value || '').trim();
+    if (!nick) { saveEl.textContent = '닉네임 먼저'; saveEl.className = ''; return; }
+    fetch('/api/live/heartbeat', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ activityId: ACTIVITY_ID, nickname: nick, currentQ: null, answers: answers }),
+    }).then(function (r) { return r.json(); }).then(function (d) {
+      if (!d || !d.ok) { saveEl.textContent = '저장 실패'; saveEl.className = ''; return; }
+      saveEl.textContent = '저장됨'; saveEl.className = 'on';
+      var n = (d.notices || [])[0];
+      if (n) { noticeEl.style.display = 'block'; noticeEl.textContent = '📢 ' + n.text; }
+      if (d.closed) onClosed();
+    }).catch(function () { saveEl.textContent = '저장 실패(오프라인)'; saveEl.className = ''; });
+  }
+
+  // ---- 묶기 ----
+  // 교사가 [수집]을 끈 칸에는 아예 손을 대지 않는다. 값을 읽어 두기만 해도 그대로 저장·제출로 새어
+  // 결과표에 없는 답이 DB 에 쌓인다("모으지 않는다"는 약속이 깨진다).
+  // 진행률 바는 아래 allBoxes 에서 따로 움직이므로 여기서 빠져도 멀쩡하다.
+  Array.prototype.forEach.call(document.querySelectorAll('[data-fid]'), function (el) {
+    var fid = el.getAttribute('data-fid');
+    var f = byId[fid];
+    if (!f || !f.collect) return;
+    if (f.tag === 'checkbox') {
+      el.addEventListener('change', function () { touch(fid); });
+    } else {
+      el.addEventListener('input', function () { touch(fid); });
+      el.addEventListener('change', function () { touch(fid); });
+    }
+  });
+  nickEl.addEventListener('input', function () { persist(); });
+  nickEl.addEventListener('blur', function () { if ((nickEl.value || '').trim()) push(); });
+
+  // 체크박스는 수집 대상이 아니어도 진행률 바는 움직여야 한다(원본이 그랬다).
+  Array.prototype.forEach.call(allBoxes, function (b) {
+    b.addEventListener('change', paintProgress);
+  });
+
+  // ---- 마감 ----
+  function onClosed() {
+    if (closed) return;
+    closed = true;
+    submitEl.disabled = true;
+    submitEl.textContent = '마감됨';
+    noticeEl.style.display = 'block';
+    noticeEl.textContent = '🔒 선생님이 활동을 마감했어요. 지금까지 쓴 내용은 자동으로 제출됐습니다.';
+  }
+
+  // ---- 제출 ----
+  submitEl.addEventListener('click', function () {
+    var nick = (nickEl.value || '').trim();
+    if (!nick) { alert('닉네임(이름)을 먼저 입력해 주세요.'); nickEl.focus(); return; }
+    COLLECT.forEach(function (f) { collectFrom(f.id); });
+    if (filled() === 0 && !confirm('아직 아무것도 쓰지 않았어요. 그래도 제출할까요?')) return;
+    if (submitted && !confirm('이미 제출했어요. 다시 제출하면 이전 제출을 덮어씁니다. 계속할까요?')) return;
+
+    submitEl.disabled = true; submitEl.textContent = '제출 중…';
+    fetch('/api/submit', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ activityId: ACTIVITY_ID, nickname: nick, answers: answers, replace: true }),
+    }).then(function (r) { return r.json(); }).then(function (d) {
+      if (!d || !d.ok) throw new Error((d && d.error) || '제출 실패');
+      submitted = true;
+      submitEl.textContent = '제출 완료 ✓';
+      saveEl.textContent = '제출됨'; saveEl.className = 'on';
+      noticeEl.style.display = 'block';
+      noticeEl.textContent = '✅ 제출했어요! 계속 고쳐 쓰고 다시 제출할 수 있어요.';
+      setTimeout(function () {
+        if (!closed) { submitEl.disabled = false; submitEl.textContent = '다시 제출'; }
+      }, 1500);
+      push();
+    }).catch(function (e) {
+      alert('제출에 실패했어요: ' + e.message);
+      submitEl.disabled = false; submitEl.textContent = '제출하기';
+    });
+  });
+
+  // ---- 시작 ----
+  restore();
+  paintProgress();
+  if (closed) onClosed();
+  setInterval(function () { if ((nickEl.value || '').trim()) push(); }, 5000);   // 접속 표시 + 마감 감지
+})();
+</script>`;
+
+  return injectIntoSheet(activity.html_body || '', headExtra, bodyExtra);
+}
+
+// ───────────────── HTML 활동지 — 교사 결과 화면 ─────────────────
+// 시험지 대시보드(점수·정답률·보기분포)는 활동지에 쓸 자리가 없다. 활동지는 점수가 없다.
+// 여기서 필요한 건 둘뿐이다: (1) 누가 무엇을 썼는가(표) (2) 한 질문에 아이들이 뭐라 썼는가(모아보기).
+function renderSheetResultsPage(activity) {
+  const title = escapeHtml(activity.title || '활동');
+  const activityId = activity.id;
+
+  return `<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>${title} — 응답 보기</title>
+<style>
+  :root { --line: #e2e8f0; --ink: #1a202c; --muted: #718096; }
+  * { box-sizing: border-box; }
+  body { font-family: system-ui, -apple-system, "Segoe UI", sans-serif; margin: 0; background: #f5f6f8; color: var(--ink); }
+  .wrap { max-width: 1200px; margin: 0 auto; padding: 16px; }
+  h1 { font-size: 20px; margin: 0 0 4px; }
+  .sub { color: var(--muted); font-size: 13px; margin-bottom: 14px; }
+  .card { background: #fff; border-radius: 12px; padding: 14px; margin-bottom: 14px; box-shadow: 0 1px 3px rgba(0,0,0,.06); }
+  .row { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+  .stat { font-size: 13px; font-weight: 700; color: #2b6cb0; background: #ebf8ff; border-radius: 999px; padding: 5px 12px; }
+  .stat.warn { color: #975a16; background: #fffaf0; }
+  button { padding: 8px 14px; font-size: 14px; font-weight: 700; border: 1px solid #cbd5e1; background: #f7fafc; border-radius: 8px; cursor: pointer; }
+  button.on { background: #2b6cb0; color: #fff; border-color: #2b6cb0; }
+  button.green { background: #2f855a; color: #fff; border-color: #2f855a; }
+  button.red { background: #c53030; color: #fff; border-color: #c53030; }
+  .tabs { display: flex; gap: 6px; margin-bottom: 12px; }
+  .tblwrap { overflow-x: auto; }
+  table { border-collapse: collapse; width: 100%; font-size: 13.5px; }
+  th, td { border: 1px solid var(--line); padding: 8px 10px; text-align: left; vertical-align: top; }
+  th { background: #f7fafc; font-size: 12.5px; position: sticky; top: 0; z-index: 2; }
+  th.nick, td.nick { position: sticky; left: 0; background: #fff; z-index: 1; font-weight: 700; white-space: nowrap; min-width: 96px; }
+  th.nick { background: #f7fafc; z-index: 3; }
+  td.cell { max-width: 260px; cursor: pointer; }
+  td.cell .clip { display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; white-space: pre-wrap; word-break: break-word; }
+  td.cell:hover { background: #ebf8ff; }
+  td.empty { color: #cbd5e1; }
+  .badge { font-size: 11px; font-weight: 700; border-radius: 999px; padding: 2px 8px; white-space: nowrap; }
+  .badge.done { background: #c6f6d5; color: #22543d; }
+  .badge.live { background: #fefcbf; color: #744210; }
+  .muted { color: var(--muted); font-size: 12.5px; }
+  /* 필드별 모아보기 */
+  .pick { display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: 12px; }
+  .pick button { font-size: 13px; }
+  .ans { border: 1px solid var(--line); border-radius: 10px; padding: 10px 12px; margin-bottom: 8px; }
+  .ans .who { font-size: 12px; font-weight: 700; color: #2b6cb0; margin-bottom: 4px; }
+  .ans .txt { white-space: pre-wrap; word-break: break-word; }
+  /* 전체 보기 */
+  #modal { position: fixed; inset: 0; background: rgba(0,0,0,.5); display: none; align-items: center; justify-content: center; padding: 20px; z-index: 100; }
+  #modal .box { background: #fff; border-radius: 12px; padding: 18px; max-width: 680px; width: 100%; max-height: 80vh; overflow: auto; }
+  #modal .who { font-weight: 800; margin-bottom: 2px; }
+  #modal .lab { color: var(--muted); font-size: 12.5px; margin-bottom: 10px; }
+  #modal .txt { white-space: pre-wrap; word-break: break-word; font-size: 15px; line-height: 1.7; }
+  #empty { text-align: center; color: var(--muted); padding: 40px 0; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>${title}</h1>
+  <div class="sub">HTML 활동지 · 응답 보기</div>
+
+  <div class="card">
+    <div class="row">
+      <span class="stat" id="stCount">0명</span>
+      <span class="stat" id="stDone">제출 0</span>
+      <span class="stat warn" id="stClosed" style="display:none;">🔒 마감됨</span>
+      <span class="muted" id="stCode"></span>
+      <span style="flex:1"></span>
+      <button id="csvBtn">⬇ CSV 내려받기</button>
+      <button id="closeBtn" class="red">🔒 마감하기</button>
+    </div>
+  </div>
+
+  <div class="tabs">
+    <button id="tabTable" class="on">표로 보기</button>
+    <button id="tabField">필드별 모아보기</button>
+  </div>
+
+  <div class="card" id="paneTable">
+    <div class="tblwrap"><table id="tbl"></table></div>
+    <div id="empty">아직 응답이 없어요. 학생이 활동지를 열면 여기에 실시간으로 나타납니다.</div>
+    <div class="muted" style="margin-top:8px;">💡 칸을 클릭하면 전체 내용을 볼 수 있어요. 3초마다 자동 새로고침됩니다.</div>
+  </div>
+
+  <div class="card" id="paneField" style="display:none;">
+    <div class="pick" id="pick"></div>
+    <div id="list"></div>
+  </div>
+</div>
+
+<div id="modal"><div class="box">
+  <div class="who" id="mWho"></div>
+  <div class="lab" id="mLab"></div>
+  <div class="txt" id="mTxt"></div>
+  <div style="margin-top:14px;text-align:right;"><button id="mClose">닫기</button></div>
+</div></div>
+
+<script>
+(function () {
+  var ACTIVITY_ID = ${jsonForScript(activityId)};
+  var data = null;
+  var curField = null;
+
+  function esc(s) {
+    return String(s == null ? '' : s).replace(/[&<>"']/g, function (c) {
+      return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c];
+    });
+  }
+
+  // 답 한 칸을 사람이 읽는 글로. 체크박스 묶음은 고른 항목 이름으로 편다.
+  function show(v, f) {
+    if (v == null) return '';
+    if (Array.isArray(v)) {
+      var opts = (f && f.options) || [];
+      return v.map(function (i) { return opts[i] != null ? opts[i] : '#' + (i + 1); }).join(' · ');
+    }
+    return String(v);
+  }
+
+  function load() {
+    fetch('/api/sheet/' + ACTIVITY_ID + '/results')
+      .then(function (r) { return r.json(); })
+      .then(function (d) { if (d && d.ok) { data = d; paint(); } })
+      .catch(function () {});
+  }
+
+  function collected() { return (data.activity.fields || []).filter(function (f) { return f.collect; }); }
+
+  function paint() {
+    var rows = data.rows || [];
+    var fs = collected();
+    document.getElementById('stCount').textContent = rows.length + '명';
+    document.getElementById('stDone').textContent = '제출 ' + rows.filter(function (r) { return r.submitted; }).length;
+    document.getElementById('stClosed').style.display = data.activity.closed_at ? '' : 'none';
+    document.getElementById('stCode').textContent = data.activity.join_code ? '입장 코드 ' + data.activity.join_code : '';
+    document.getElementById('empty').style.display = rows.length ? 'none' : '';
+
+    // ---- 표: 행=학생, 열=필드 ----
+    var h = '<thead><tr><th class="nick">학생</th><th>진행</th>';
+    fs.forEach(function (f) { h += '<th title="' + esc(f.section) + '">' + esc(f.label) + '</th>'; });
+    h += '</tr></thead><tbody>';
+    rows.forEach(function (r, ri) {
+      h += '<tr><td class="nick">' + esc(r.nickname) +
+        ' <span class="badge ' + (r.submitted ? 'done">제출' : 'live">작성 중') + '</span></td>' +
+        '<td class="muted">' + r.filled + '/' + data.total + '</td>';
+      fs.forEach(function (f) {
+        var t = show(r.answers[f.id], f);
+        h += t
+          ? '<td class="cell" data-r="' + ri + '" data-f="' + esc(f.id) + '"><div class="clip">' + esc(t) + '</div></td>'
+          : '<td class="empty">—</td>';
+      });
+      h += '</tr>';
+    });
+    h += '</tbody>';
+    document.getElementById('tbl').innerHTML = rows.length ? h : '';
+
+    // ---- 필드별 모아보기 ----
+    if (!curField && fs.length) curField = fs[0].id;
+    var p = '';
+    fs.forEach(function (f) {
+      p += '<button data-f="' + esc(f.id) + '" class="' + (f.id === curField ? 'on' : '') + '">' + esc(f.label) + '</button>';
+    });
+    document.getElementById('pick').innerHTML = p;
+
+    var f = fs.filter(function (x) { return x.id === curField; })[0];
+    var l = '';
+    if (f) {
+      var wrote = rows.filter(function (r) { return show(r.answers[f.id], f).trim(); });
+      l += '<div class="muted" style="margin-bottom:8px;">' + esc(f.label) + ' — ' + wrote.length + '명 작성' +
+           (f.section ? ' <span style="opacity:.7">· ' + esc(f.section) + '</span>' : '') + '</div>';
+      if (!wrote.length) l += '<div id="empty">아직 이 칸에 쓴 학생이 없어요.</div>';
+      wrote.forEach(function (r) {
+        l += '<div class="ans"><div class="who">' + esc(r.nickname) + '</div><div class="txt">' +
+             esc(show(r.answers[f.id], f)) + '</div></div>';
+      });
+    }
+    document.getElementById('list').innerHTML = l;
+  }
+
+  // ---- 셀 클릭 → 전체 보기 ----
+  document.getElementById('tbl').addEventListener('click', function (e) {
+    var td = e.target.closest ? e.target.closest('td.cell') : null;
+    if (!td) return;
+    var r = data.rows[Number(td.getAttribute('data-r'))];
+    var f = collected().filter(function (x) { return x.id === td.getAttribute('data-f'); })[0];
+    if (!r || !f) return;
+    document.getElementById('mWho').textContent = r.nickname;
+    document.getElementById('mLab').textContent = f.label + (f.section ? ' · ' + f.section : '');
+    document.getElementById('mTxt').textContent = show(r.answers[f.id], f);
+    document.getElementById('modal').style.display = 'flex';
+  });
+  document.getElementById('mClose').onclick = function () { document.getElementById('modal').style.display = 'none'; };
+  document.getElementById('modal').addEventListener('click', function (e) {
+    if (e.target.id === 'modal') this.style.display = 'none';
+  });
+
+  document.getElementById('pick').addEventListener('click', function (e) {
+    var b = e.target.closest ? e.target.closest('button[data-f]') : null;
+    if (!b) return;
+    curField = b.getAttribute('data-f');
+    paint();
+  });
+
+  // ---- 탭 ----
+  function tab(which) {
+    document.getElementById('tabTable').className = which === 't' ? 'on' : '';
+    document.getElementById('tabField').className = which === 'f' ? 'on' : '';
+    document.getElementById('paneTable').style.display = which === 't' ? '' : 'none';
+    document.getElementById('paneField').style.display = which === 'f' ? '' : 'none';
+  }
+  document.getElementById('tabTable').onclick = function () { tab('t'); };
+  document.getElementById('tabField').onclick = function () { tab('f'); };
+
+  // ---- CSV ----
+  // Excel 이 한글을 깨지 않게 BOM 을 붙인다.
+  document.getElementById('csvBtn').onclick = function () {
+    if (!data) return;
+    var fs = collected();
+    var head = ['학생', '제출여부', '진행'].concat(fs.map(function (f) { return f.label; }));
+    var lines = [head.map(cell).join(',')];
+    (data.rows || []).forEach(function (r) {
+      var line = [r.nickname, r.submitted ? '제출' : '작성중', r.filled + '/' + data.total]
+        .concat(fs.map(function (f) { return show(r.answers[f.id], f); }));
+      lines.push(line.map(cell).join(','));
+    });
+    var blob = new Blob(['\\ufeff' + lines.join('\\r\\n')], { type: 'text/csv;charset=utf-8;' });
+    var a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = (data.activity.title || '활동지').replace(/[\\\\/:*?"<>|]/g, '_') + '_응답.csv';
+    document.body.appendChild(a); a.click(); document.body.removeChild(a);
+    URL.revokeObjectURL(a.href);
+  };
+  function cell(v) { return '"' + String(v == null ? '' : v).replace(/"/g, '""') + '"'; }
+
+  // ---- 마감 ----
+  document.getElementById('closeBtn').onclick = function () {
+    if (!confirm('지금 마감할까요?\\n\\n미제출 학생의 화면에 있던 내용도 자동으로 제출됩니다.')) return;
+    fetch('/api/live/close', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ activityId: ACTIVITY_ID }),
+    }).then(function (r) { return r.json(); }).then(function (d) {
+      if (!d || !d.ok) return alert('마감 실패: ' + ((d && d.error) || ''));
+      alert('마감했어요. 미제출 ' + d.auto_submitted + '명의 내용을 자동 제출했습니다.');
+      load();
+    });
+  };
+
+  load();
+  setInterval(load, 3000);
 })();
 </script>
 </body>

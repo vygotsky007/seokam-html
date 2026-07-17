@@ -10,6 +10,9 @@
 <!-- 서버와 같은 정제 규칙(허용 태그만) — 저장 전에 교사 화면에서도 한 번 거른다 -->
 <script src="/lib/sanitize.js"></script>
 <script src="/lib/match.js"></script>
+<!-- HTML 활동지: 문서 정제(sheet-sanitize) + 응답 칸 감지(sheet-fields). 서버와 같은 파일을 쓴다. -->
+<script src="/lib/sheet-sanitize.js"></script>
+<script src="/lib/sheet-fields.js"></script>
 <style>
   :root { --blue: #2b6cb0; --green: #2f855a; --red: #c53030; --gray: #718096; --line: #e5e9f0; --bg: #f4f6f9; --ink: #1a202c; }
   * { box-sizing: border-box; }
@@ -35,6 +38,22 @@
   .muted { color: var(--gray); font-size: 13px; }
 
   /* 단계 표시 */
+  /* 입구 탭 — 시험지 / HTML 활동지 */
+  .kindtabs { display: flex; gap: 8px; margin-bottom: 16px; }
+  .kindtab {
+    flex: 1; text-align: left; padding: 12px 14px; border: 2px solid var(--line);
+    border-radius: 10px; font-size: 14px; font-weight: 800; color: var(--gray);
+    background: #fbfcfe; cursor: pointer; transition: .15s;
+  }
+  .kindtab b { display: block; font-size: 11px; opacity: .75; font-weight: 600; margin-top: 2px; }
+  .kindtab:hover { border-color: #c7d2e0; }
+  .kindtab.on { border-color: var(--blue); background: #eef5ff; color: var(--blue); }
+  /* 활동지 필드 표 */
+  #sheetTable td.fid { text-align: center; font-weight: 700; color: var(--blue); font-family: ui-monospace, monospace; }
+  #sheetTable input[type=text] { width: 100%; padding: 6px 8px; font-size: 13px; }
+  #sheetTable .ctx { font-size: 11.5px; color: var(--gray); }
+  #sheetTable .kind { font-size: 11px; font-weight: 700; background: #edf2f7; border-radius: 999px; padding: 1px 7px; display: inline-block; margin-top: 3px; }
+  #sheetTable tr.off { opacity: .5; }
   .steps { display: flex; gap: 8px; margin-bottom: 16px; }
   .step { flex: 1; text-align: center; padding: 10px; border: 1px solid var(--line); border-radius: 10px; font-size: 13px; font-weight: 700; color: var(--gray); background: #fbfcfe; }
   .step.on { color: #fff; background: var(--blue); border-color: var(--blue); }
@@ -261,6 +280,13 @@
 
 <div class="wrap">
   <div class="card">
+    <!-- 입구 고르기 — 시험지(HTML·PDF)와 HTML 활동지는 완전히 다른 파이프라인이다. -->
+    <div class="kindtabs">
+      <button type="button" class="kindtab on" id="kindExam">📄 시험지 <b>HTML · PDF · 문항 나누기</b></button>
+      <button type="button" class="kindtab" id="kindSheet">🎨 HTML 활동지 <b>원본 디자인 그대로 · 입력칸 자동 감지</b></button>
+    </div>
+
+    <div id="paneExam">
     <div class="steps">
       <div class="step on" id="step1">1. 문제<b>파일·붙여넣기</b></div>
       <div class="step" id="step2">2. 정답<b>채점 설정</b></div>
@@ -355,6 +381,69 @@
       <div class="ed-right">
         <div class="preview-head"><b>학생 화면 미리보기</b><span class="tag">실시간</span></div>
         <iframe id="preview" class="preview-frame" title="미리보기"></iframe>
+      </div>
+    </div>
+    </div><!-- /paneExam -->
+
+    <!-- ============ HTML 활동지 입구 ============ -->
+    <div id="paneSheet" style="display:none;">
+      <div class="editor">
+        <div class="ed-left">
+          <label for="sheetTitle">활동 제목</label>
+          <input id="sheetTitle" type="text" placeholder="예) 1일차 · AI 영화감독 활동지" />
+
+          <label>활동지 파일 (.html)</label>
+          <div class="dropzone" id="sheetDrop">
+            <input id="sheetFile" type="file" accept=".html,.htm" />
+            <div class="big">🎨 활동지 .html 을 끌어놓거나 클릭해서 선택</div>
+            <div class="muted" id="sheetHint">직접 만든 활동지를 <b>디자인 그대로</b> 학생에게 띄우고, 입력칸만 찾아 응답을 모읍니다.</div>
+          </div>
+
+          <div id="sheetFieldsBox" style="display:none;">
+            <label style="margin-top:14px;">응답 칸 확인 <span class="muted" id="sheetCount"></span></label>
+            <div class="muted" style="margin-bottom:6px;">
+              라벨은 <b>결과표의 열 이름</b>이 됩니다 — 고쳐 쓸 수 있어요.
+              <b>수집</b>을 끄면 그 칸은 모으지 않습니다(진행률 바 같은 건 답이 아니니 꺼 두세요).
+            </div>
+            <table class="qtable" id="sheetTable">
+              <thead><tr>
+                <th class="num">ID</th>
+                <th>라벨 (열 이름)</th>
+                <th style="width:150px;">문맥 · 종류</th>
+                <th style="width:56px;text-align:center;">수집</th>
+              </tr></thead>
+              <tbody id="sheetBody"></tbody>
+            </table>
+          </div>
+
+          <div id="sheetNotice" style="display:none; margin-top:10px; padding:8px 12px; border-radius:8px; font-size:13px;"></div>
+
+          <div class="row" style="margin-top:18px;">
+            <button class="btn-green" id="sheetPublishBtn">🚀 발행하기</button>
+            <button class="btn-outline" id="sheetDraftBtn">💾 임시 저장</button>
+            <button class="btn-gray" id="sheetCancelBtn" style="display:none;">수정 취소</button>
+          </div>
+
+          <div class="publish-box" id="sheetPublishBox">
+            <div style="font-weight:800; margin-bottom:10px;">✅ 발행 완료! 학생에게 아래로 안내하세요.</div>
+            <div class="pub-grid">
+              <div id="sheetQrBox"></div>
+              <div>
+                <div class="muted">입장 코드</div>
+                <div class="pub-code" id="sheetPubCode">----</div>
+                <div class="muted" style="margin-top:8px;">또는 주소로 입장</div>
+                <div class="pub-link"><a id="sheetPubLink" href="#" target="_blank"></a></div>
+                <div class="muted" style="margin-top:4px;">짧은 입장: <a id="sheetPubJoin" href="#" target="_blank"></a></div>
+                <div style="margin-top:8px;"><a id="sheetPubResults" href="#" target="_blank">📊 응답 보기 →</a></div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div class="ed-right">
+          <div class="preview-head"><b>학생 화면 미리보기</b><span class="tag">정제 후</span></div>
+          <iframe id="sheetPreview" class="preview-frame" title="활동지 미리보기"></iframe>
+        </div>
       </div>
     </div>
   </div>
@@ -4632,15 +4721,21 @@ function loadList() {
 function rowHtml(a) {
   var when = a.created_at ? new Date(a.created_at).toLocaleString('ko-KR') : '';
   var badge = a.status === 'draft' ? '<span class="badge draft">작성중</span>' : '<span class="badge open">진행중</span>';
+  var sheet = a.kind === 'html_sheet';
+  // 활동지는 점수가 없다 → 대시보드 대신 '응답 보기', 발표 모드는 자리가 없다.
+  var kindBadge = sheet ? ' <span class="badge draft">🎨 활동지</span>' : '';
+  var results = sheet
+    ? '<a class="btn btn-blue btn-sm" href="' + SERVER + '/sheet/' + a.id + '" target="_blank">📊 응답 보기</a>'
+    : '<a class="btn btn-blue btn-sm" href="' + SERVER + '/dashboard/' + a.id + '" target="_blank">📊 대시보드</a>' +
+      '<a class="btn btn-green btn-sm" href="' + SERVER + '/present/' + a.id + '" target="_blank">🎬 발표</a>';
   return '<div class="list-item">' +
-    '<div class="li-main"><div class="li-title">' + escapeHtml(a.title || '(제목 없음)') + ' ' + badge + '</div>' +
+    '<div class="li-main"><div class="li-title">' + escapeHtml(a.title || '(제목 없음)') + ' ' + badge + kindBadge + '</div>' +
       '<div class="li-sub">입장코드 <span class="li-code">' + (a.join_code || '----') + '</span> · ' + when + '</div></div>' +
     '<div class="li-actions">' +
       '<a class="btn btn-blue btn-sm" href="' + SERVER + '/live/' + a.id + '" target="_blank">🟢 실시간 현황</a>' +
-      '<a class="btn btn-blue btn-sm" href="' + SERVER + '/dashboard/' + a.id + '" target="_blank">📊 대시보드</a>' +
-      '<a class="btn btn-green btn-sm" href="' + SERVER + '/present/' + a.id + '" target="_blank">🎬 발표</a>' +
+      results +
       '<button class="btn-outline btn-sm" data-act="qr" data-id="' + a.id + '" data-code="' + (a.join_code || '') + '">QR</button>' +
-      '<button class="btn-gray btn-sm" data-act="edit" data-id="' + a.id + '">수정</button>' +
+      '<button class="btn-gray btn-sm" data-act="edit" data-id="' + a.id + '" data-kind="' + (a.kind || 'exam') + '">수정</button>' +
       '<button class="btn-gray btn-sm" data-act="dup" data-id="' + a.id + '">복제</button>' +
       '<button class="btn-red btn-sm" data-act="del" data-id="' + a.id + '">삭제</button>' +
     '</div></div>';
@@ -4650,7 +4745,11 @@ function bindRowActions() {
     b.addEventListener('click', function () {
       var id = b.getAttribute('data-id'), act = b.getAttribute('data-act');
       if (act === 'del') deleteActivity(id);
-      else if (act === 'edit') enterEditMode(id);
+      else if (act === 'edit') {
+        // 활동지는 문항표·정답표가 없어 시험지 편집기로 열면 화면이 어긋난다 → 전용 편집으로 보낸다.
+        if (b.getAttribute('data-kind') === 'html_sheet') enterSheetEdit(id);
+        else enterEditMode(id);
+      }
       else if (act === 'dup') duplicateActivity(id);
       else if (act === 'qr') showQr(id, b.getAttribute('data-code'));
     });
@@ -4682,6 +4781,224 @@ document.getElementById('qrModal').addEventListener('click', function (e) { if (
 function escapeHtml(s) {
   return String(s == null ? '' : s).replace(/[&<>"']/g, function (c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]; });
 }
+
+// ================= HTML 활동지 입구 =================
+// 시험지 파이프라인(문항 나누기·정답표·채점)과 아무것도 공유하지 않는다.
+// 여기서 하는 일은 셋뿐: 문서를 정제하고 → 입력칸을 찾아 교사에게 확인받고 → 통째로 저장한다.
+var sheetHtml = null;      // 정제 + data-fid 까지 박은 최종 문서
+var sheetFields = [];      // 교사가 확인/수정한 필드 목록
+var sheetEditingId = null;
+
+function kindTab(which) {
+  var sheet = which === 'sheet';
+  document.getElementById('kindExam').className = 'kindtab' + (sheet ? '' : ' on');
+  document.getElementById('kindSheet').className = 'kindtab' + (sheet ? ' on' : '');
+  document.getElementById('paneExam').style.display = sheet ? 'none' : '';
+  document.getElementById('paneSheet').style.display = sheet ? '' : 'none';
+}
+document.getElementById('kindExam').addEventListener('click', function () { kindTab('exam'); });
+document.getElementById('kindSheet').addEventListener('click', function () { kindTab('sheet'); });
+
+// ---- 파일 받기 ----
+var sheetDz = document.getElementById('sheetDrop');
+var sheetFileInput = document.getElementById('sheetFile');
+sheetDz.addEventListener('click', function (e) { if (e.target.tagName !== 'INPUT') sheetFileInput.click(); });
+sheetFileInput.addEventListener('change', function (e) { if (e.target.files[0]) readSheet(e.target.files[0]); });
+['dragenter', 'dragover'].forEach(function (t) {
+  sheetDz.addEventListener(t, function (e) { e.preventDefault(); sheetDz.classList.add('drag'); });
+});
+['dragleave', 'drop'].forEach(function (t) {
+  sheetDz.addEventListener(t, function (e) { e.preventDefault(); sheetDz.classList.remove('drag'); });
+});
+sheetDz.addEventListener('drop', function (e) {
+  var f = e.dataTransfer && e.dataTransfer.files && e.dataTransfer.files[0];
+  if (f) readSheet(f);
+});
+
+function readSheet(file) {
+  if (!/\.html?$/i.test(file.name)) { sheetNotice('warn', 'HTML 파일(.html)만 올릴 수 있어요. PDF 는 왼쪽 [시험지] 탭을 쓰세요.'); return; }
+  var fr = new FileReader();
+  fr.onload = function () { ingestSheet(String(fr.result || ''), file.name); };
+  fr.onerror = function () { sheetNotice('warn', '파일을 읽지 못했습니다.'); };
+  fr.readAsText(file, 'utf-8');
+}
+
+// 업로드 → 정제 → 감지. 순서가 중요하다: 먼저 정제해서 스크립트를 걷어낸 '진짜 저장될 문서' 위에서
+// 칸을 찾아야, 교사가 확인한 f3 과 학생 화면의 f3 이 같은 칸이 된다.
+function ingestSheet(raw, name) {
+  var clean = window.sanitizeSheet(raw);
+  var doc = new DOMParser().parseFromString(clean, 'text/html');
+  var fields = window.SheetFields.detectFields(doc);      // data-fid 를 문서에 박는다
+
+  if (!fields.length) {
+    sheetHtml = null; sheetFields = [];
+    document.getElementById('sheetFieldsBox').style.display = 'none';
+    sheetNotice('warn', '이 문서에서 입력칸(textarea·input·contenteditable)을 찾지 못했어요. 활동지에 학생이 쓸 칸이 있는지 확인하세요.');
+    return;
+  }
+
+  sheetHtml = '<!doctype html>\n' + doc.documentElement.outerHTML;
+  sheetFields = fields;
+
+  var t = document.getElementById('sheetTitle');
+  if (!t.value.trim()) t.value = (doc.title || name.replace(/\.html?$/i, '')).trim();
+
+  renderSheetFields();
+  renderSheetPreview();
+
+  var dropped = countScripts(raw);
+  sheetNotice('ok', '입력칸 ' + fields.length + '개를 찾았어요.' +
+    (dropped ? ' 안전을 위해 문서 안의 스크립트 ' + dropped + '개는 제거했고, 진행률 바·복사 버튼은 학생 화면에서 되살립니다.' : ''));
+}
+
+function countScripts(raw) { return (String(raw).match(/<script\b/gi) || []).length; }
+
+function renderSheetFields() {
+  var tb = document.getElementById('sheetBody');
+  tb.innerHTML = '';
+  sheetFields.forEach(function (f, i) {
+    var tr = document.createElement('tr');
+    if (!f.collect) tr.className = 'off';
+
+    var tdId = document.createElement('td');
+    tdId.className = 'fid'; tdId.textContent = f.id;
+
+    var tdLab = document.createElement('td');
+    var inp = document.createElement('input');
+    inp.type = 'text'; inp.value = f.label;
+    inp.addEventListener('input', function () { sheetFields[i].label = inp.value; });
+    tdLab.appendChild(inp);
+
+    var tdCtx = document.createElement('td');
+    var ctx = document.createElement('div');
+    ctx.className = 'ctx'; ctx.textContent = f.section || '';
+    var kind = document.createElement('span');
+    kind.className = 'kind';
+    kind.textContent = f.tag === 'checkbox' ? '체크 ' + ((f.options || []).length) + '개' :
+      f.tag === 'textarea' ? 'textarea' : f.tag === 'rich' ? '서식 입력' : 'input';
+    tdCtx.appendChild(ctx); tdCtx.appendChild(kind);
+
+    var tdCol = document.createElement('td');
+    tdCol.style.textAlign = 'center';
+    var cb = document.createElement('input');
+    cb.type = 'checkbox'; cb.checked = !!f.collect;
+    cb.addEventListener('change', function () {
+      sheetFields[i].collect = cb.checked;
+      tr.className = cb.checked ? '' : 'off';
+      updateSheetCount();
+    });
+    tdCol.appendChild(cb);
+
+    tr.appendChild(tdId); tr.appendChild(tdLab); tr.appendChild(tdCtx); tr.appendChild(tdCol);
+    tb.appendChild(tr);
+  });
+  document.getElementById('sheetFieldsBox').style.display = 'block';
+  updateSheetCount();
+}
+
+function updateSheetCount() {
+  var on = sheetFields.filter(function (f) { return f.collect; }).length;
+  document.getElementById('sheetCount').textContent = '— ' + sheetFields.length + '개 중 ' + on + '개 수집';
+}
+
+// 미리보기는 '저장될 문서 그대로'를 보여 준다(학생 바는 서버가 붙이므로 여기엔 없다).
+function renderSheetPreview() {
+  var f = document.getElementById('sheetPreview');
+  f.srcdoc = sheetHtml || '';
+}
+
+function sheetNotice(kind, msg) {
+  var el = document.getElementById('sheetNotice');
+  el.style.display = 'block';
+  el.innerHTML = msg;
+  if (kind === 'warn') { el.style.background = '#fffaf0'; el.style.border = '1px solid #f6ad55'; el.style.color = '#975a16'; }
+  else { el.style.background = '#f0fff4'; el.style.border = '1px solid #9ae6b4'; el.style.color = '#22543d'; }
+}
+
+// ---- 발행 ----
+function submitSheet(status) {
+  var title = document.getElementById('sheetTitle').value.trim();
+  if (!title) { alert('활동 제목을 입력하세요.'); return; }
+  if (!sheetHtml) { alert('활동지 .html 파일을 먼저 올려주세요.'); return; }
+  if (!sheetFields.filter(function (f) { return f.collect; }).length) {
+    alert('수집할 칸이 하나도 없어요. [수집] 을 최소 하나는 켜 주세요.');
+    return;
+  }
+
+  var payload = { title: title, html_body: sheetHtml, kind: 'html_sheet', fields: sheetFields, status: status };
+  var isEdit = !!sheetEditingId;
+  var url = isEdit ? (SERVER + '/api/activities/' + sheetEditingId) : (SERVER + '/api/activities');
+
+  fetch(url, {
+    method: isEdit ? 'PUT' : 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  })
+    .then(function (r) { return r.json(); })
+    .then(function (d) {
+      if (!d.ok) throw new Error(d.error || '실패');
+      if (isEdit) {
+        alert('수정 반영 완료! 학생 화면은 다시 열면 새 내용이 나옵니다.');
+        exitSheetEdit();
+      } else if (status === 'draft') {
+        alert('임시 저장했습니다. 아래 "보관함"에서 이어서 편집·발행하세요.');
+        resetSheetForm();
+      } else {
+        showSheetPublish(d.activityId, d.join_code);
+      }
+      loadList();
+    })
+    .catch(function (e) { alert('실패: ' + e.message); });
+}
+document.getElementById('sheetPublishBtn').addEventListener('click', function () { submitSheet('open'); });
+document.getElementById('sheetDraftBtn').addEventListener('click', function () { submitSheet('draft'); });
+document.getElementById('sheetCancelBtn').addEventListener('click', exitSheetEdit);
+
+function showSheetPublish(id, code) {
+  var goUrl = SERVER + '/go/' + id;
+  document.getElementById('sheetPubCode').textContent = code || '----';
+  var l = document.getElementById('sheetPubLink'); l.href = goUrl; l.textContent = goUrl;
+  var j = document.getElementById('sheetPubJoin'); j.href = SERVER + '/join/' + code; j.textContent = SERVER + '/join/' + code;
+  document.getElementById('sheetPubResults').href = SERVER + '/sheet/' + id;
+  var qb = document.getElementById('sheetQrBox'); qb.innerHTML = '';
+  if (window.QRCode) new QRCode(qb, { text: goUrl, width: 128, height: 128 });
+  document.getElementById('sheetPublishBox').classList.add('show');
+  document.getElementById('sheetPublishBox').scrollIntoView({ behavior: 'smooth' });
+}
+
+function resetSheetForm() {
+  sheetHtml = null; sheetFields = []; sheetEditingId = null;
+  document.getElementById('sheetTitle').value = '';
+  document.getElementById('sheetFile').value = '';
+  document.getElementById('sheetFieldsBox').style.display = 'none';
+  document.getElementById('sheetNotice').style.display = 'none';
+  document.getElementById('sheetPublishBox').classList.remove('show');
+  document.getElementById('sheetPreview').srcdoc = '';
+  document.getElementById('sheetPublishBtn').textContent = '🚀 발행하기';
+  document.getElementById('sheetCancelBtn').style.display = 'none';
+}
+
+function enterSheetEdit(id) {
+  fetch(SERVER + '/api/activities/' + id)
+    .then(function (r) { return r.json(); })
+    .then(function (d) {
+      if (!d.ok) throw new Error(d.error);
+      var a = d.activity;
+      kindTab('sheet');
+      sheetEditingId = id;
+      sheetHtml = a.html_body || '';
+      sheetFields = Array.isArray(a.fields) ? a.fields : [];
+      document.getElementById('sheetTitle').value = a.title || '';
+      renderSheetFields();
+      renderSheetPreview();
+      document.getElementById('sheetPublishBtn').textContent = '🚀 수정 반영(발행)';
+      document.getElementById('sheetCancelBtn').style.display = '';
+      sheetNotice('ok', '수정 모드 — 라벨·수집 여부를 고치고 [수정 반영]을 누르세요. 활동지를 통째로 바꾸려면 파일을 다시 올리세요.');
+      window.scrollTo({ top: 0, behavior: 'smooth' });
+    })
+    .catch(function (e) { alert('불러오기 실패: ' + e.message); });
+}
+function exitSheetEdit() { resetSheetForm(); }
 
 loadList();
 </script>
