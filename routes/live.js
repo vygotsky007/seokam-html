@@ -151,7 +151,8 @@ router.get('/live/state', async (req, res) => {
     supabase.from('questions').select('num, type, answer').eq('activity_id', activityId).order('num', { ascending: true }),
     supabase.from('live_sessions').select('nickname, current_q, answers, submitted, last_seen, messages').eq('activity_id', activityId),
     supabase.from('submissions').select('nickname, answers, auto_score').eq('activity_id', activityId),
-    supabase.from('activities').select('notices, closed_at').eq('id', activityId).single(),
+    // kind·fields 를 함께 준다: 활동지는 진행 매트릭스의 열이 문항 번호가 아니라 수집 필드다.
+    supabase.from('activities').select('notices, closed_at, kind, fields').eq('id', activityId).single(),
   ]);
 
   const now = Date.now();
@@ -171,6 +172,8 @@ router.get('/live/state', async (req, res) => {
 
   return res.json({
     ok: true,
+    kind: (act && act.kind) || 'exam',
+    fields: (act && act.fields) || [],       // 활동지일 때만 채워진다(시험지는 빈 배열)
     questions: (qs || []).map((q) => ({ num: q.num, type: q.type, answer: q.answer })),
     students,
     online: students.filter((s) => s.online).length,

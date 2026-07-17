@@ -4722,18 +4722,17 @@ function rowHtml(a) {
   var when = a.created_at ? new Date(a.created_at).toLocaleString('ko-KR') : '';
   var badge = a.status === 'draft' ? '<span class="badge draft">작성중</span>' : '<span class="badge open">진행중</span>';
   var sheet = a.kind === 'html_sheet';
-  // 활동지는 점수가 없다 → 대시보드 대신 '응답 보기', 발표 모드는 자리가 없다.
   var kindBadge = sheet ? ' <span class="badge draft">🎨 활동지</span>' : '';
-  var results = sheet
-    ? '<a class="btn btn-blue btn-sm" href="' + SERVER + '/sheet/' + a.id + '" target="_blank">📊 응답 보기</a>'
-    : '<a class="btn btn-blue btn-sm" href="' + SERVER + '/dashboard/' + a.id + '" target="_blank">📊 대시보드</a>' +
-      '<a class="btn btn-green btn-sm" href="' + SERVER + '/present/' + a.id + '" target="_blank">🎬 발표</a>';
+  // 두 유형의 버튼 구성을 같게 둔다 — 가는 곳만 다르다(활동지는 점수가 없어 결과 화면이 아예 다른 화면).
+  // 이름도 '응답 보기' 하나로 통일한다(예전엔 시험지만 '대시보드'라 불러 같은 자리 버튼이 두 이름이었다).
+  var results = '<a class="btn btn-blue btn-sm" href="' + SERVER + (sheet ? '/sheet/' : '/dashboard/') + a.id + '" target="_blank">📊 응답 보기</a>';
   return '<div class="list-item">' +
     '<div class="li-main"><div class="li-title">' + escapeHtml(a.title || '(제목 없음)') + ' ' + badge + kindBadge + '</div>' +
       '<div class="li-sub">입장코드 <span class="li-code">' + (a.join_code || '----') + '</span> · ' + when + '</div></div>' +
     '<div class="li-actions">' +
       '<a class="btn btn-blue btn-sm" href="' + SERVER + '/live/' + a.id + '" target="_blank">🟢 실시간 현황</a>' +
       results +
+      '<a class="btn btn-green btn-sm" href="' + SERVER + '/present/' + a.id + '" target="_blank">🎬 발표</a>' +
       '<button class="btn-outline btn-sm" data-act="qr" data-id="' + a.id + '" data-code="' + (a.join_code || '') + '">QR</button>' +
       '<button class="btn-gray btn-sm" data-act="edit" data-id="' + a.id + '" data-kind="' + (a.kind || 'exam') + '">수정</button>' +
       '<button class="btn-gray btn-sm" data-act="dup" data-id="' + a.id + '">복제</button>' +

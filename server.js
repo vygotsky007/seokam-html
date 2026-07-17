@@ -40,8 +40,9 @@ app.use('/api', sheetsRouter);   // HTML 활동지 결과(행=학생, 열=필드
 // 교사용 실시간 교실 대시보드
 app.get('/live/:id', async (req, res) => {
   const { data: activity, error } = await supabase
-    .from('activities').select('id, title').eq('id', req.params.id).single();
+    .from('activities').select('id, title, kind').eq('id', req.params.id).single();
   if (error || !activity) return res.status(404).send('<h1>활동을 찾을 수 없습니다.</h1>');
+  // 화면은 하나다 — 열의 정체(문항 번호 / 수집 칸)만 /api/live/state 의 kind 를 보고 갈린다.
   res.type('html').send(renderLivePage(activity));
 });
 
@@ -86,12 +87,18 @@ app.get('/present/:id', async (req, res) => {
   const { id } = req.params;
   const { data: activity, error } = await supabase
     .from('activities')
-    .select('id, title, html_body')
+    .select('id, title, html_body, kind, fields')
     .eq('id', id)
     .single();
 
   if (error || !activity) {
     return res.status(404).send('<h1>활동을 찾을 수 없습니다.</h1>');
+  }
+
+  // HTML 활동지: 정답이 없으니 정오필터·보기분포가 설 자리가 없다.
+  // 발표에서 볼 것은 '아이들이 뭐라고 썼는가' 하나뿐 → 전용 화면(답 함께 보기).
+  if (activity.kind === 'html_sheet') {
+    return res.type('html').send(renderSheetPresentPage(activity));
   }
 
   // 문항 조각(slice_image)이 있으면 문항 넘길 때 그 조각을 크게 표시 — 문항번호→이미지 맵을 페이지에 1회 주입
@@ -1154,14 +1161,22 @@ function renderLivePage(activity) {
   .closebtn { padding: 10px 16px; font-weight: 800; color: #fff; background: #c53030; border: 0; border-radius: 8px; cursor: pointer; }
   .closed { padding: 10px 12px; background: #fed7d7; border: 1px solid #fc8181; border-radius: 8px; font-weight: 800; color: #822727; }
   table.matrix { border-collapse: collapse; font-size: 13px; width: 100%; }
+  /* 활동지는 열이 서너 개뿐이다. width:100% 를 그대로 두면 남는 폭을 '학생' 열이 다 먹어
+     칸들이 화면 오른쪽 끝으로 밀려난다(문항 20개짜리 시험지에서는 안 보이던 문제).
+     내용 너비로 두어 이름 옆에 붙게 한다. */
+  table.matrix.sheet { width: auto; }
+  table.matrix.sheet td.name, table.matrix.sheet th.name { min-width: 120px; }
   table.matrix th, table.matrix td { border: 1px solid #e2e8f0; padding: 5px 6px; text-align: center; }
   table.matrix th.name, table.matrix td.name { text-align: left; white-space: nowrap; font-weight: 700; position: sticky; left: 0; background: #fff; }
   table.matrix th.qh { cursor: pointer; }
   table.matrix th.qh:hover { background: #ebf8ff; }
+  /* 활동지 열 머리글 — 번호가 아니라 라벨이라 자리가 더 필요하다. 누를 것도 없으니 손모양 없음 */
+  table.matrix th.fh { cursor: default; min-width: 62px; max-width: 96px; font-size: 11.5px; line-height: 1.3; white-space: normal; word-break: break-all; }
+  table.matrix th.fh:hover { background: #f7fafc; }
   table.matrix td.cell { width: 30px; height: 26px; }
-  td.a { background: #c6f6d5; }          /* 답함 */
-  td.c { background: #bee3f8; box-shadow: inset 0 0 0 2px #2b6cb0; }  /* 지금 보는 중 */
-  td.u { background: #edf2f7; }          /* 미답 */
+  td.a { background: #c6f6d5; }          /* 답함 / 입력 있음 */
+  td.c { background: #bee3f8; box-shadow: inset 0 0 0 2px #2b6cb0; }  /* 지금 보는 중 / 입력 중 */
+  td.u { background: #edf2f7; }          /* 미답 / 비어 있음 */
   tr.off td.name { color: #a0aec0; }
   .badge { display: inline-block; font-size: 11px; font-weight: 800; padding: 1px 7px; border-radius: 999px; margin-left: 6px; }
   .badge.on { background: #c6f6d5; color: #22543d; }
@@ -1234,7 +1249,7 @@ function renderLivePage(activity) {
     </div>
 
     <div class="card">
-      <h2>📊 진행 매트릭스 <span class="muted">— 문항 번호를 누르면 응답 분포를 볼 수 있어요</span></h2>
+      <h2>📊 진행 매트릭스 <span class="muted" id="mxHint">— 문항 번호를 누르면 응답 분포를 볼 수 있어요</span></h2>
       <div class="scroller"><table class="matrix" id="matrix"></table></div>
     </div>
 
@@ -1264,49 +1279,148 @@ function renderLivePage(activity) {
       .catch(function () {});
   }
 
+  // ---- 매트릭스의 열 ----
+  // 시험지는 문항 번호가 열이다. 활동지는 문항이 없으니 '수집 필드'가 열이다.
+  // 두 화면을 따로 만들지 않는 이유: 공지·개별 메시지·마감·학생 패널은 완전히 같은 기능이라,
+  // 갈라놓으면 한쪽만 고쳐지는 사고가 난다. 다른 건 열의 정체뿐이라 여기서만 가른다.
+  function isSheet() { return state.kind === 'html_sheet'; }
+  function cols() {
+    if (isSheet()) {
+      return (state.fields || []).filter(function (f) { return f.collect; }).map(function (f) {
+        return { key: f.id, head: shortLabel(f.label), title: f.label + (f.section ? ' · ' + f.section : ''), field: f };
+      });
+    }
+    return (state.questions || []).map(function (q) {
+      return { key: q.num, head: String(q.num), title: q.num + '번', field: null };
+    });
+  }
+  // 열 머리글은 좁다 — 라벨을 줄여 넣고 전체는 title 로 띄운다.
+  function shortLabel(s) {
+    var t = String(s || '').trim();
+    return t.length > 8 ? t.slice(0, 7) + '…' : t;
+  }
+
+  // ---- '입력 중' 판정 ----
+  // 서버에 필드별 타임스탬프는 없다. 그래서 폴링 사이에 값이 바뀌었는지로 본다:
+  // 바뀐 순간을 기록해 두고 10초간 파랑. 학생 화면이 타이핑 멎고 600ms 뒤 하트비트를 쏘므로
+  // 실제 타이핑과 이 판정의 시차는 한 폴링(3초) 안쪽이다.
+  // (컬럼을 새로 파지 않은 이유 — 교사 화면에서만 필요한 표시라 스키마를 늘릴 값이 아니다)
+  var TYPING_MS = 10000;
+  var lastSeenVal = {};    // nick -> { fid: 직전 폴링의 값 }
+  var typedAt = {};        // nick -> { fid: 바뀐 것을 본 시각 }
+  function noteTyping() {
+    if (!isSheet()) return;
+    var now = Date.now();
+    (state.students || []).forEach(function (st) {
+      var nick = st.nickname;
+      var prev = lastSeenVal[nick];
+      var cur = {};
+      cols().forEach(function (c) { cur[c.key] = JSON.stringify((st.answers || {})[c.key] == null ? '' : st.answers[c.key]); });
+      if (prev) {
+        Object.keys(cur).forEach(function (k) {
+          if (prev[k] !== undefined && prev[k] !== cur[k]) {
+            typedAt[nick] = typedAt[nick] || {};
+            typedAt[nick][k] = now;
+          }
+        });
+      }
+      lastSeenVal[nick] = cur;
+    });
+  }
+  function isTyping(nick, key) {
+    var t = typedAt[nick] && typedAt[nick][key];
+    return !!t && (Date.now() - t) < TYPING_MS;
+  }
+
+  // 답이 들어 있는가 — 시험지는 q1·q2…, 활동지는 f1·f3… (체크 묶음은 배열)
+  function hasVal(st, col) {
+    if (!isSheet()) return hasAns(st, col.key);
+    var v = (st.answers || {})[col.key];
+    if (v == null) return false;
+    if (Array.isArray(v)) return v.length > 0;
+    return String(v).trim() !== '';
+  }
+
+  // 답 한 칸을 사람이 읽는 글로. 체크 묶음(배열)은 고른 항목 이름으로 편다.
+  function showVal(st, col) {
+    var v = (st.answers || {})[isSheet() ? col.key : 'q' + col.key];
+    if (v == null) return '';
+    if (Array.isArray(v)) {
+      var opts = (col.field && col.field.options) || [];
+      return v.map(function (i) { return opts[i] != null ? opts[i] : '#' + (i + 1); }).join(' · ');
+    }
+    return String(v).trim();
+  }
+
   function render() {
-    var qs = state.questions, sts = state.students;
+    var cs = cols(), sts = state.students;
     document.getElementById('sum').innerHTML =
       '접속 ' + state.online + '명 · 제출 ' + state.submitted + '명' +
       '<span class="off">(전체 ' + sts.length + '명)</span>';
+    noteTyping();
+
+    document.getElementById('mxHint').innerHTML = isSheet()
+      ? '— 열은 <b>수집 칸</b>이에요. <span style="background:#c6f6d5;padding:0 6px;border-radius:4px;">입력 있음</span> ' +
+        '<span style="background:#bee3f8;padding:0 6px;border-radius:4px;">입력 중</span> ' +
+        '<span style="background:#edf2f7;padding:0 6px;border-radius:4px;">비어 있음</span> · 이름·칸을 누르면 쓴 글이 보여요'
+      : '— 문항 번호를 누르면 응답 분포를 볼 수 있어요';
 
     // ---- 진행 매트릭스 ----
     var h = '<thead><tr><th class="name">학생</th>';
-    qs.forEach(function (q) { h += '<th class="qh" data-q="' + q.num + '">' + q.num + '</th>'; });
+    cs.forEach(function (c) {
+      h += '<th class="qh' + (isSheet() ? ' fh' : '') + '" data-q="' + esc(String(c.key)) + '" title="' + esc(c.title) + '">' + esc(c.head) + '</th>';
+    });
     h += '</tr></thead><tbody>';
     sts.forEach(function (st) {
       h += '<tr class="' + (st.online ? '' : 'off') + '"><td class="name" data-nick="' + esc(st.nickname) + '" title="눌러서 학생 패널 열기">' + esc(st.nickname) +
         (st.online ? '' : '<span class="badge offb">연결 끊김</span>') +
         (st.submitted ? '<span class="badge sub">제출</span>' : '') + '</td>';
-      qs.forEach(function (q) {
-        var cls = hasAns(st, q.num) ? 'a' : (st.current_q === q.num ? 'c' : 'u');
-        if (st.current_q === q.num && cls === 'a') cls = 'a c';
-        h += '<td class="cell ' + cls + '" data-nick="' + esc(st.nickname) + '" data-q="' + q.num + '"></td>';
+      cs.forEach(function (c) {
+        var cls;
+        if (isSheet()) {
+          // 파랑(입력 중)이 초록(입력 있음)을 이긴다 — 지금 손이 가 있는 칸을 먼저 보여 준다.
+          cls = isTyping(st.nickname, c.key) ? 'c' : (hasVal(st, c) ? 'a' : 'u');
+        } else {
+          cls = hasAns(st, c.key) ? 'a' : (st.current_q === c.key ? 'c' : 'u');
+          if (st.current_q === c.key && cls === 'a') cls = 'a c';
+        }
+        h += '<td class="cell ' + cls + '" data-nick="' + esc(st.nickname) + '" data-q="' + esc(String(c.key)) + '"></td>';
       });
       h += '</tr>';
     });
     h += '</tbody><tfoot><tr><td class="name">답한 학생</td>';
-    qs.forEach(function (q) {
-      var n = sts.filter(function (st) { return hasAns(st, q.num); }).length;
+    cs.forEach(function (c) {
+      var n = sts.filter(function (st) { return hasVal(st, c); }).length;
       h += '<td>' + n + '</td>';
     });
     h += '</tr></tfoot>';
-    document.getElementById('matrix').innerHTML = h;
-    document.querySelectorAll('th.qh').forEach(function (th) {
-      var q = Number(th.getAttribute('data-q'));
-      th.onclick = function () { pickedQ = q; renderDist(); };
-      // 열 머리글 우클릭/길게 누르기 = "다 같이 N번 보세요"
-      th.oncontextmenu = function (e) { e.preventDefault(); showPop(e, null, q); return false; };
-      var timer = null;
-      th.onpointerdown = function (e) { timer = setTimeout(function () { showPop(e, null, q); }, 550); };
-      th.onpointerup = th.onpointerleave = function () { clearTimeout(timer); };
-    });
+    var mx = document.getElementById('matrix');
+    mx.className = 'matrix' + (isSheet() ? ' sheet' : '');
+    mx.innerHTML = h;
+
+    // 문항 이동·보기 분포는 '문항 번호'가 있어야 성립한다 → 활동지에서는 열 머리글이 그냥 이름표다.
+    if (!isSheet()) {
+      document.querySelectorAll('th.qh').forEach(function (th) {
+        var q = Number(th.getAttribute('data-q'));
+        th.onclick = function () { pickedQ = q; renderDist(); };
+        // 열 머리글 우클릭/길게 누르기 = "다 같이 N번 보세요"
+        th.oncontextmenu = function (e) { e.preventDefault(); showPop(e, null, q); return false; };
+        var timer = null;
+        th.onpointerdown = function (e) { timer = setTimeout(function () { showPop(e, null, q); }, 550); };
+        th.onpointerup = th.onpointerleave = function () { clearTimeout(timer); };
+      });
+    }
     document.querySelectorAll('#matrix td.name').forEach(function (td) {
       td.onclick = function () { openStu = td.getAttribute('data-nick'); renderStu(); };
     });
-    // 셀 클릭 = 이 학생을 이 문항으로 보내기(행 × 열 = 직관 그대로)
     document.querySelectorAll('#matrix td.cell').forEach(function (td) {
-      td.onclick = function (e) { showPop(e, td.getAttribute('data-nick'), Number(td.getAttribute('data-q'))); };
+      if (isSheet()) {
+        // 보낼 문항 번호가 없다 → 셀 클릭은 그 학생 패널을 연다(거기서 쓴 글·메시지를 본다).
+        td.onclick = function () { openStu = td.getAttribute('data-nick'); renderStu(); };
+      } else {
+        // 셀 클릭 = 이 학생을 이 문항으로 보내기(행 × 열 = 직관 그대로)
+        td.onclick = function (e) { showPop(e, td.getAttribute('data-nick'), Number(td.getAttribute('data-q'))); };
+      }
     });
     if (openStu) renderStu();
 
@@ -1363,28 +1477,33 @@ function renderLivePage(activity) {
     if (!st) { panel.classList.remove('show'); return; }
     panel.classList.add('show');
 
-    var qs = state.questions || [];
-    var answered = qs.filter(function (q) { return hasAns(st, q.num); }).length;
+    var cs = cols();
+    var answered = cs.filter(function (c) { return hasVal(st, c); }).length;
 
     var h = '<h3>' + esc(st.nickname) + '</h3>' +
       '<div class="stat">' +
       (st.online ? '🟢 접속 중' : '⚪ 연결 끊김') +
-      ' · 현재 <b>' + (st.current_q != null ? st.current_q + '번' : '—') + '</b>' +
-      ' · 답한 문항 <b>' + answered + '/' + qs.length + '</b>' +
+      (isSheet() ? '' : ' · 현재 <b>' + (st.current_q != null ? st.current_q + '번' : '—') + '</b>') +
+      ' · ' + (isSheet() ? '채운 칸' : '답한 문항') + ' <b>' + answered + '/' + cs.length + '</b>' +
       ' · ' + (st.submitted ? '제출 완료' : '미제출') +
       '</div>';
 
-    h += '<div class="lbl" style="font-weight:800;font-size:13px;margin-bottom:4px;">문항별 답 (원문 그대로)</div>';
-    h += qs.map(function (q) {
-      var v = String((st.answers || {})['q' + q.num] || '').trim();
-      return '<div class="ansrow"><span class="n">' + q.num + '번</span>' +
+    h += '<div class="lbl" style="font-weight:800;font-size:13px;margin-bottom:4px;">' +
+      (isSheet() ? '칸별로 쓴 글 (원문 그대로)' : '문항별 답 (원문 그대로)') + '</div>';
+    h += cs.map(function (c) {
+      var v = showVal(st, c);
+      return '<div class="ansrow"><span class="n"' + (isSheet() ? ' title="' + esc(c.title) + '"' : '') + '>' +
+        esc(isSheet() ? c.head : c.key + '번') + '</span>' +
         '<span class="v' + (v ? '' : ' none') + '">' + (v ? esc(v) : '—') + '</span></div>';
     }).join('');
 
-    h += '<div class="lbl" style="font-weight:800;font-size:13px;margin:14px 0 4px;">문항 이동 요청</div>';
-    h += '<div class="gotorow"><select id="stuGotoQ">' +
-      qs.map(function (q) { return '<option value="' + q.num + '">' + q.num + '번</option>'; }).join('') +
-      '</select><button type="button" id="stuGoto">이동 요청</button></div>';
+    // 문항 이동 요청은 보낼 번호가 있어야 성립한다 — 활동지는 한 장짜리라 이동이라는 개념이 없다.
+    if (!isSheet()) {
+      h += '<div class="lbl" style="font-weight:800;font-size:13px;margin:14px 0 4px;">문항 이동 요청</div>';
+      h += '<div class="gotorow"><select id="stuGotoQ">' +
+        cs.map(function (c) { return '<option value="' + c.key + '">' + c.key + '번</option>'; }).join('') +
+        '</select><button type="button" id="stuGoto">이동 요청</button></div>';
+    }
 
     h += '<div class="lbl" style="font-weight:800;font-size:13px;margin:14px 0 4px;">개별 메시지</div>';
     h += '<div class="quick">' + QUICK.map(function (t, i) {
@@ -1404,9 +1523,14 @@ function renderLivePage(activity) {
       : '<div class="muted">보낸 메시지가 없어요.</div>') + '</div>';
 
     document.getElementById('stuBody').innerHTML = h;
-    document.getElementById('stuGoto').onclick = function () {
-      requestGoto([st.nickname], Number(document.getElementById('stuGotoQ').value));
-    };
+    // 활동지에는 이동 요청 UI 가 없다 — 없는 버튼에 바인딩하면 여기서 터져서
+    // 바로 아래 '개별 메시지' 바인딩이 통째로 안 걸린다(공지는 되는데 메시지만 죽는 꼴).
+    var gotoBtn = document.getElementById('stuGoto');
+    if (gotoBtn) {
+      gotoBtn.onclick = function () {
+        requestGoto([st.nickname], Number(document.getElementById('stuGotoQ').value));
+      };
+    }
     document.getElementById('stuSend').onclick = function () {
       var el = document.getElementById('stuMsg');
       sendMessage(st.nickname, el.value);
@@ -2631,7 +2755,7 @@ function renderDashboardPage(activity) {
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
-<title>결과 대시보드 — ${title}</title>
+<title>응답 보기 — ${title}</title>
 <style>
   * { box-sizing: border-box; }
   body { font-family: system-ui, -apple-system, "Segoe UI", sans-serif; margin: 0; background: #f5f6f8; color: #1a1a1a; }
@@ -3175,6 +3299,317 @@ function renderSheetStudentPage(activity) {
   return injectIntoSheet(activity.html_body || '', headExtra, bodyExtra);
 }
 
+// ───────────────── HTML 활동지 — 발표 모드(답 함께 보기) ─────────────────
+//
+// 시험지 발표 모드를 재사용하지 않는 이유: 그 화면의 뼈대는 '정답'이다 — 정오 필터, 보기 분포,
+// 문항 넘기기. 활동지에는 정답이 없고 문항도 없다. 여기서 볼 것은 하나뿐이다.
+// "이 질문에 우리 반이 뭐라고 썼는가" — 그래서 화면 전체가 그 한 가지에 맞춰져 있다.
+function renderSheetPresentPage(activity) {
+  const title = escapeHtml(activity.title || '활동');
+  const activityId = activity.id;
+
+  return `<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>발표 모드 — ${title}</title>
+<style>
+  /* TV·빔 프로젝터용 — 어두운 바탕에 큰 글씨. 기존 발표 모드와 같은 색을 쓴다. */
+  * { box-sizing: border-box; }
+  body { font-family: system-ui, -apple-system, "Segoe UI", sans-serif; margin: 0; background: #0f172a; color: #e2e8f0; height: 100vh; overflow: hidden; display: flex; flex-direction: column; }
+  .topbar { display: flex; align-items: center; gap: 12px; padding: 12px 20px; background: #1e293b; border-bottom: 1px solid #334155; flex-wrap: wrap; }
+  .topbar h1 { font-size: 16px; margin: 0; color: #94a3b8; font-weight: 600; white-space: nowrap; }
+  .participation { font-size: 14px; font-weight: 800; color: #4ade80; background: #14321f; border: 1px solid #22c55e44; padding: 5px 12px; border-radius: 999px; white-space: nowrap; }
+  .nav { display: flex; align-items: center; gap: 6px; margin-left: auto; flex-wrap: wrap; }
+  .nav button { min-width: 40px; height: 40px; padding: 0 12px; font-size: 15px; font-weight: 700; border: 1px solid #475569; background: #334155; color: #e2e8f0; border-radius: 8px; cursor: pointer; }
+  .nav button:hover { background: #3f4f66; }
+  .nav button.on { background: #3b82f6; border-color: #3b82f6; color: #fff; }
+  .live { font-size: 12px; color: #4ade80; white-space: nowrap; }
+
+  /* 필드 탭 — 무엇에 대한 답을 보는지가 이 화면의 전부라 크게 둔다 */
+  .tabs { display: flex; gap: 8px; padding: 12px 20px 0; overflow-x: auto; }
+  .tab { padding: 10px 16px; font-size: 15px; font-weight: 800; border: 1px solid #475569; background: #1e293b; color: #94a3b8; border-radius: 10px 10px 0 0; cursor: pointer; white-space: nowrap; max-width: 320px; overflow: hidden; text-overflow: ellipsis; }
+  .tab:hover { color: #e2e8f0; }
+  .tab.on { background: #0b1220; color: #fff; border-color: #3b82f6; border-bottom-color: #0b1220; }
+  .tab .sec { display: block; font-size: 11px; font-weight: 600; opacity: .65; }
+
+  .stage { flex: 1; overflow-y: auto; padding: 16px 20px 28px; background: #0b1220; }
+  .qline { font-size: 18px; font-weight: 800; color: #7dd3fc; margin-bottom: 14px; }
+  .qline .cnt { color: #64748b; font-weight: 600; font-size: 14px; margin-left: 8px; }
+
+  .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: 14px; }
+  .card { background: #1e293b; border: 1px solid #334155; border-radius: 12px; padding: 14px 16px; cursor: pointer; transition: transform .12s, border-color .12s; }
+  .card:hover { transform: translateY(-2px); border-color: #3b82f6; }
+  .card .who { font-size: 13px; font-weight: 800; color: #38bdf8; margin-bottom: 6px; }
+  .card .who .sub { font-size: 11px; color: #64748b; font-weight: 600; margin-left: 6px; }
+  .card .txt { font-size: var(--fs, 17px); line-height: 1.6; white-space: pre-wrap; word-break: break-word; color: #e2e8f0; }
+  .card.anon .who { color: #94a3b8; }
+  /* 새 답은 스르륵 — 폴링마다 화면이 튀면 발표가 끊긴다 */
+  @keyframes popin { from { opacity: 0; transform: translateY(10px) scale(.98); } to { opacity: 1; transform: none; } }
+  .card.fresh { animation: popin .32s ease-out; border-color: #22c55e; }
+  .card.roul { border-color: #f0a03c; background: #3a2c14; transform: scale(1.03); }
+  #empty { color: #64748b; text-align: center; padding: 60px 0; font-size: 16px; }
+
+  /* 크게 보기 — 낭독용 */
+  #big { position: fixed; inset: 0; background: rgba(2,6,23,.97); display: none; flex-direction: column; z-index: 100; padding: 28px 40px 20px; }
+  #big .bwho { font-size: 22px; font-weight: 800; color: #38bdf8; margin-bottom: 6px; }
+  #big .blab { font-size: 15px; color: #64748b; margin-bottom: 18px; }
+  #big .btxt { flex: 1; overflow-y: auto; font-size: var(--bfs, 40px); line-height: 1.55; white-space: pre-wrap; word-break: break-word; color: #f8fafc; font-weight: 500; }
+  #big .bnav { display: flex; align-items: center; gap: 10px; padding-top: 14px; border-top: 1px solid #1e293b; }
+  #big .bnav button { min-width: 44px; height: 44px; padding: 0 14px; font-size: 16px; font-weight: 800; border: 1px solid #475569; background: #334155; color: #e2e8f0; border-radius: 8px; cursor: pointer; }
+  #big .bnav .pos { color: #64748b; font-size: 14px; }
+  #big .bnav .hint { margin-left: auto; color: #475569; font-size: 12.5px; }
+</style>
+</head>
+<body>
+  <div class="topbar">
+    <h1>🎬 ${title}</h1>
+    <span class="participation" id="part">—</span>
+    <span class="live" id="live">● 실시간</span>
+    <div class="nav">
+      <button id="anonBtn" type="button" title="닉네임을 가려 익명으로 봅니다">🙈 이름 가리기</button>
+      <button id="pickBtn" type="button" title="카드 하나를 무작위로 골라 크게 봅니다">🎲 무작위 뽑기</button>
+      <button id="fsMinus" type="button" title="글자 작게">A-</button>
+      <button id="fsPlus" type="button" title="글자 크게">A+</button>
+    </div>
+  </div>
+
+  <div class="tabs" id="tabs"></div>
+  <div class="stage">
+    <div class="qline" id="qline"></div>
+    <div class="grid" id="grid"></div>
+    <div id="empty">아직 이 칸에 쓴 학생이 없어요. 학생이 쓰면 여기에 바로 나타납니다.</div>
+  </div>
+
+  <div id="big">
+    <div class="bwho" id="bwho"></div>
+    <div class="blab" id="blab"></div>
+    <div class="btxt" id="btxt"></div>
+    <div class="bnav">
+      <button id="bprev" type="button">← 이전</button>
+      <button id="bnext" type="button">다음 →</button>
+      <span class="pos" id="bpos"></span>
+      <button id="bfsMinus" type="button">A-</button>
+      <button id="bfsPlus" type="button">A+</button>
+      <span class="hint">←/→ 넘기기 · Esc 닫기</span>
+    </div>
+  </div>
+
+<script>
+(function () {
+  var ACTIVITY_ID = ${jsonForScript(activityId)};
+  var data = null;
+  var curFid = null;
+  var anon = false;
+  var bigIdx = -1;
+  var rendered = {};        // 닉네임 -> 카드 엘리먼트 (폴링마다 새로 그리지 않기 위해)
+
+  function esc(s) { return String(s == null ? '' : s).replace(/[&<>"']/g, function (c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]; }); }
+
+  // ---- 글자 크기 (학생 화면의 A-/A+ 와 같은 방식: 3px 씩, localStorage 기억) ----
+  var fs = 17, bfs = 40;
+  try { fs = Number(localStorage.getItem('sheetPresentFs')) || 17; } catch (e) {}
+  try { bfs = Number(localStorage.getItem('sheetPresentBigFs')) || 40; } catch (e) {}
+  function setFs(v) {
+    fs = Math.max(12, Math.min(40, v));
+    document.documentElement.style.setProperty('--fs', fs + 'px');
+    try { localStorage.setItem('sheetPresentFs', String(fs)); } catch (e) {}
+  }
+  function setBfs(v) {
+    bfs = Math.max(20, Math.min(96, v));
+    document.documentElement.style.setProperty('--bfs', bfs + 'px');
+    try { localStorage.setItem('sheetPresentBigFs', String(bfs)); } catch (e) {}
+  }
+  document.getElementById('fsPlus').onclick = function () { setFs(fs + 3); };
+  document.getElementById('fsMinus').onclick = function () { setFs(fs - 3); };
+  document.getElementById('bfsPlus').onclick = function () { setBfs(bfs + 4); };
+  document.getElementById('bfsMinus').onclick = function () { setBfs(bfs - 4); };
+  setFs(fs); setBfs(bfs);
+
+  function fields() { return ((data && data.activity.fields) || []).filter(function (f) { return f.collect; }); }
+  function curField() { return fields().filter(function (f) { return f.id === curFid; })[0] || null; }
+
+  // 답 한 칸 → 읽는 글. 체크 묶음은 고른 항목 이름으로.
+  function show(r, f) {
+    var v = (r.answers || {})[f.id];
+    if (v == null) return '';
+    if (Array.isArray(v)) {
+      var opts = f.options || [];
+      return v.map(function (i) { return opts[i] != null ? opts[i] : '#' + (i + 1); }).join(' · ');
+    }
+    return String(v).trim();
+  }
+
+  // 이 필드에 뭐라도 쓴 학생만, 이름 순으로 — 폴링해도 카드 순서가 흔들리지 않아야 발표가 된다.
+  function list() {
+    var f = curField();
+    if (!f) return [];
+    return (data.rows || [])
+      .filter(function (r) { return show(r, f).trim(); })
+      .sort(function (a, b) { return String(a.nickname).localeCompare(String(b.nickname), 'ko'); });
+  }
+
+  // 익명 번호는 이름 순으로 고정 — 폴링마다 번호가 바뀌면 "3번 학생 답 보자"가 성립하지 않는다.
+  function label(r, i) { return anon ? '학생 ' + (i + 1) : r.nickname; }
+
+  function load() {
+    fetch('/api/sheet/' + ACTIVITY_ID + '/results')
+      .then(function (r) { return r.json(); })
+      .then(function (d) {
+        if (!d || !d.ok) return;
+        data = d;
+        if (!curFid && fields().length) curFid = fields()[0].id;
+        paintTabs(); paint();
+      })
+      .catch(function () {});
+  }
+
+  function paintTabs() {
+    var h = '';
+    fields().forEach(function (f) {
+      h += '<button class="tab' + (f.id === curFid ? ' on' : '') + '" data-f="' + esc(f.id) + '" title="' + esc(f.label) + '">' +
+        esc(f.label) + (f.section ? '<span class="sec">' + esc(f.section) + '</span>' : '') + '</button>';
+    });
+    document.getElementById('tabs').innerHTML = h;
+    document.querySelectorAll('.tab').forEach(function (b) {
+      b.onclick = function () {
+        if (curFid === b.getAttribute('data-f')) return;
+        curFid = b.getAttribute('data-f');
+        rendered = {};                       // 필드가 바뀌면 카드는 완전히 다른 것들이다
+        document.getElementById('grid').innerHTML = '';
+        paintTabs(); paint();
+      };
+    });
+  }
+
+  // 폴링마다 통째로 다시 그리면 화면이 깜빡이고 스크롤이 튄다.
+  // 그래서 닉네임을 키로 맞춰 본다: 있던 건 글만 갈아 끼우고, 새로 온 것만 애니메이션으로 붙인다.
+  function paint() {
+    var f = curField();
+    var rows = list();
+    var grid = document.getElementById('grid');
+
+    document.getElementById('part').textContent = (data.rows || []).length + '명 참여';
+    document.getElementById('qline').innerHTML = f
+      ? esc(f.label) + '<span class="cnt">' + rows.length + '명 작성' + (f.section ? ' · ' + esc(f.section) : '') + '</span>'
+      : '';
+    document.getElementById('empty').style.display = rows.length ? 'none' : '';
+
+    var seen = {};
+    rows.forEach(function (r, i) {
+      seen[r.nickname] = 1;
+      var txt = show(r, f);
+      var el = rendered[r.nickname];
+      if (!el) {
+        el = document.createElement('div');
+        el.className = 'card fresh';
+        el.innerHTML = '<div class="who"></div><div class="txt"></div>';
+        el.onclick = function () { openBig(rows.indexOf(r) >= 0 ? rows.indexOf(r) : i); };
+        grid.appendChild(el);
+        rendered[r.nickname] = el;
+        setTimeout(function () { el.classList.remove('fresh'); }, 400);
+      }
+      el.classList.toggle('anon', anon);
+      var who = el.querySelector('.who');
+      who.innerHTML = esc(label(r, i)) + (r.submitted ? '' : '<span class="sub">작성 중</span>');
+      var t = el.querySelector('.txt');
+      if (t.textContent !== txt) t.textContent = txt;
+      el.__idx = i;
+      el.onclick = function () { openBig(el.__idx); };
+    });
+    // 글을 지워 목록에서 빠진 학생의 카드는 걷어낸다
+    Object.keys(rendered).forEach(function (nick) {
+      if (!seen[nick]) { var e = rendered[nick]; if (e && e.parentNode) e.parentNode.removeChild(e); delete rendered[nick]; }
+    });
+    if (bigIdx >= 0) paintBig();
+  }
+
+  // ---- 크게 보기 ----
+  function openBig(i) { bigIdx = i; document.getElementById('big').style.display = 'flex'; paintBig(); }
+  function closeBig() { bigIdx = -1; document.getElementById('big').style.display = 'none'; }
+  function paintBig() {
+    var rows = list(), f = curField();
+    if (!rows.length || bigIdx < 0) return closeBig();
+    if (bigIdx >= rows.length) bigIdx = rows.length - 1;
+    var r = rows[bigIdx];
+    document.getElementById('bwho').textContent = label(r, bigIdx);
+    document.getElementById('blab').textContent = f ? f.label + (f.section ? ' · ' + f.section : '') : '';
+    document.getElementById('btxt').textContent = show(r, f);
+    document.getElementById('bpos').textContent = (bigIdx + 1) + ' / ' + rows.length;
+  }
+  function step(d) {
+    var n = list().length;
+    if (!n) return;
+    bigIdx = (bigIdx + d + n) % n;      // 끝에서 처음으로 — 발표 중 막다른 길이 없게
+    paintBig();
+  }
+  document.getElementById('bprev').onclick = function () { step(-1); };
+  document.getElementById('bnext').onclick = function () { step(1); };
+  document.getElementById('big').onclick = function (e) { if (e.target === this) closeBig(); };
+
+  document.addEventListener('keydown', function (e) {
+    if (bigIdx >= 0) {
+      if (e.key === 'Escape') { closeBig(); e.preventDefault(); }
+      else if (e.key === 'ArrowRight') { step(1); e.preventDefault(); }
+      else if (e.key === 'ArrowLeft') { step(-1); e.preventDefault(); }
+    }
+  });
+
+  // ---- 이름 가리기 ----
+  document.getElementById('anonBtn').onclick = function () {
+    anon = !anon;
+    this.classList.toggle('on', anon);
+    this.textContent = anon ? '🙈 이름 가림' : '🙈 이름 가리기';
+    paint();
+    if (bigIdx >= 0) paintBig();
+  };
+
+  // ---- 무작위 뽑기 ----
+  // 그냥 하나 고르면 "짰다"는 소리를 듣는다. 룰렛처럼 훑다가 서서히 느려지며 멈춘다 — 뽑는 맛이 있어야 쓴다.
+  var rouling = false;
+  document.getElementById('pickBtn').onclick = function () {
+    var rows = list();
+    if (rouling || !rows.length) return;
+    rouling = true;
+    closeBig();
+    var btn = this;
+    btn.disabled = true;
+    var target = Math.floor(Math.random() * rows.length);
+    var i = 0, ticks = 0;
+    var total = rows.length * 2 + target + 6;    // 최소 두 바퀴는 돈다
+    var delay = 60;
+    function tick() {
+      Object.keys(rendered).forEach(function (n) { rendered[n].classList.remove('roul'); });
+      var r = rows[i % rows.length];
+      var el = rendered[r.nickname];
+      if (el) {
+        el.classList.add('roul');
+        el.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+      }
+      i++; ticks++;
+      if (ticks >= total) {
+        setTimeout(function () {
+          Object.keys(rendered).forEach(function (n) { rendered[n].classList.remove('roul'); });
+          openBig((i - 1) % rows.length);
+          rouling = false; btn.disabled = false;
+        }, 420);
+        return;
+      }
+      if (ticks > total - 10) delay += 42;       // 끝에서 감속
+      setTimeout(tick, delay);
+    }
+    tick();
+  };
+
+  load();
+  setInterval(function () { if (!rouling) load(); }, 3000);
+})();
+</script>
+</body>
+</html>`;
+}
+
 // ───────────────── HTML 활동지 — 교사 결과 화면 ─────────────────
 // 시험지 대시보드(점수·정답률·보기분포)는 활동지에 쓸 자리가 없다. 활동지는 점수가 없다.
 // 여기서 필요한 건 둘뿐이다: (1) 누가 무엇을 썼는가(표) (2) 한 질문에 아이들이 뭐라 썼는가(모아보기).
@@ -3187,7 +3622,7 @@ function renderSheetResultsPage(activity) {
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
-<title>${title} — 응답 보기</title>
+<title>응답 보기 — ${title}</title>
 <style>
   :root { --line: #e2e8f0; --ink: #1a202c; --muted: #718096; }
   * { box-sizing: border-box; }
