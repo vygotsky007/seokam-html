@@ -185,40 +185,48 @@ function renderPresentPage(activity, sliceByNum) {
 <meta name="viewport" content="width=device-width, initial-scale=1" />
 <title>발표 모드 — ${title}</title>
 <style>
+  /* 본문이 화면의 대부분. 상단은 얇은 상태바+문항 이동, 도구는 하단 독, 응답·채점은 오버레이. */
   * { box-sizing: border-box; }
-  body { font-family: system-ui, -apple-system, "Segoe UI", sans-serif; margin: 0; background: #0f172a; color: #e2e8f0; height: 100vh; overflow: hidden; }
-  .topbar { display: flex; align-items: center; gap: 12px; padding: 12px 20px; background: #1e293b; border-bottom: 1px solid #334155; }
-  .topbar h1 { font-size: 16px; margin: 0; color: #94a3b8; font-weight: 600; }
-  .participation { font-size: 14px; font-weight: 800; color: #4ade80; background: #14321f; border: 1px solid #22c55e44; padding: 5px 12px; border-radius: 999px; }
-  .nav { display: flex; align-items: center; gap: 6px; margin-left: auto; flex-wrap: wrap; }
-  .reveal-row { padding: 10px 16px 0; }
-  .reveal-row button { width: 100%; padding: 10px; font-size: 14px; font-weight: 800; border: 1px solid #475569; background: #334155; color: #e2e8f0; border-radius: 8px; cursor: pointer; }
-  .reveal-row button.revealed { background: #22543d; border-color: #22c55e; color: #d1fae5; }
-  .nav button { min-width: 40px; height: 40px; padding: 0 12px; font-size: 16px; font-weight: 700; border: 1px solid #475569; background: #334155; color: #e2e8f0; border-radius: 8px; cursor: pointer; }
-  .nav button.qbtn.active { background: #3b82f6; border-color: #3b82f6; color: #fff; }
-  .nav button:disabled { opacity: .4; cursor: default; }
-  .live { font-size: 12px; color: #4ade80; margin-left: 8px; white-space: nowrap; }
-  .layout { display: flex; height: calc(100vh - 65px); }
+  body { font-family: system-ui, -apple-system, "Segoe UI", sans-serif; margin: 0; background: #0f172a; color: #e2e8f0; height: 100vh; overflow: hidden; display: flex; flex-direction: column; }
+  .statusbar { display: flex; align-items: center; gap: 10px; padding: 6px 16px; background: #1e293b; border-bottom: 1px solid #334155; font-size: 13px; }
+  .statusbar h1 { font-size: 14px; margin: 0; color: #94a3b8; font-weight: 700; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .participation { font-size: 13px; font-weight: 800; color: #4ade80; white-space: nowrap; }
+  .statusbar .live { font-size: 12px; color: #4ade80; white-space: nowrap; margin-left: auto; }
+  /* 문항 이동 — 얇은 상시 행 */
+  .navrow { display: flex; align-items: center; gap: 6px; padding: 6px 12px; background: #0b1220; border-bottom: 1px solid #334155; overflow-x: auto; }
+  .navrow button { min-width: 38px; height: 36px; padding: 0 10px; font-size: 15px; font-weight: 700; border: 1px solid #475569; background: #334155; color: #e2e8f0; border-radius: 8px; cursor: pointer; }
+  .navrow button.qbtn.active { background: #3b82f6; border-color: #3b82f6; color: #fff; }
+  .navrow button:disabled { opacity: .4; cursor: default; }
+  .live { color: #4ade80; }
 
-  /* 왼쪽: 문제 크게 + 필기 캔버스 오버레이 */
-  .left { flex: 1 1 68%; min-width: 0; display: flex; flex-direction: column; }
-  .draw-toolbar { display: flex; align-items: center; gap: 8px; padding: 8px 12px; background: #1e293b; border-bottom: 1px solid #334155; flex-wrap: wrap; }
-  .draw-toolbar button { height: 34px; min-width: 34px; padding: 0 10px; border: 1px solid #475569; background: #334155; color: #e2e8f0; border-radius: 6px; cursor: pointer; font-size: 13px; font-weight: 700; }
-  .draw-toolbar .tb-color { width: 34px; padding: 0; }
-  .tb-color.red { background: #ef4444; } .tb-color.blue { background: #3b82f6; } .tb-color.black { background: #111827; }
-  .draw-toolbar button.active { outline: 2px solid #60a5fa; outline-offset: 1px; }
-  .tb-sep { width: 1px; height: 24px; background: #475569; margin: 0 2px; }
-  .tb-label { font-size: 12px; color: #94a3b8; }
-  .problem-wrap { position: relative; flex: 1; overflow: hidden; background: #0f172a; touch-action: none; }
+  /* 문제 본문 — 화면의 대부분 + 필기 캔버스 */
+  .stagewrap { position: relative; flex: 1; min-height: 0; }
+  .problem-wrap { position: absolute; inset: 0; overflow: hidden; background: #0f172a; touch-action: none; }
   .zoom-layer { position: relative; transform-origin: 0 0; width: 100%; will-change: transform; }
-  .problem-content { background: #fff; color: #111; padding: 28px; min-height: 100%; font-size: 21px; line-height: 1.6; text-align: center; }
+  .problem-content { background: #fff; color: #111; padding: 28px; min-height: 100%; font-size: 22px; line-height: 1.6; text-align: center; }
   .problem-content img { max-width: 100%; height: auto; display: inline-block; }
   .problem-content > * { text-align: left; }
   .problem-content > img, .problem-content > .slice-full { text-align: center; }
   #drawCanvas { position: absolute; top: 0; left: 0; z-index: 10; touch-action: none; }
 
-  /* 오른쪽: 정답·정답률·필터·목록 (기존 유지) */
-  .right { flex: 0 0 32%; max-width: 520px; border-left: 1px solid #334155; background: #1e293b; display: flex; flex-direction: column; }
+  /* 실시간 오버레이 — 우상단 선지 분포 + 미답 수 */
+  .rtdist { position: absolute; top: 12px; right: 14px; z-index: 8; background: rgba(30,41,59,.92); border: 1px solid #334155;
+    border-radius: 12px; padding: 10px 14px; min-width: 180px; max-width: 260px; box-shadow: 0 8px 24px rgba(0,0,0,.4); cursor: pointer; }
+  .rtdist.collapsed .rt-body { display: none; }
+  .rtdist .rt-head { font-size: 12px; color: #94a3b8; font-weight: 800; display: flex; justify-content: space-between; gap: 8px; }
+  .rtdist .rt-bar { display: flex; align-items: center; gap: 8px; margin-top: 7px; font-size: 13px; }
+  .rtdist .rt-mk { flex: 0 0 26px; font-weight: 800; color: #93c5fd; }
+  .rtdist .rt-track { flex: 1; height: 16px; background: #0f172a; border-radius: 5px; overflow: hidden; }
+  .rtdist .rt-fill { height: 100%; background: #3b82f6; }
+  .rtdist .rt-n { flex: 0 0 30px; text-align: right; color: #cbd5e1; }
+  .rtdist .rt-miss { margin-top: 8px; font-size: 13px; color: #f59e0b; font-weight: 700; }
+
+  /* 응답·채점 오버레이(하단 독에서 연다) — 3겹 닫기 */
+  #answerPanel { position: fixed; top: 0; right: 0; bottom: 0; width: 420px; max-width: 92vw; background: #1e293b; border-left: 1px solid #334155;
+    z-index: 90; display: none; flex-direction: column; box-shadow: -8px 0 30px rgba(0,0,0,.5); }
+  .reveal-row { padding: 12px 16px 0; }
+  .reveal-row button { width: 100%; padding: 10px; font-size: 14px; font-weight: 800; border: 1px solid #475569; background: #334155; color: #e2e8f0; border-radius: 8px; cursor: pointer; }
+  .reveal-row button.revealed { background: #22543d; border-color: #22c55e; color: #d1fae5; }
   .q-answer { padding: 14px 16px; border-bottom: 1px solid #334155; }
   .q-answer .qnum { font-size: 16px; color: #60a5fa; font-weight: 700; }
   .q-answer .qtype { display: inline-block; font-size: 12px; padding: 2px 8px; border-radius: 999px; background: #334155; color: #cbd5e1; margin-left: 8px; }
@@ -241,20 +249,26 @@ function renderPresentPage(activity, sliceByNum) {
   .item.neutral { border-left: 4px solid #64748b; }
   .mark.ok { color: #22c55e; }
   .mark.no { color: #ef4444; }
-  /* 발표 중 정답 입력 — 가림 상태에서도 교사는 넣을 수 있다(넣는 즉시 채점) */
   .q-answer .keyrow { display: flex; gap: 6px; margin-top: 10px; }
   .q-answer .keyrow input { flex: 1; min-width: 0; padding: 8px 10px; font-size: 14px; border: 1px solid #475569; background: #0f172a; color: #e2e8f0; border-radius: 8px; }
   .q-answer .keyrow button { padding: 8px 12px; font-size: 13px; font-weight: 800; border: 0; background: #3b82f6; color: #fff; border-radius: 8px; cursor: pointer; }
-  /* 애매 판정(오타 의심) — 자동 정답 처리하지 않고 교사가 눌러서 인정한다 */
   .item.near { background: #422006; }
   .mark.warn { color: #f59e0b; border: 0; background: transparent; font-size: 18px; cursor: pointer; }
   .empty { color: #64748b; padding: 24px; text-align: center; }
 
+  /* 필기 서브 도구(켜면 뜬다) */
+  #drawTools { position: fixed; left: 16px; bottom: 74px; z-index: 71; display: none; gap: 6px; background: rgba(15,23,42,.92);
+    border: 1px solid #334155; border-radius: 10px; padding: 6px 8px; align-items: center; flex-wrap: wrap; }
+  #drawTools.on { display: flex; }
+  #drawTools button { height: 34px; min-width: 34px; padding: 0 8px; font-size: 13px; font-weight: 700; border: 1px solid #475569; background: #334155; color: #e2e8f0; border-radius: 7px; cursor: pointer; }
+  #drawTools .tb-color { width: 30px; padding: 0; }
+  .tb-color.red { background: #ef4444; } .tb-color.blue { background: #3b82f6; } .tb-color.black { background: #facc15; }
+  #drawTools button.active { outline: 2px solid #60a5fa; }
+
   /* 교실 도우미 플로팅 패널 */
-  .helper { position: fixed; left: 16px; bottom: 16px; z-index: 60; width: 300px; }
-  .helper-toggle { width: 100%; padding: 10px 12px; font-size: 14px; font-weight: 800; border: 1px solid #475569; background: #1e293b; color: #e2e8f0; border-radius: 10px; cursor: pointer; box-shadow: 0 4px 14px rgba(0,0,0,.4); }
-  .helper-body { margin-top: 8px; background: #1e293b; border: 1px solid #334155; border-radius: 12px; padding: 12px; box-shadow: 0 8px 24px rgba(0,0,0,.5); max-height: 60vh; overflow-y: auto; }
-  .helper.collapsed .helper-body { display: none; }
+  .helper { position: fixed; left: 16px; bottom: 74px; z-index: 72; width: 300px; display: none; }
+  .helper.shown { display: block; }
+  .helper-body { background: #1e293b; border: 1px solid #334155; border-radius: 12px; padding: 12px; box-shadow: 0 8px 24px rgba(0,0,0,.5); max-height: 62vh; overflow-y: auto; }
   .helper-sec { margin-bottom: 12px; }
   .helper-lab { font-size: 12px; color: #94a3b8; font-weight: 700; margin-bottom: 6px; }
   .helper-grid { display: flex; flex-wrap: wrap; gap: 6px; }
@@ -265,65 +279,71 @@ function renderPresentPage(activity, sliceByNum) {
   .helper-row select, .helper-row button { padding: 7px 10px; font-size: 13px; font-weight: 700; border: 1px solid #475569; background: #334155; color: #e2e8f0; border-radius: 8px; cursor: pointer; }
   .helper-row #customSpeak { background: #2563eb; border-color: #2563eb; }
 </style>
+<script src="/lib/present-tools.js"></script>
 <script src="/lib/match.js"></script>
 </head>
 <body>
-  <div class="topbar">
-    <h1>🎬 발표 모드 · ${title}</h1>
+  <div class="statusbar">
+    <h1>🎬 ${title}</h1>
     <span class="participation" id="participation">🙋 제출 0명</span>
-    <div class="nav" id="nav"></div>
+    <span class="live" id="liveTag">● 실시간 (5초)</span>
   </div>
-  <div class="layout">
-    <div class="left">
-      <div class="draw-toolbar">
-        <span class="tb-label">필기</span>
-        <button id="tbToggle" class="active" title="필기 켜기/끄기">✏️ ON</button>
-        <span class="tb-sep"></span>
-        <button class="tb-color red active" data-color="#ef4444" title="빨강"></button>
-        <button class="tb-color blue" data-color="#3b82f6" title="파랑"></button>
-        <button class="tb-color black" data-color="#111827" title="검정"></button>
-        <span class="tb-sep"></span>
-        <button class="tb-size active" data-size="3" title="얇게">얇게</button>
-        <button class="tb-size" data-size="9" title="굵게">굵게</button>
-        <span class="tb-sep"></span>
-        <button id="tbEraser" title="지우개">지우개</button>
-        <button id="tbClear" title="전체 지우기">전체 지우기</button>
-        <span class="tb-sep"></span>
-        <button id="zoomOut" title="축소">🔍−</button>
-        <button id="zoomReset" title="원래대로">100%</button>
-        <button id="zoomIn" title="확대">🔍+</button>
-        <span class="tb-sep" id="ttsSep" style="display:none"></span>
-        <button id="ttsRead" title="문제 읽어주기" style="display:none">🔊 문제 읽기</button>
-        <button id="ttsStop" title="정지" style="display:none">⏹</button>
-        <select id="ttsRate" title="읽기 속도" style="display:none; height:34px; border-radius:6px; background:#334155; color:#e2e8f0; border:1px solid #475569;"><option value="1">보통</option><option value="0.7">느리게</option></select>
-      </div>
-      <div class="problem-wrap" id="problemWrap">
-        <div class="zoom-layer" id="zoomLayer">
-          <div class="problem-content" id="problemContent">
+  <div class="navrow" id="nav"></div>
+  <div class="stagewrap">
+    <div class="problem-wrap" id="problemWrap">
+      <div class="zoom-layer" id="zoomLayer">
+        <div class="problem-content" id="problemContent">
 ${body}
-          </div>
-          <canvas id="drawCanvas"></canvas>
         </div>
+        <canvas id="drawCanvas"></canvas>
       </div>
     </div>
-    <div class="right">
-      <div class="reveal-row">
-        <button id="revealBtn" title="정답 공개/가리기">🙈 정답 가림 — 공개하기</button>
-      </div>
-      <div class="q-answer" id="qAnswer"></div>
-      <div class="filters">
-        <button data-f="all" class="active">전체</button>
-        <button data-f="correct">맞은 사람</button>
-        <button data-f="wrong">틀린 사람</button>
-      </div>
-      <div class="panel-head" id="panelHead">응답 현황</div>
-      <div class="list" id="list"></div>
-    </div>
+    <div class="rtdist collapsed" id="rtDist"><div class="rt-head"><span id="rtTitle">응답 분포</span><span id="rtToggle">▾</span></div><div class="rt-body" id="rtBody"></div></div>
   </div>
 
-  <!-- 교실 도우미: 접었다 펼 수 있는 플로팅 패널(발표 방해 최소화) -->
-  <div id="helper" class="helper collapsed">
-    <button class="helper-toggle" id="helperToggle">🧑‍🏫 교실 도우미</button>
+  <!-- 하단 도구 독 -->
+  <div id="dock">
+    <button id="tbToggle" class="on" title="필기 켜기/끄기">✏️ 필기</button>
+    <button id="answerBtn" title="응답·채점 보기">📊 응답·채점</button>
+    <button id="revealBtn" title="정답 공개/가리기">🙈 정답 가림</button>
+    <button id="zoomOut" title="축소">🔍−</button>
+    <button id="zoomReset" title="원래대로">100%</button>
+    <button id="zoomIn" title="확대">🔍+</button>
+    <button id="spotBtn" title="스포트라이트">🔦</button>
+    <button id="timerBtn" title="타이머">⏱</button>
+    <button id="helperBtn" title="교실 도우미">🧑‍🏫</button>
+    <button id="ttsRead" title="문제 읽어주기" style="display:none">🔊 읽기</button>
+    <button id="ttsStop" title="정지" style="display:none">⏹</button>
+    <select id="ttsRate" title="읽기 속도" style="display:none; height:44px; border-radius:10px; background:#334155; color:#e2e8f0; border:1px solid #475569;"><option value="1">보통</option><option value="0.7">느리게</option></select>
+    <button id="helpBtn" title="단축키">?</button>
+    <button id="fscBtn" title="전체화면 (F)">⛶</button>
+  </div>
+
+  <!-- 필기 서브 도구 -->
+  <div id="drawTools">
+    <button class="tb-color red active" data-color="#ef4444" title="빨강"></button>
+    <button class="tb-color blue" data-color="#3b82f6" title="파랑"></button>
+    <button class="tb-color black" data-color="#facc15" title="노랑"></button>
+    <button class="tb-size active" data-size="3" title="얇게">얇게</button>
+    <button class="tb-size" data-size="9" title="굵게">굵게</button>
+    <button id="tbEraser" title="지우개">지우개</button>
+    <button id="tbClear" title="전체 지우기">전체 지우기</button>
+  </div>
+
+  <!-- 응답·채점 오버레이 -->
+  <div id="answerPanel">
+    <div class="q-answer" id="qAnswer"></div>
+    <div class="filters">
+      <button data-f="all" class="active">전체</button>
+      <button data-f="correct">맞은 사람</button>
+      <button data-f="wrong">틀린 사람</button>
+    </div>
+    <div class="panel-head" id="panelHead">응답 현황</div>
+    <div class="list" id="list"></div>
+  </div>
+
+  <!-- 교실 도우미: 하단 독에서 연다 -->
+  <div id="helper" class="helper">
     <div class="helper-body" id="helperBody">
       <div class="helper-sec">
         <div class="helper-lab">안내 음성</div>
@@ -427,11 +447,43 @@ ${body}
     return window.answerMatch.isNearMiss(g, q.answer);
   }
 
-  function render() { renderParticipation(); renderNav(); renderAnswer(); renderRight(); }
+  function render() { renderParticipation(); renderNav(); renderAnswer(); renderRight(); renderRtDist(); }
 
   // 실시간 참여 현황 바
   function renderParticipation() {
     document.getElementById('participation').textContent = '🙋 제출 ' + state.students.length + '명';
+  }
+
+  // 실시간 오버레이 — 현재 문항의 선지 분포 + 미답 수. 정답 공개 전엔 어느 게 정답인지 표시 안 함(개수만).
+  function renderRtDist() {
+    var box = document.getElementById('rtDist');
+    var body = document.getElementById('rtBody');
+    var q = curQ();
+    if (!box || !q) return;
+    document.getElementById('rtTitle').textContent = q.num + '번 응답';
+    if (q.type === 'essay') {
+      body.innerHTML = '<div class="rt-miss" style="color:#7dd3fc">서술형 — 작성 ' + countAnswered(q.num) + '명</div>';
+      return;
+    }
+    var tally = {}, miss = 0, order = [];
+    state.students.forEach(function (s) {
+      var g = givenOf(s, q.num).trim();
+      if (!g) { miss++; return; }
+      if (tally[g] == null) { tally[g] = 0; order.push(g); }
+      tally[g]++;
+    });
+    var max = 1; order.forEach(function (k) { if (tally[k] > max) max = tally[k]; });
+    order.sort(function (a, b) { return tally[b] - tally[a]; });
+    var revealed = state.reveal;
+    var html = order.slice(0, 6).map(function (k) {
+      var isAns = revealed && String(q.answer || '').trim() && window.answerMatch.isCorrect(k, q.answer);
+      return '<div class="rt-bar"><span class="rt-mk">' + escapeHtml(k.slice(0, 3)) + '</span>' +
+        '<span class="rt-track"><span class="rt-fill" style="width:' + Math.round(tally[k] / max * 100) + '%;' +
+        (isAns ? 'background:#22c55e;' : '') + '"></span></span><span class="rt-n">' + tally[k] + '</span></div>';
+    }).join('');
+    if (!order.length) html = '<div class="rt-miss" style="color:#64748b">아직 응답이 없어요</div>';
+    html += '<div class="rt-miss">미답 ' + miss + '명</div>';
+    body.innerHTML = html;
   }
 
   // 정답 공개 토글(기본 가림)
@@ -734,12 +786,13 @@ ${body}
   canvas.addEventListener('pointerup', endStroke);
   canvas.addEventListener('pointercancel', endStroke);
 
-  // 필기 on/off: off 면 캔버스가 클릭·스크롤을 통과시킴
+  // 필기 on/off: off 면 캔버스가 클릭·스크롤을 통과시킴. 켜면 색·굵기 서브도구가 뜬다.
   function applyPenMode() {
     canvas.style.pointerEvents = pen.on ? 'auto' : 'none';
     var t = document.getElementById('tbToggle');
-    t.textContent = pen.on ? '✏️ ON' : '✏️ OFF';
-    t.classList.toggle('active', pen.on);
+    t.textContent = pen.on ? '✏️ 필기' : '✏️ 필기 끔';
+    t.classList.toggle('on', pen.on);
+    document.getElementById('drawTools').classList.toggle('on', pen.on);
   }
   document.getElementById('tbToggle').onclick = function () { pen.on = !pen.on; applyPenMode(); };
 
@@ -779,7 +832,7 @@ ${body}
   (function initPresentTts() {
     var textDoc = content.querySelector('.pdf-text-doc[data-tts="on"]');
     if (!textDoc || !('speechSynthesis' in window)) return; // 이미지/기존 활동은 TTS 버튼 숨김(비활성)
-    ['ttsSep', 'ttsRead', 'ttsStop', 'ttsRate'].forEach(function (id) { document.getElementById(id).style.display = ''; });
+    ['ttsRead', 'ttsStop', 'ttsRate'].forEach(function (id) { var e = document.getElementById(id); if (e) e.style.display = ''; });
     function rate() { return parseFloat(document.getElementById('ttsRate').value) || 1; }
     document.getElementById('ttsRead').onclick = function () {
       var text = textDoc.innerText || textDoc.textContent || '';
@@ -795,7 +848,7 @@ ${body}
   // ---- 교실 도우미: 안내 음성 + 신호음(Web Audio) + 커스텀 문구 ----
   (function initHelper() {
     var helper = document.getElementById('helper');
-    document.getElementById('helperToggle').onclick = function () { helper.classList.toggle('collapsed'); };
+    document.getElementById('helperBtn').onclick = function () { helper.classList.toggle('shown'); };
 
     // 한국어 음성 목록(OS 설치분) 채우기
     var koVoices = [];
@@ -894,6 +947,42 @@ ${body}
       b.onclick = function () { playSound(b.getAttribute('data-sound')); };
     });
   })();
+
+  // ---- 공용 도구: 응답 오버레이 · 스포트라이트 · 타이머 · 도움말 · 전체화면 · 하단 독 ----
+  var PT = window.PresentTools;
+
+  // 응답·채점 오버레이(3겹 닫기). 사이드 패널이라 배경 클릭으로는 안 닫는다(작업 중 손실 방지) — ✕·Esc·뒤로가기로만.
+  var ansOv = PT.createOverlay(document.getElementById('answerPanel'), {
+    name: 'answer', display: 'flex', backdrop: false, closeLabel: '닫기'
+  });
+  document.getElementById('answerBtn').onclick = function () { ansOv.isOpen() ? ansOv.close() : ansOv.open(); };
+
+  // 실시간 분포 오버레이 접기
+  document.getElementById('rtDist').addEventListener('click', function () {
+    this.classList.toggle('collapsed');
+    document.getElementById('rtToggle').textContent = this.classList.contains('collapsed') ? '▸' : '▾';
+  });
+
+  var spot = PT.createSpotlight();
+  document.getElementById('spotBtn').onclick = function () { spot.open(); };
+  var timer = PT.createTimer();
+  document.getElementById('timerBtn').onclick = function () { timer.open(); };
+  var help = PT.createHelp([
+    ['←/→', '문항 이동'], ['F', '전체화면'], ['Esc', '오버레이 닫기'],
+    ['✕ / 뒤로가기', '오버레이 닫기(발표 유지)']
+  ]);
+  document.getElementById('helpBtn').onclick = function () { help.open(); };
+  document.getElementById('fscBtn').onclick = function () { PT.toggleFullscreen(); };
+
+  document.addEventListener('keydown', function (e) {
+    var t = (e.target && e.target.tagName) || '';
+    if (t === 'INPUT' || t === 'TEXTAREA') return;
+    if (e.key === 'f' || e.key === 'F') { PT.toggleFullscreen(); }
+    else if (PT._stackDepth() === 0 && e.key === 'ArrowRight') { goTo(state.curIdx + 1); }   // 오버레이 없을 때만 문항 이동
+    else if (PT._stackDepth() === 0 && e.key === 'ArrowLeft') { goTo(state.curIdx - 1); }
+  });
+
+  PT.createDock(document.getElementById('dock'), { idleMs: 5000 });
 
   fetchData();
   setInterval(fetchData, 5000); // 오른쪽 통계 실시간 갱신
@@ -3328,71 +3417,106 @@ function renderSheetPresentPage(activity) {
 <meta name="viewport" content="width=device-width, initial-scale=1" />
 <title>발표 모드 — ${title}</title>
 <style>
-  /* TV·빔 프로젝터용 — 어두운 바탕에 큰 글씨. 기존 발표 모드와 같은 색을 쓴다. */
+  /* TV·빔 프로젝터용 — 본문이 화면의 대부분. 상단은 얇은 상태바, 도구는 하단 독 한 줄. */
   * { box-sizing: border-box; }
-  body { font-family: system-ui, -apple-system, "Segoe UI", sans-serif; margin: 0; background: #0f172a; color: #e2e8f0; height: 100vh; overflow: hidden; display: flex; flex-direction: column; }
-  .topbar { display: flex; align-items: center; gap: 12px; padding: 12px 20px; background: #1e293b; border-bottom: 1px solid #334155; flex-wrap: wrap; }
-  .topbar h1 { font-size: 16px; margin: 0; color: #94a3b8; font-weight: 600; white-space: nowrap; }
-  .participation { font-size: 14px; font-weight: 800; color: #4ade80; background: #14321f; border: 1px solid #22c55e44; padding: 5px 12px; border-radius: 999px; white-space: nowrap; }
-  .nav { display: flex; align-items: center; gap: 6px; margin-left: auto; flex-wrap: wrap; }
-  .nav button { min-width: 40px; height: 40px; padding: 0 12px; font-size: 15px; font-weight: 700; border: 1px solid #475569; background: #334155; color: #e2e8f0; border-radius: 8px; cursor: pointer; }
-  .nav button:hover { background: #3f4f66; }
-  .nav button.on { background: #3b82f6; border-color: #3b82f6; color: #fff; }
-  .live { font-size: 12px; color: #4ade80; white-space: nowrap; }
+  body { font-family: system-ui, -apple-system, "Segoe UI", sans-serif; margin: 0; background: #0b1220; color: #e2e8f0; height: 100vh; overflow: hidden; display: flex; flex-direction: column; }
+  /* 얇은 상태바 */
+  .statusbar { display: flex; align-items: center; gap: 10px; padding: 6px 16px; background: #1e293b; border-bottom: 1px solid #334155; font-size: 13px; white-space: nowrap; overflow: hidden; }
+  .statusbar h1 { font-size: 14px; margin: 0; color: #94a3b8; font-weight: 700; overflow: hidden; text-overflow: ellipsis; }
+  .statusbar .loc { color: #7dd3fc; font-weight: 800; }
+  .statusbar .part { color: #4ade80; font-weight: 800; margin-left: auto; }
+  .statusbar .live { color: #4ade80; }
 
-  /* 필드 탭 — 무엇에 대한 답을 보는지가 이 화면의 전부라 크게 둔다 */
-  .tabs { display: flex; gap: 8px; padding: 12px 20px 0; overflow-x: auto; }
-  .tab { padding: 10px 16px; font-size: 15px; font-weight: 800; border: 1px solid #475569; background: #1e293b; color: #94a3b8; border-radius: 10px 10px 0 0; cursor: pointer; white-space: nowrap; max-width: 320px; overflow: hidden; text-overflow: ellipsis; }
+  /* 필드 탭 — 얇게 */
+  .tabs { display: flex; gap: 6px; padding: 6px 16px 0; overflow-x: auto; background: #0b1220; }
+  .tab { padding: 7px 14px; font-size: 14px; font-weight: 800; border: 1px solid #475569; background: #1e293b; color: #94a3b8; border-radius: 9px 9px 0 0; cursor: pointer; white-space: nowrap; max-width: 300px; overflow: hidden; text-overflow: ellipsis; }
   .tab:hover { color: #e2e8f0; }
   .tab.on { background: #0b1220; color: #fff; border-color: #3b82f6; border-bottom-color: #0b1220; }
-  .tab .sec { display: block; font-size: 11px; font-weight: 600; opacity: .65; }
+  .tab .sec { display: block; font-size: 10px; font-weight: 600; opacity: .65; }
 
-  .stage { flex: 1; overflow-y: auto; padding: 16px 20px 28px; background: #0b1220; }
-  .qline { font-size: 18px; font-weight: 800; color: #7dd3fc; margin-bottom: 14px; }
-  .qline .cnt { color: #64748b; font-weight: 600; font-size: 14px; margin-left: 8px; }
-
-  .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: 14px; }
-  .card { background: #1e293b; border: 1px solid #334155; border-radius: 12px; padding: 14px 16px; cursor: pointer; transition: transform .12s, border-color .12s; }
+  /* 본문 — 화면의 대부분 */
+  .stagewrap { position: relative; flex: 1; min-height: 0; }
+  .stage { position: absolute; inset: 0; overflow-y: auto; padding: 14px 20px 20px; }
+  .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(340px, 1fr)); gap: 16px; }
+  .card { background: #1e293b; border: 1px solid #334155; border-radius: 14px; padding: 16px 18px; cursor: pointer; transition: transform .12s, border-color .12s; }
   .card:hover { transform: translateY(-2px); border-color: #3b82f6; }
-  .card .who { font-size: 13px; font-weight: 800; color: #38bdf8; margin-bottom: 6px; }
+  .card .who { font-size: 14px; font-weight: 800; color: #38bdf8; margin-bottom: 8px; }
   .card .who .sub { font-size: 11px; color: #64748b; font-weight: 600; margin-left: 6px; }
-  .card .txt { font-size: var(--fs, 17px); line-height: 1.6; white-space: pre-wrap; word-break: break-word; color: #e2e8f0; }
+  /* 카드 글자 크게 + 긴 답은 3줄 말줄임(전체는 확대에서) */
+  .card .txt { font-size: var(--fs, 21px); line-height: 1.55; white-space: pre-wrap; word-break: break-word; color: #e2e8f0;
+    display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; }
   .card.anon .who { color: #94a3b8; }
-  /* 새 답은 스르륵 — 폴링마다 화면이 튀면 발표가 끊긴다 */
   @keyframes popin { from { opacity: 0; transform: translateY(10px) scale(.98); } to { opacity: 1; transform: none; } }
   .card.fresh { animation: popin .32s ease-out; border-color: #22c55e; }
   .card.roul { border-color: #f0a03c; background: #3a2c14; transform: scale(1.03); }
   #empty { color: #64748b; text-align: center; padding: 60px 0; font-size: 16px; }
 
-  /* 크게 보기 — 낭독용 */
+  /* 필기 캔버스 — 본문 위에 겹친다 */
+  #drawCv { position: absolute; inset: 0; z-index: 5; }
+  /* 필기 서브 도구(켜면 뜬다) */
+  #drawTools { position: fixed; left: 16px; bottom: 74px; z-index: 71; display: none; gap: 6px; background: rgba(15,23,42,.92);
+    border: 1px solid #334155; border-radius: 10px; padding: 6px 8px; align-items: center; }
+  #drawTools.on { display: flex; }
+  #drawTools button { height: 34px; min-width: 34px; padding: 0 8px; font-size: 13px; font-weight: 700; border: 1px solid #475569; background: #334155; color: #e2e8f0; border-radius: 7px; cursor: pointer; }
+  #drawTools .sw { width: 26px; padding: 0; } .sw.red { background: #ef4444; } .sw.blue { background: #3b82f6; } .sw.black { background: #111827; }
+  #drawTools button.on { outline: 2px solid #60a5fa; }
+
+  /* 실시간 오버레이 — 현재 필드 작성 수 */
+  .rt { position: absolute; top: 12px; right: 16px; z-index: 6; background: rgba(30,41,59,.9); border: 1px solid #334155;
+    border-radius: 999px; padding: 8px 16px; font-size: 15px; font-weight: 800; color: #7dd3fc; pointer-events: none; }
+  .rt b { color: #f8fafc; font-size: 18px; }
+
+  /* 크게 보기 — 낭독용, 화면 꽉 차게 */
   #big { position: fixed; inset: 0; background: rgba(2,6,23,.97); display: none; flex-direction: column; z-index: 100; padding: 28px 40px 20px; }
-  #big .bwho { font-size: 22px; font-weight: 800; color: #38bdf8; margin-bottom: 6px; }
+  #big .bwho { font-size: 24px; font-weight: 800; color: #38bdf8; margin-bottom: 6px; }
   #big .blab { font-size: 15px; color: #64748b; margin-bottom: 18px; }
-  #big .btxt { flex: 1; overflow-y: auto; font-size: var(--bfs, 40px); line-height: 1.55; white-space: pre-wrap; word-break: break-word; color: #f8fafc; font-weight: 500; }
+  #big .btxt { flex: 1; overflow-y: auto; font-size: var(--bfs, 44px); line-height: 1.5; white-space: pre-wrap; word-break: break-word; color: #f8fafc; font-weight: 500; }
   #big .bnav { display: flex; align-items: center; gap: 10px; padding-top: 14px; border-top: 1px solid #1e293b; }
   #big .bnav button { min-width: 44px; height: 44px; padding: 0 14px; font-size: 16px; font-weight: 800; border: 1px solid #475569; background: #334155; color: #e2e8f0; border-radius: 8px; cursor: pointer; }
   #big .bnav .pos { color: #64748b; font-size: 14px; }
   #big .bnav .hint { margin-left: auto; color: #475569; font-size: 12.5px; }
 </style>
+<script src="/lib/present-tools.js"></script>
 </head>
 <body>
-  <div class="topbar">
+  <div class="statusbar">
     <h1>🎬 ${title}</h1>
-    <span class="participation" id="part">—</span>
+    <span class="loc" id="loc"></span>
+    <span class="part" id="part">—</span>
     <span class="live" id="live">● 실시간</span>
-    <div class="nav">
-      <button id="anonBtn" type="button" title="닉네임을 가려 익명으로 봅니다">🙈 이름 가리기</button>
-      <button id="pickBtn" type="button" title="카드 하나를 무작위로 골라 크게 봅니다">🎲 무작위 뽑기</button>
-      <button id="fsMinus" type="button" title="글자 작게">A-</button>
-      <button id="fsPlus" type="button" title="글자 크게">A+</button>
-    </div>
   </div>
 
   <div class="tabs" id="tabs"></div>
-  <div class="stage">
-    <div class="qline" id="qline"></div>
-    <div class="grid" id="grid"></div>
-    <div id="empty">아직 이 칸에 쓴 학생이 없어요. 학생이 쓰면 여기에 바로 나타납니다.</div>
+  <div class="stagewrap">
+    <div class="stage" id="stage">
+      <div class="grid" id="grid"></div>
+      <div id="empty">아직 이 칸에 쓴 학생이 없어요. 학생이 쓰면 여기에 바로 나타납니다.</div>
+    </div>
+    <canvas id="drawCv"></canvas>
+    <div class="rt" id="rt"></div>
+  </div>
+
+  <!-- 하단 도구 독 -->
+  <div id="dock">
+    <button id="penBtn" type="button" title="필기">✏️ 필기</button>
+    <button id="spotBtn" type="button" title="스포트라이트">🔦 스포트라이트</button>
+    <button id="timerBtn" type="button" title="타이머">⏱ 타이머</button>
+    <button id="anonBtn" type="button" title="닉네임을 가려 익명으로">🙈 이름 가리기</button>
+    <button id="pickBtn" type="button" title="무작위 뽑기">🎲 무작위 뽑기</button>
+    <button id="fsMinus" type="button" title="글자 작게">A-</button>
+    <button id="fsPlus" type="button" title="글자 크게">A+</button>
+    <button id="helpBtn" type="button" title="단축키">?</button>
+    <button id="fscBtn" type="button" title="전체화면 (F)">⛶</button>
+  </div>
+  <div id="drawTools">
+    <button class="sw red on" data-color="#ef4444" title="빨강"></button>
+    <button class="sw blue" data-color="#3b82f6" title="파랑"></button>
+    <button class="sw black" data-color="#facc15" title="노랑" style="background:#facc15"></button>
+    <button class="dsz on" data-size="4">얇게</button>
+    <button class="dsz" data-size="10">굵게</button>
+    <button id="dEraser">지우개</button>
+    <button id="dClear">전체 지우기</button>
+    <button id="dKeep" title="문항 바꿔도 필기 유지">🔒 유지</button>
   </div>
 
   <div id="big">
@@ -3405,13 +3529,14 @@ function renderSheetPresentPage(activity) {
       <span class="pos" id="bpos"></span>
       <button id="bfsMinus" type="button">A-</button>
       <button id="bfsPlus" type="button">A+</button>
-      <span class="hint">←/→ 넘기기 · Esc 닫기</span>
+      <span class="hint">←/→ 넘기기 · Esc·✕·뒤로가기 닫기</span>
     </div>
   </div>
 
 <script>
 (function () {
   var ACTIVITY_ID = ${jsonForScript(activityId)};
+  var PT = window.PresentTools;
   var data = null;
   var curFid = null;
   var anon = false;
@@ -3420,17 +3545,17 @@ function renderSheetPresentPage(activity) {
 
   function esc(s) { return String(s == null ? '' : s).replace(/[&<>"']/g, function (c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]; }); }
 
-  // ---- 글자 크기 (학생 화면의 A-/A+ 와 같은 방식: 3px 씩, localStorage 기억) ----
-  var fs = 17, bfs = 40;
-  try { fs = Number(localStorage.getItem('sheetPresentFs')) || 17; } catch (e) {}
-  try { bfs = Number(localStorage.getItem('sheetPresentBigFs')) || 40; } catch (e) {}
+  // ---- 글자 크기 (3px 씩, localStorage 기억) ----
+  var fs = 21, bfs = 44;
+  try { fs = Number(localStorage.getItem('sheetPresentFs')) || 21; } catch (e) {}
+  try { bfs = Number(localStorage.getItem('sheetPresentBigFs')) || 44; } catch (e) {}
   function setFs(v) {
-    fs = Math.max(12, Math.min(40, v));
+    fs = Math.max(14, Math.min(44, v));
     document.documentElement.style.setProperty('--fs', fs + 'px');
     try { localStorage.setItem('sheetPresentFs', String(fs)); } catch (e) {}
   }
   function setBfs(v) {
-    bfs = Math.max(20, Math.min(96, v));
+    bfs = Math.max(24, Math.min(110, v));
     document.documentElement.style.setProperty('--bfs', bfs + 'px');
     try { localStorage.setItem('sheetPresentBigFs', String(bfs)); } catch (e) {}
   }
@@ -3443,7 +3568,6 @@ function renderSheetPresentPage(activity) {
   function fields() { return ((data && data.activity.fields) || []).filter(function (f) { return f.collect; }); }
   function curField() { return fields().filter(function (f) { return f.id === curFid; })[0] || null; }
 
-  // 답 한 칸 → 읽는 글. 체크 묶음은 고른 항목 이름으로.
   function show(r, f) {
     var v = (r.answers || {})[f.id];
     if (v == null) return '';
@@ -3453,8 +3577,6 @@ function renderSheetPresentPage(activity) {
     }
     return String(v).trim();
   }
-
-  // 이 필드에 뭐라도 쓴 학생만, 이름 순으로 — 폴링해도 카드 순서가 흔들리지 않아야 발표가 된다.
   function list() {
     var f = curField();
     if (!f) return [];
@@ -3462,8 +3584,6 @@ function renderSheetPresentPage(activity) {
       .filter(function (r) { return show(r, f).trim(); })
       .sort(function (a, b) { return String(a.nickname).localeCompare(String(b.nickname), 'ko'); });
   }
-
-  // 익명 번호는 이름 순으로 고정 — 폴링마다 번호가 바뀌면 "3번 학생 답 보자"가 성립하지 않는다.
   function label(r, i) { return anon ? '학생 ' + (i + 1) : r.nickname; }
 
   function load() {
@@ -3489,25 +3609,30 @@ function renderSheetPresentPage(activity) {
       b.onclick = function () {
         if (curFid === b.getAttribute('data-f')) return;
         curFid = b.getAttribute('data-f');
-        rendered = {};                       // 필드가 바뀌면 카드는 완전히 다른 것들이다
+        rendered = {};
         document.getElementById('grid').innerHTML = '';
+        drawing.onContextChange();            // 필드 바꾸면 필기 자동 지움(유지 토글이면 남김)
         paintTabs(); paint();
       };
     });
   }
 
-  // 폴링마다 통째로 다시 그리면 화면이 깜빡이고 스크롤이 튄다.
-  // 그래서 닉네임을 키로 맞춰 본다: 있던 건 글만 갈아 끼우고, 새로 온 것만 애니메이션으로 붙인다.
+  // 실시간 오버레이 — 현재 필드 작성 수. 새 답이 오면 부드럽게 숫자만 갱신.
+  function paintRt(wrote) {
+    var f = curField();
+    var total = (data && data.total) || fields().length || 0;
+    document.getElementById('rt').innerHTML = f ? '작성 <b>' + wrote + '</b> / ' + ((data.rows || []).length) : '';
+    document.getElementById('loc').textContent = f ? f.label : '';
+  }
+
   function paint() {
     var f = curField();
     var rows = list();
     var grid = document.getElementById('grid');
 
     document.getElementById('part').textContent = (data.rows || []).length + '명 참여';
-    document.getElementById('qline').innerHTML = f
-      ? esc(f.label) + '<span class="cnt">' + rows.length + '명 작성' + (f.section ? ' · ' + esc(f.section) : '') + '</span>'
-      : '';
     document.getElementById('empty').style.display = rows.length ? 'none' : '';
+    paintRt(rows.length);
 
     var seen = {};
     rows.forEach(function (r, i) {
@@ -3518,7 +3643,6 @@ function renderSheetPresentPage(activity) {
         el = document.createElement('div');
         el.className = 'card fresh';
         el.innerHTML = '<div class="who"></div><div class="txt"></div>';
-        el.onclick = function () { openBig(rows.indexOf(r) >= 0 ? rows.indexOf(r) : i); };
         grid.appendChild(el);
         rendered[r.nickname] = el;
         setTimeout(function () { el.classList.remove('fresh'); }, 400);
@@ -3531,19 +3655,21 @@ function renderSheetPresentPage(activity) {
       el.__idx = i;
       el.onclick = function () { openBig(el.__idx); };
     });
-    // 글을 지워 목록에서 빠진 학생의 카드는 걷어낸다
     Object.keys(rendered).forEach(function (nick) {
       if (!seen[nick]) { var e = rendered[nick]; if (e && e.parentNode) e.parentNode.removeChild(e); delete rendered[nick]; }
     });
-    if (bigIdx >= 0) paintBig();
+    if (bigOv.isOpen()) paintBig();
   }
 
-  // ---- 크게 보기 ----
-  function openBig(i) { bigIdx = i; document.getElementById('big').style.display = 'flex'; paintBig(); }
-  function closeBig() { bigIdx = -1; document.getElementById('big').style.display = 'none'; }
+  // ---- 크게 보기 (오버레이 3겹 닫기) ----
+  var bigOv = PT.createOverlay(document.getElementById('big'), {
+    name: 'enlarge', closeLabel: '목록으로',
+    onClose: function () { bigIdx = -1; }
+  });
+  function openBig(i) { bigIdx = i; bigOv.open(); paintBig(); }
   function paintBig() {
     var rows = list(), f = curField();
-    if (!rows.length || bigIdx < 0) return closeBig();
+    if (!rows.length || bigIdx < 0) { bigOv.close(); return; }
     if (bigIdx >= rows.length) bigIdx = rows.length - 1;
     var r = rows[bigIdx];
     document.getElementById('bwho').textContent = label(r, bigIdx);
@@ -3554,19 +3680,16 @@ function renderSheetPresentPage(activity) {
   function step(d) {
     var n = list().length;
     if (!n) return;
-    bigIdx = (bigIdx + d + n) % n;      // 끝에서 처음으로 — 발표 중 막다른 길이 없게
+    bigIdx = (bigIdx + d + n) % n;
     paintBig();
   }
   document.getElementById('bprev').onclick = function () { step(-1); };
   document.getElementById('bnext').onclick = function () { step(1); };
-  document.getElementById('big').onclick = function (e) { if (e.target === this) closeBig(); };
-
+  // ←/→ 는 확대 중일 때만(오버레이 매니저가 Esc 는 처리)
   document.addEventListener('keydown', function (e) {
-    if (bigIdx >= 0) {
-      if (e.key === 'Escape') { closeBig(); e.preventDefault(); }
-      else if (e.key === 'ArrowRight') { step(1); e.preventDefault(); }
-      else if (e.key === 'ArrowLeft') { step(-1); e.preventDefault(); }
-    }
+    if (!bigOv.isOpen()) return;
+    if (e.key === 'ArrowRight') { step(1); e.preventDefault(); }
+    else if (e.key === 'ArrowLeft') { step(-1); e.preventDefault(); }
   });
 
   // ---- 이름 가리기 ----
@@ -3575,31 +3698,27 @@ function renderSheetPresentPage(activity) {
     this.classList.toggle('on', anon);
     this.textContent = anon ? '🙈 이름 가림' : '🙈 이름 가리기';
     paint();
-    if (bigIdx >= 0) paintBig();
+    if (bigOv.isOpen()) paintBig();
   };
 
-  // ---- 무작위 뽑기 ----
-  // 그냥 하나 고르면 "짰다"는 소리를 듣는다. 룰렛처럼 훑다가 서서히 느려지며 멈춘다 — 뽑는 맛이 있어야 쓴다.
+  // ---- 무작위 뽑기 (룰렛) ----
   var rouling = false;
   document.getElementById('pickBtn').onclick = function () {
     var rows = list();
     if (rouling || !rows.length) return;
     rouling = true;
-    closeBig();
+    if (bigOv.isOpen()) bigOv.close();
     var btn = this;
     btn.disabled = true;
     var target = Math.floor(Math.random() * rows.length);
     var i = 0, ticks = 0;
-    var total = rows.length * 2 + target + 6;    // 최소 두 바퀴는 돈다
+    var total = rows.length * 2 + target + 6;
     var delay = 60;
     function tick() {
       Object.keys(rendered).forEach(function (n) { rendered[n].classList.remove('roul'); });
       var r = rows[i % rows.length];
       var el = rendered[r.nickname];
-      if (el) {
-        el.classList.add('roul');
-        el.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
-      }
+      if (el) { el.classList.add('roul'); el.scrollIntoView({ block: 'nearest', behavior: 'smooth' }); }
       i++; ticks++;
       if (ticks >= total) {
         setTimeout(function () {
@@ -3609,11 +3728,61 @@ function renderSheetPresentPage(activity) {
         }, 420);
         return;
       }
-      if (ticks > total - 10) delay += 42;       // 끝에서 감속
+      if (ticks > total - 10) delay += 42;
       setTimeout(tick, delay);
     }
     tick();
   };
+
+  // ---- 공용 도구: 필기 · 스포트라이트 · 타이머 · 도움말 · 전체화면 · 도구 독 ----
+  var cv = document.getElementById('drawCv');
+  function sizeCv() { var r = cv.parentElement.getBoundingClientRect(); cv.width = r.width; cv.height = r.height; drawing && drawing.resize(); }
+  var drawing = PT.createDrawing(cv, {});
+  drawing.setOn(false); cv.style.pointerEvents = 'none';
+  window.addEventListener('resize', sizeCv); setTimeout(sizeCv, 50);
+
+  var penOn = false;
+  document.getElementById('penBtn').onclick = function () {
+    penOn = !penOn;
+    drawing.setOn(penOn);
+    cv.style.pointerEvents = penOn ? 'auto' : 'none';
+    this.classList.toggle('on', penOn);
+    document.getElementById('drawTools').classList.toggle('on', penOn);
+    if (penOn) sizeCv();
+  };
+  document.querySelectorAll('#drawTools .sw').forEach(function (b) {
+    b.onclick = function () {
+      document.querySelectorAll('#drawTools .sw').forEach(function (x) { x.classList.remove('on'); });
+      b.classList.add('on'); drawing.setColor(b.getAttribute('data-color'));
+      document.getElementById('dEraser').classList.remove('on');
+    };
+  });
+  document.querySelectorAll('#drawTools .dsz').forEach(function (b) {
+    b.onclick = function () {
+      document.querySelectorAll('#drawTools .dsz').forEach(function (x) { x.classList.remove('on'); });
+      b.classList.add('on'); drawing.setSize(b.getAttribute('data-size'));
+    };
+  });
+  document.getElementById('dEraser').onclick = function () { var on = !this.classList.contains('on'); this.classList.toggle('on', on); drawing.setEraser(on); };
+  document.getElementById('dClear').onclick = function () { drawing.clear(); };
+  document.getElementById('dKeep').onclick = function () { var k = !drawing.isKeep(); drawing.setKeep(k); this.classList.toggle('on', k); };
+
+  var spot = PT.createSpotlight();
+  document.getElementById('spotBtn').onclick = function () { spot.open(); };
+  var timer = PT.createTimer();
+  document.getElementById('timerBtn').onclick = function () { timer.open(); };
+  var help = PT.createHelp([
+    ['←/→', '확대에서 이전·다음 답'], ['Esc', '오버레이 닫기'], ['F', '전체화면'],
+    ['✕ / 배경클릭 / 뒤로가기', '오버레이 닫기(발표 유지)']
+  ]);
+  document.getElementById('helpBtn').onclick = function () { help.open(); };
+  document.getElementById('fscBtn').onclick = function () { PT.toggleFullscreen(); };
+  document.addEventListener('keydown', function (e) {
+    var t = (e.target && e.target.tagName) || '';
+    if ((e.key === 'f' || e.key === 'F') && t !== 'INPUT' && t !== 'TEXTAREA') { PT.toggleFullscreen(); }
+  });
+
+  PT.createDock(document.getElementById('dock'), { idleMs: 5000 });
 
   load();
   setInterval(function () { if (!rouling) load(); }, 3000);

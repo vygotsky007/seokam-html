@@ -1132,7 +1132,10 @@ async function drag(page, box, x0, y0, x1, y1) {   // 페이지 px 좌표로 드
   const perrors = [];
   pp.on('pageerror', (e) => perrors.push(String(e)));
   await pp.goto(`http://127.0.0.1:${APP_PORT}/present/${ACT_ID}`);
-  await pp.waitForSelector('#qAnswer');
+  // 재설계: 응답·채점은 하단 독에서 여는 오버레이. 발표 본문이 화면의 대부분이고, 채점 패널은 열어서 쓴다.
+  await pp.waitForSelector('#answerBtn');
+  await pp.click('#answerBtn');
+  await pp.waitForSelector('#qAnswer', { state: 'visible' });
   // 21번으로 이동
   await pp.click('.qbtn:has-text("21")').catch(async () => {
     await pp.evaluate(() => { const b = [...document.querySelectorAll('.qbtn')].find((x) => x.textContent.trim() === '21'); if (b) b.click(); });
@@ -1187,7 +1190,9 @@ async function drag(page, box, x0, y0, x1, y1) {   // 페이지 px 좌표로 드
   // 정답표에 정답이 있는 문항은 발표 진입 시 이미 채점된 상태
   const pp2 = await ctx.newPage();
   await pp2.goto(`http://127.0.0.1:${APP_PORT}/present/${ACT_ID}`);
-  await pp2.waitForSelector('#qAnswer .rate');
+  await pp2.waitForSelector('#answerBtn');
+  await pp2.click('#answerBtn');
+  await pp2.waitForSelector('#qAnswer .rate', { state: 'visible' });
   await pp2.evaluate(() => { const b = [...document.querySelectorAll('.qbtn')].find((x) => x.textContent.trim() === '21'); if (b) b.click(); });
   await pp2.waitForTimeout(300);
   const key = await pp2.inputValue('#keyInput');

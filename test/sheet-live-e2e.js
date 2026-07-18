@@ -314,8 +314,9 @@ async function write(page, idx, text) {
     const epr = await browser.newPage({ viewport: { width: 1280, height: 800 } });
     watch(epr, '시험지 발표');
     await epr.goto(APP + '/present/' + EXAM_ID);
-    await epr.waitForSelector('.topbar', { timeout: 5000 });
-    ok('검증3) 시험지 발표 모드가 그대로 뜬다', (await epr.locator('.tab').count()) === 0 && (await epr.locator('.topbar').count()) === 1);
+    await epr.waitForSelector('.statusbar', { timeout: 5000 });
+    // 재설계 후: 시험지 발표는 상태바 + 하단 독. 활동지 전용 필드 탭(.tab)은 없다.
+    ok('검증3) 시험지 발표 모드가 그대로 뜬다', (await epr.locator('.tab').count()) === 0 && (await epr.locator('.statusbar').count()) === 1 && (await epr.locator('#dock').count()) === 1);
   } catch (e) {
     fail++;
     console.error('\n💥 예외:', e && e.stack ? e.stack : e);
