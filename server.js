@@ -476,6 +476,14 @@ ${body}
     if (!q) { el.innerHTML = '<div class="empty">문항이 없습니다.</div>'; return; }
     var typeLabel = q.type === 'choice' ? '객관식' : q.type === 'short' ? '단답' : '서술형';
 
+    // 교사가 정답칸을 입력하는 중이면 그 값을 지킨다.
+    // 5초 통계 폴링(fetchData)이 이 패널을 통째로 다시 그리는데, 그때 서버의 옛 정답으로
+    // 입력칸을 되돌려 버려 "㉡|28-(17+6)" 처럼 여러 정답을 치던 도중에 앞부분만 남고 잘렸다.
+    var edit = document.getElementById('keyInput');
+    var keepVal = (edit && document.activeElement === edit) ? edit.value : null;
+    var keepSel = keepVal !== null ? [edit.selectionStart, edit.selectionEnd] : null;
+    if (keepVal !== null) q.answer = keepVal;    // 편집 중 값으로 정답률도 계속 맞춘다
+
     var total = 0, correct = 0;
     state.students.forEach(function (s) {
       var c = isCorrect(s, q.num);
@@ -517,6 +525,11 @@ ${body}
 
     var inp = document.getElementById('keyInput');
     if (inp) {
+      // 폴링이 이 패널을 다시 그려도 편집 중이던 값·커서를 되살린다
+      if (keepVal !== null) {
+        inp.value = keepVal;
+        try { inp.focus(); inp.setSelectionRange(keepSel[0], keepSel[1]); } catch (e) {}
+      }
       var save = function () { saveAnswerKey(q.num, inp.value); };
       document.getElementById('keySave').onclick = save;
       inp.addEventListener('keydown', function (e) { if (e.key === 'Enter') save(); });

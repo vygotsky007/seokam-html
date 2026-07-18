@@ -2657,11 +2657,46 @@ function linesInRect(pg, rect) {
     .filter(function (l) {
       var cy = l.y - l.h / 2;
       if (cy < rect.y0 || cy > rect.y1) return false;            // 줄 중심이 박스 밖 → 이웃 문항 것
+      if (lineStartsLeftOfRectColumn(pg, rect, l)) return false; // 왼단 긴 줄이 거터를 넘어 침범한 꼬리 → 그 줄은 왼단 것
       if (isFurnitureLine(pg, l)) return false;                  // 머리글·꼬리말(주최/저작 문구) 제거
       return !isPageNumberText(pg, l);                           // 쪽번호 잔재 제거
     })
     .map(function (l) { l.pg = pg; return extendClippedLine(pg, rect, l); });   // pg: 밑줄 잉크 검사에 원본 캔버스가 필요
   return pullPassageHeader(pg, rect, lines);
+}
+
+// 한 줄은 그 줄이 '시작하는 단'에 속한다.
+// 왼단 발문이 너무 길어 거터를 넘어 오른단 x대역까지 뻗으면, 그 꼬리 글자가 오른단 rect 의
+// x필터를 통과해 들어온다. 이때 extendClippedLine 이 촘촘한 글자 간격을 따라 왼쪽으로 쭉 되살려
+// "43. 고래는…" 같은 왼단 줄을 통째로 오른단 문항에 붙여 버렸다(서술형→선다형 오분류의 원인).
+// → 이 줄의 '페이지 전체 기준 진짜 최좌단'이 rect 보다 앞 단에 있으면, 이 rect 의 줄이 아니다.
+function lineStartsLeftOfRectColumn(pg, rect, l) {
+  var cols = pgCols(pg);
+  if (cols.length <= 1) return false;                            // 단이 하나면 넘어올 옆 단이 없다
+  var rectCol = colAt(pg, rect.x0 + 1);                          // 이 rect 가 속한 단
+  if (rectCol <= 0) return false;                                // 맨 왼쪽 단은 더 왼쪽 단이 없다
+  var cy = l.y - l.h / 2;
+  var sameY = (pg.items || []).filter(function (t) {
+    return Math.abs((t.y - (t.h || 0) / 2) - cy) <= Math.max(3, l.h * 0.5);
+  }).sort(function (a, b) { return a.x - b.x; });
+  if (sameY.length < 2) return false;
+  // rect 안 첫 글자에서 시작해, 촘촘히(<LINE_GLUE) 이어지는 글자만 왼쪽으로 따라간다.
+  // extendClippedLine 이 실제로 되살릴 경로와 똑같이 본다 — 거터의 큰 간격에서 멈추므로,
+  // 그냥 near-y 로 옆 단(다른 문항) 글자를 최좌단으로 오인하지 않는다.
+  var firstIn = -1;
+  for (var i = 0; i < sameY.length; i++) {
+    var cx = sameY[i].x + (sameY[i].w || 0) / 2;
+    if (cx >= rect.x0 && cx <= rect.x1) { firstIn = i; break; }
+  }
+  if (firstIn < 0) return false;
+  var lo = firstIn;
+  while (lo > 0) {
+    var p = sameY[lo - 1], c = sameY[lo];
+    if (c.x - (p.x + (p.w || 0)) > LINE_GLUE) break;             // 거터(큰 간격) → 여기까지가 이 줄
+    lo--;
+  }
+  var startCx = sameY[lo].x + (sameY[lo].w || 0) / 2;
+  return colAt(pg, startCx) < rectCol;                          // 촘촘히 이어진 진짜 시작이 앞 단 → 침범한 꼬리
 }
 
 // ---- 강조 서식 복원(굵게 · 밑줄) ----
