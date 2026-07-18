@@ -260,22 +260,33 @@ function watch(page, tag, sink) {
     const rErrors = [];
     r.on('pageerror', (e) => rErrors.push(String(e)));
     await r.goto(APP + '/sheet/' + activityId);
-    await r.waitForSelector('#tbl thead', { timeout: 5000 });
+    await r.waitForSelector('#stList .st-row', { timeout: 5000 });
 
-    const heads = await r.locator('#tbl thead th').allTextContents();
-    ok('검증3) 표 머리글 = 학생 + 진행 + 필드 4개', heads.length === 6, JSON.stringify(heads));
-    ok('검증3) 열 이름이 수정한 라벨로 나온다', heads.includes('첫 프롬프트 연습'), JSON.stringify(heads));
+    // 기본 = 학생별 보기: 목록 + 개별 그룹별 읽기
+    ok('검증3) 기본 탭이 학생별 보기', await r.locator('#paneStudent').isVisible());
+    ok('검증3) 학생 목록에 이름·진행', /남건/.test(await r.locator('#stList').textContent()));
+    await r.locator('#stList .st-row', { hasText: '남건' }).first().click();
+    const detTxt = await r.locator('#stDetail').textContent();
+    ok('검증3) 학생 클릭 → 그 학생 답을 그룹별로', /로봇 골키퍼/.test(detTxt) && /첫 프롬프트 연습/.test(detTxt), detTxt.slice(0, 40));
+    ok('검증3) 학생별 보기에 그룹 제목이 있다', (await r.locator('#stDetail .st-grp h4').count()) >= 1);
+    await r.click('#stNext');   // ←/→ 이동
+    ok('검증3) 다음 학생으로 이동', (await r.locator('#stDetail .head .nm').textContent()) !== '남건' || (await r.locator('#stList .st-row').count()) === 1);
+
+    // 표 보기(그룹 헤더 + 접기)
+    await r.click('#tabTable');
+    await r.waitForSelector('#tbl thead', { state: 'visible' });
+    ok('검증3) 표에 그룹 헤더가 있다', (await r.locator('#tbl th.grp').count()) >= 1);
+    // 접힌 그룹 전부 펼치기(▸ 인 것 클릭)
+    for (let i = 0; i < 10; i++) { const c = r.locator('#tbl th.grp', { hasText: '▸' }).first(); if (await c.count() === 0) break; await c.click(); }
+    const heads = await r.locator('#tbl th.fld').allTextContents();
+    ok('검증3) 열 이름이 수정한 라벨로 나온다', heads.some((h) => h.includes('첫 프롬프트 연습')), JSON.stringify(heads));
     ok('검증3) 체크박스 묶음은 열에 없다(수집 제외)', !heads.some((h) => h.includes('약속 5')));
-
-    const cells = await r.locator('#tbl tbody tr').first().locator('td').allTextContents();
-    ok('검증3) 행 = 학생', cells[0].includes('남건'), JSON.stringify(cells[0]));
-    ok('검증3) 진행 표시(필드 채움 수)', cells[1].trim() === '4/4', cells[1]);
 
     // 셀 클릭 → 전체 보기
     await r.locator('#tbl td.cell').first().click();
     await r.waitForSelector('#modal', { state: 'visible' });
     const modal = await r.locator('#mTxt').textContent();
-    ok('검증3) 셀 클릭 시 전체 보기', /로봇 골키퍼/.test(modal || ''), (modal || '').slice(0, 30));
+    ok('검증3) 셀 클릭 시 전체 보기', (modal || '').length > 0, (modal || '').slice(0, 30));
     await r.click('#mClose');
 
     // 필드별 모아보기

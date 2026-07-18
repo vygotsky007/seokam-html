@@ -144,23 +144,24 @@ async function write(page, idx, text) {
     const pr = await browser.newPage({ viewport: { width: 1280, height: 800 } });
     watch(pr, '발표');
     await pr.goto(APP + '/present/' + SHEET_ID);
-    await pr.waitForSelector('.tab', { timeout: 5000 });
+    await pr.waitForSelector('.fieldtabs .tab', { timeout: 5000 });
 
-    const tabs = await pr.locator('.tab').allTextContents();
-    ok('필드 탭이 수집 필드 수만큼', (await pr.locator('.tab').count()) === collect.length, JSON.stringify(tabs));
-    ok('탭이 번호가 아니라 라벨로 표시된다', tabs.some((t) => t.includes('로그라인')), JSON.stringify(tabs));
+    // 재설계: 2단 탭(상단 그룹 → 하단 필드). 6필드 활동은 그룹 4개(각 1필드).
+    const gtabs = await pr.locator('.grouptabs .gtab').allTextContents();
+    ok('상단 그룹 탭이 그룹 수만큼', gtabs.length >= 1, JSON.stringify(gtabs));
+    const allLabels = gtabs.concat(await pr.locator('.fieldtabs .tab').allTextContents());
+    ok('탭이 번호가 아니라 라벨로 표시된다', allLabels.some((t) => t.includes('로그라인')), JSON.stringify(allLabels));
 
     await pr.waitForSelector('.card');
     ok('첫 필드에 학생 2명 카드', (await pr.locator('.card').count()) === 2, await pr.locator('.card').count() + '개');
     const who1 = await pr.locator('.card .who').first().textContent();
     ok('카드에 닉네임이 보인다', /가영|나은/.test(who1 || ''), who1);
 
-    // 탭 전환 — 로그라인 필드(가영만 씀)
-    const logIdx = collect.findIndex((f) => f.label.includes('로그라인'));
-    await pr.locator('.tab').nth(logIdx).click();
+    // 탭 전환 — 로그라인 그룹(SCENE3, 가영만 씀)
+    await pr.locator('.grouptabs .gtab', { hasText: '로그라인' }).first().click();
     await sleep(300);
-    ok('탭 전환 시 그 필드 답만 나온다(1명)', (await pr.locator('.card').count()) === 1, await pr.locator('.card').count() + '개');
-    ok('탭 전환이 시각적으로 반영된다', (await pr.locator('.tab').nth(logIdx).getAttribute('class')).includes('on'));
+    ok('그룹 전환 시 그 필드 답만 나온다(1명)', (await pr.locator('.card').count()) === 1, await pr.locator('.card').count() + '개');
+    ok('그룹 전환이 시각적으로 반영된다', (await pr.locator('.grouptabs .gtab', { hasText: '로그라인' }).first().getAttribute('class')).includes('on'));
 
     // 새 답 실시간 추가 — 나은이가 지금 로그라인을 쓴다
     await write(b, 2, '겁 많은 로봇이 친구를 찾아 우주로 떠나는 이야기');

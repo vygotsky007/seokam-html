@@ -1276,6 +1276,18 @@ function renderLivePage(activity) {
   table.matrix th.fh { cursor: default; min-width: 62px; max-width: 96px; font-size: 11.5px; line-height: 1.3; white-space: normal; word-break: break-all; }
   table.matrix th.fh:hover { background: #f7fafc; }
   table.matrix td.cell { width: 30px; height: 26px; }
+  /* 진행 막대(필드 많은 활동지) */
+  #bars .barrow { display: flex; align-items: center; gap: 10px; padding: 7px 4px; border-bottom: 1px solid #edf2f7; cursor: pointer; }
+  #bars .barrow:hover { background: #f7fafc; }
+  #bars .barrow.off { opacity: .5; }
+  #bars .bn { flex: 0 0 130px; font-weight: 700; font-size: 13px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  #bars .btrack { flex: 1; display: flex; gap: 2px; height: 20px; }
+  #bars .bseg { position: relative; background: #edf2f7; border-radius: 3px; overflow: hidden; min-width: 6px; }
+  #bars .bfill { position: absolute; left: 0; top: 0; bottom: 0; }
+  #bars .bnum { flex: 0 0 52px; text-align: right; font-size: 12.5px; color: #4a5568; font-weight: 700; }
+  #bars .blegend { display: flex; flex-wrap: wrap; gap: 12px; margin-top: 10px; font-size: 12px; color: #718096; }
+  #bars .blegend span { display: flex; align-items: center; gap: 5px; }
+  #bars .blegend i { width: 11px; height: 11px; border-radius: 3px; display: inline-block; }
   td.a { background: #c6f6d5; }          /* 답함 / 입력 있음 */
   td.c { background: #bee3f8; box-shadow: inset 0 0 0 2px #2b6cb0; }  /* 지금 보는 중 / 입력 중 */
   td.u { background: #edf2f7; }          /* 미답 / 비어 있음 */
@@ -1353,6 +1365,7 @@ function renderLivePage(activity) {
     <div class="card">
       <h2>📊 진행 매트릭스 <span class="muted" id="mxHint">— 문항 번호를 누르면 응답 분포를 볼 수 있어요</span></h2>
       <div class="scroller"><table class="matrix" id="matrix"></table></div>
+      <div id="bars" style="display:none"></div>
     </div>
 
     <div class="card" id="distCard" style="display:none;">
@@ -1461,12 +1474,30 @@ function renderLivePage(activity) {
       '<span class="off">(전체 ' + sts.length + '명)</span>';
     noteTyping();
 
-    document.getElementById('mxHint').innerHTML = isSheet()
+    document.getElementById('mxHint').innerHTML = useBars()
+      ? '— 필드가 많아 <b>진행 막대</b>로 봅니다(그룹별 색). 막대를 누르면 그 학생의 그룹별 채움 상태가 열려요.'
+      : isSheet()
       ? '— 열은 <b>수집 칸</b>이에요. <span style="background:#c6f6d5;padding:0 6px;border-radius:4px;">입력 있음</span> ' +
         '<span style="background:#bee3f8;padding:0 6px;border-radius:4px;">입력 중</span> ' +
         '<span style="background:#edf2f7;padding:0 6px;border-radius:4px;">비어 있음</span> · 이름·칸을 누르면 쓴 글이 보여요'
       : '— 문항 번호를 누르면 응답 분포를 볼 수 있어요';
 
+    // ---- 필드 많은 활동지: 진행 막대(매트릭스 대신) ----
+    if (useBars()) {
+      document.querySelector('.scroller').style.display = 'none';
+      document.getElementById('bars').style.display = '';
+      renderBars();
+    } else {
+      document.querySelector('.scroller').style.display = '';
+      document.getElementById('bars').style.display = 'none';
+      renderMatrix();
+    }
+    renderNoticesAndClose();
+    if (pickedQ != null) renderDist();
+  }
+
+  function renderMatrix() {
+    var cs = cols(), sts = state.students;
     // ---- 진행 매트릭스 ----
     var h = '<thead><tr><th class="name">학생</th>';
     cs.forEach(function (c) {
@@ -1525,15 +1556,52 @@ function renderLivePage(activity) {
       }
     });
     if (openStu) renderStu();
+  }
 
-    // ---- 공지 이력 / 마감 상태 ----
+  // ---- 진행 막대(필드 많은 활동지) ----
+  function useBars() { return isSheet() && cols().length > 12; }
+  var BAR_PALETTE = ['#3b82f6', '#22c55e', '#f59e0b', '#8b5cf6', '#ec4899', '#14b8a6', '#ef4444', '#0ea5e9', '#84cc16', '#f97316'];
+  function groupsOfCols() {
+    var order = [], by = {};
+    cols().forEach(function (c) {
+      var g = (c.field && c.field.group) || '기타';
+      if (!by[g]) { by[g] = { name: g, cols: [] }; order.push(by[g]); }
+      by[g].cols.push(c);
+    });
+    return order;
+  }
+  function renderBars() {
+    var sts = state.students, gs = groupsOfCols(), total = cols().length;
+    var html = '';
+    sts.forEach(function (st) {
+      var filled = cols().filter(function (c) { return hasVal(st, c); }).length;
+      html += '<div class="barrow' + (st.online ? '' : ' off') + '" data-nick="' + esc(st.nickname) + '">' +
+        '<div class="bn">' + esc(st.nickname) +
+        (st.online ? '' : '<span class="badge offb">끊김</span>') +
+        (st.submitted ? '<span class="badge sub">제출</span>' : '') + '</div><div class="btrack">';
+      gs.forEach(function (g, gi) {
+        var gf = g.cols.filter(function (c) { return hasVal(st, c); }).length;
+        html += '<span class="bseg" style="flex:' + g.cols.length + '" title="' + esc(g.name) + ' ' + gf + '/' + g.cols.length + '">' +
+          '<span class="bfill" style="width:' + Math.round(gf / g.cols.length * 100) + '%;background:' + BAR_PALETTE[gi % BAR_PALETTE.length] + '"></span></span>';
+      });
+      html += '</div><div class="bnum">' + filled + '/' + total + '</div></div>';
+    });
+    // 그룹 색 범례
+    html += '<div class="blegend">' + gs.map(function (g, gi) {
+      return '<span><i style="background:' + BAR_PALETTE[gi % BAR_PALETTE.length] + '"></i>' + esc(g.name) + '</span>';
+    }).join('') + '</div>';
+    document.getElementById('bars').innerHTML = html;
+    document.querySelectorAll('#bars .barrow').forEach(function (row) {
+      row.onclick = function () { openStu = row.getAttribute('data-nick'); renderStu(); };
+    });
+  }
+
+  function renderNoticesAndClose() {
     document.getElementById('nlist').innerHTML = (state.notices || []).map(function (n) {
       return '<div>' + esc(n.text) + ' <span class="who">' + new Date(n.at).toLocaleTimeString('ko-KR') + '</span></div>';
     }).join('') || '<div class="muted">보낸 공지가 없어요.</div>';
     document.getElementById('closedBox').style.display = state.closed ? 'block' : 'none';
     document.getElementById('closeBtn').disabled = !!state.closed;
-
-    if (pickedQ != null) renderDist();
   }
 
   // ---- 문항 이동 요청 ----
@@ -3427,9 +3495,15 @@ function renderSheetPresentPage(activity) {
   .statusbar .part { color: #4ade80; font-weight: 800; margin-left: auto; }
   .statusbar .live { color: #4ade80; }
 
-  /* 필드 탭 — 얇게 */
-  .tabs { display: flex; gap: 6px; padding: 6px 16px 0; overflow-x: auto; background: #0b1220; }
-  .tab { padding: 7px 14px; font-size: 14px; font-weight: 800; border: 1px solid #475569; background: #1e293b; color: #94a3b8; border-radius: 9px 9px 0 0; cursor: pointer; white-space: nowrap; max-width: 300px; overflow: hidden; text-overflow: ellipsis; }
+  /* 필드 탭 — 2단(그룹 → 필드) */
+  .tabs { background: #0b1220; padding: 4px 16px 0; }
+  .grouptabs { display: flex; gap: 6px; overflow-x: auto; padding-bottom: 4px; }
+  .gtab { padding: 6px 14px; font-size: 14px; font-weight: 800; border: 1px solid #475569; background: #1e293b; color: #94a3b8; border-radius: 999px; cursor: pointer; white-space: nowrap; }
+  .gtab:hover { color: #e2e8f0; }
+  .gtab.on { background: #3b82f6; color: #fff; border-color: #3b82f6; }
+  .gtab .gc { font-size: 11px; opacity: .7; }
+  .fieldtabs { display: flex; gap: 6px; overflow-x: auto; padding-top: 2px; }
+  .tab { padding: 7px 14px; font-size: 14px; font-weight: 700; border: 1px solid #475569; background: #1e293b; color: #94a3b8; border-radius: 9px 9px 0 0; cursor: pointer; white-space: nowrap; max-width: 300px; overflow: hidden; text-overflow: ellipsis; }
   .tab:hover { color: #e2e8f0; }
   .tab.on { background: #0b1220; color: #fff; border-color: #3b82f6; border-bottom-color: #0b1220; }
   .tab .sec { display: block; font-size: 10px; font-weight: 600; opacity: .65; }
@@ -3446,6 +3520,20 @@ function renderSheetPresentPage(activity) {
   .card .txt { font-size: var(--fs, 21px); line-height: 1.55; white-space: pre-wrap; word-break: break-word; color: #e2e8f0;
     display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; }
   .card.anon .who { color: #94a3b8; }
+  .card { position: relative; }
+  .cardtools { position: absolute; top: 8px; right: 8px; display: none; gap: 6px; align-items: center; z-index: 2; }
+  .card:hover .cardtools { display: flex; }
+  .cardtools .chide { height: 26px; padding: 0 8px; font-size: 11px; font-weight: 700; border: 1px solid #475569; background: #334155; color: #e2e8f0; border-radius: 6px; cursor: pointer; }
+  .cardtools .csel { display: flex; align-items: center; gap: 3px; font-size: 11px; color: #94a3b8; cursor: pointer; }
+  /* 세션 정리 배너 */
+  #sessbar { margin-bottom: 12px; display: flex; flex-direction: column; gap: 8px; }
+  #sessbar .sess-merge, #sessbar .sess-sug { background: #1e293b; border: 1px solid #475569; border-radius: 10px; padding: 8px 12px; font-size: 13px; display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+  #sessbar .sess-merge { border-color: #f0a03c; }
+  #sessbar button { height: 30px; padding: 0 10px; font-size: 12px; font-weight: 800; border: 1px solid #475569; background: #334155; color: #e2e8f0; border-radius: 7px; cursor: pointer; }
+  #sessbar #doMerge, #sessbar .sm { background: #f0a03c; color: #1a202c; border-color: #f0a03c; }
+  #sessbar .pair { border: 1px solid #334155; border-radius: 8px; padding: 4px 8px; }
+  #sessbar .rz { color: #94a3b8; font-size: 11px; }
+  #sessbar .muted { color: #64748b; font-size: 11.5px; }
   @keyframes popin { from { opacity: 0; transform: translateY(10px) scale(.98); } to { opacity: 1; transform: none; } }
   .card.fresh { animation: popin .32s ease-out; border-color: #22c55e; }
   .card.roul { border-color: #f0a03c; background: #3a2c14; transform: scale(1.03); }
@@ -3489,6 +3577,7 @@ function renderSheetPresentPage(activity) {
   <div class="tabs" id="tabs"></div>
   <div class="stagewrap">
     <div class="stage" id="stage">
+      <div id="sessbar" style="display:none"></div>
       <div class="grid" id="grid"></div>
       <div id="empty">아직 이 칸에 쓴 학생이 없어요. 학생이 쓰면 여기에 바로 나타납니다.</div>
     </div>
@@ -3539,6 +3628,7 @@ function renderSheetPresentPage(activity) {
   var PT = window.PresentTools;
   var data = null;
   var curFid = null;
+  var curGroup = null;
   var anon = false;
   var bigIdx = -1;
   var rendered = {};        // 닉네임 -> 카드 엘리먼트 (폴링마다 새로 그리지 않기 위해)
@@ -3581,10 +3671,43 @@ function renderSheetPresentPage(activity) {
     var f = curField();
     if (!f) return [];
     return (data.rows || [])
-      .filter(function (r) { return show(r, f).trim(); })
+      .filter(function (r) { return !r.hidden && show(r, f).trim(); })   // 숨긴 세션은 발표에서 제외
       .sort(function (a, b) { return String(a.nickname).localeCompare(String(b.nickname), 'ko'); });
   }
   function label(r, i) { return anon ? '학생 ' + (i + 1) : r.nickname; }
+
+  // ---- 유령 세션 감지: 이름 포함관계 or 답 유사 쌍 → 교사에게 제안(자동 병합은 안 함) ----
+  function norm(s) { return String(s || '').replace(/\s+/g, '').toLowerCase(); }
+  function answersText(r) {
+    return collectedFields().map(function (f) { return show(r, f); }).join('');
+  }
+  function collectedFields() { return ((data && data.activity.fields) || []).filter(function (f) { return f.collect; }); }
+  function similar(a, b) {
+    var ta = answersText(a), tb = answersText(b);
+    if (!ta.trim() || !tb.trim()) return false;
+    if (ta === tb) return true;
+    var shorter = ta.length < tb.length ? ta : tb, longer = ta.length < tb.length ? tb : ta;
+    return shorter.length > 8 && longer.indexOf(shorter) >= 0;   // 한쪽이 다른쪽에 통째로 포함
+  }
+  function suggestions() {
+    var rows = (data && data.rows || []).filter(function (r) { return !r.hidden; });
+    var out = [];
+    for (var i = 0; i < rows.length; i++) {
+      for (var j = i + 1; j < rows.length; j++) {
+        var a = rows[i], b = rows[j];
+        var na = norm(a.nickname), nb = norm(b.nickname);
+        var nameContained = na && nb && na !== nb && (na.indexOf(nb) >= 0 || nb.indexOf(na) >= 0);
+        var reason = nameContained ? '이름 포함관계' : (similar(a, b) ? '답 내용 비슷' : null);
+        if (reason) out.push({ a: a.nickname, b: b.nickname, reason: reason });
+      }
+    }
+    return out.slice(0, 5);
+  }
+  function sessionAction(body) {
+    return fetch('/api/sheet/' + ACTIVITY_ID + '/session', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),
+    }).then(function (r) { return r.json(); }).then(function () { load(); });
+  }
 
   function load() {
     fetch('/api/sheet/' + ACTIVITY_ID + '/results')
@@ -3598,23 +3721,59 @@ function renderSheetPresentPage(activity) {
       .catch(function () {});
   }
 
-  function paintTabs() {
-    var h = '';
+  // 수집 필드를 그룹(문서 구조) 순서로 묶는다.
+  function groups() {
+    var order = [], by = {};
     fields().forEach(function (f) {
-      h += '<button class="tab' + (f.id === curFid ? ' on' : '') + '" data-f="' + esc(f.id) + '" title="' + esc(f.label) + '">' +
-        esc(f.label) + (f.section ? '<span class="sec">' + esc(f.section) + '</span>' : '') + '</button>';
+      var g = (f.group || '기타');
+      if (!by[g]) { by[g] = { name: g, fields: [] }; order.push(by[g]); }
+      by[g].fields.push(f);
     });
-    document.getElementById('tabs').innerHTML = h;
-    document.querySelectorAll('.tab').forEach(function (b) {
+    return order;
+  }
+  function groupOfFid(fid) {
+    var gs = groups();
+    for (var i = 0; i < gs.length; i++) { if (gs[i].fields.some(function (f) { return f.id === fid; })) return gs[i].name; }
+    return gs.length ? gs[0].name : null;
+  }
+
+  // 2단 탭: 상단 그룹 탭 → 하단 그 그룹의 필드 탭. 25개 한 줄 눌림 방지.
+  function paintTabs() {
+    var gs = groups();
+    if (!curGroup && gs.length) curGroup = groupOfFid(curFid) || gs[0].name;
+    var curG = gs.filter(function (g) { return g.name === curGroup; })[0] || gs[0];
+    // 그룹이 하나뿐이면(적은 필드) 상단 줄은 숨기고 필드 탭만
+    var gh = gs.length > 1 ? '<div class="grouptabs">' + gs.map(function (g) {
+      var done = g.fields.length;
+      return '<button class="gtab' + (g.name === curGroup ? ' on' : '') + '" data-g="' + esc(g.name) + '">' + esc(g.name) + ' <span class="gc">' + done + '</span></button>';
+    }).join('') + '</div>' : '';
+    var fh = '<div class="fieldtabs">' + (curG ? curG.fields : []).map(function (f) {
+      return '<button class="tab' + (f.id === curFid ? ' on' : '') + '" data-f="' + esc(f.id) + '" title="' + esc(f.label) + '">' + esc(f.label) + '</button>';
+    }).join('') + '</div>';
+    document.getElementById('tabs').innerHTML = gh + fh;
+
+    document.querySelectorAll('.gtab').forEach(function (b) {
       b.onclick = function () {
-        if (curFid === b.getAttribute('data-f')) return;
-        curFid = b.getAttribute('data-f');
-        rendered = {};
-        document.getElementById('grid').innerHTML = '';
-        drawing.onContextChange();            // 필드 바꾸면 필기 자동 지움(유지 토글이면 남김)
-        paintTabs(); paint();
+        var g = b.getAttribute('data-g');
+        if (g === curGroup) return;
+        curGroup = g;
+        var grp = groups().filter(function (x) { return x.name === g; })[0];
+        if (grp && grp.fields.length) selectField(grp.fields[0].id);
+        else paintTabs();
       };
     });
+    document.querySelectorAll('.fieldtabs .tab').forEach(function (b) {
+      b.onclick = function () { selectField(b.getAttribute('data-f')); };
+    });
+  }
+  function selectField(fid) {
+    if (curFid === fid) return;
+    curFid = fid;
+    curGroup = groupOfFid(fid);
+    rendered = {};
+    document.getElementById('grid').innerHTML = '';
+    drawing.onContextChange();
+    paintTabs(); paint();
   }
 
   // 실시간 오버레이 — 현재 필드 작성 수. 새 답이 오면 부드럽게 숫자만 갱신.
@@ -3625,6 +3784,8 @@ function renderSheetPresentPage(activity) {
     document.getElementById('loc').textContent = f ? f.label : '';
   }
 
+  var mergeSel = [];   // 병합하려고 고른 닉네임(최대 2)
+
   function paint() {
     var f = curField();
     var rows = list();
@@ -3633,6 +3794,7 @@ function renderSheetPresentPage(activity) {
     document.getElementById('part').textContent = (data.rows || []).length + '명 참여';
     document.getElementById('empty').style.display = rows.length ? 'none' : '';
     paintRt(rows.length);
+    paintSuggestions();
 
     var seen = {};
     rows.forEach(function (r, i) {
@@ -3642,12 +3804,18 @@ function renderSheetPresentPage(activity) {
       if (!el) {
         el = document.createElement('div');
         el.className = 'card fresh';
-        el.innerHTML = '<div class="who"></div><div class="txt"></div>';
+        el.innerHTML = '<div class="cardtools"><label class="csel"><input type="checkbox" class="cselbox"><span>병합 선택</span></label>' +
+          '<button class="chide" type="button" title="이 세션 숨기기">숨기기</button></div><div class="who"></div><div class="txt"></div>';
+        el.setAttribute('data-nick', r.nickname);
+        el.querySelector('.chide').onclick = function (ev) { ev.stopPropagation(); sessionAction({ action: 'hide', nickname: r.nickname }); };
+        el.querySelector('.cselbox').onclick = function (ev) { ev.stopPropagation(); toggleMergeSel(r.nickname, ev.target.checked); };
+        el.querySelector('.csel').onclick = function (ev) { ev.stopPropagation(); };
         grid.appendChild(el);
         rendered[r.nickname] = el;
         setTimeout(function () { el.classList.remove('fresh'); }, 400);
       }
       el.classList.toggle('anon', anon);
+      el.querySelector('.cselbox').checked = mergeSel.indexOf(r.nickname) >= 0;
       var who = el.querySelector('.who');
       who.innerHTML = esc(label(r, i)) + (r.submitted ? '' : '<span class="sub">작성 중</span>');
       var t = el.querySelector('.txt');
@@ -3659,6 +3827,42 @@ function renderSheetPresentPage(activity) {
       if (!seen[nick]) { var e = rendered[nick]; if (e && e.parentNode) e.parentNode.removeChild(e); delete rendered[nick]; }
     });
     if (bigOv.isOpen()) paintBig();
+  }
+
+  function toggleMergeSel(nick, on) {
+    var i = mergeSel.indexOf(nick);
+    if (on && i < 0) mergeSel.push(nick);
+    else if (!on && i >= 0) mergeSel.splice(i, 1);
+    if (mergeSel.length > 2) mergeSel = mergeSel.slice(-2);
+    paintSuggestions();
+    Object.keys(rendered).forEach(function (n) { var b = rendered[n].querySelector('.cselbox'); if (b) b.checked = mergeSel.indexOf(n) >= 0; });
+  }
+
+  // 제안 배너: 유사 세션 쌍 + 선택 병합 바
+  function paintSuggestions() {
+    var bar = document.getElementById('sessbar');
+    var html = '';
+    if (mergeSel.length === 2) {
+      html += '<div class="sess-merge">🔗 <b>' + esc(mergeSel[0]) + '</b> ← <b>' + esc(mergeSel[1]) + '</b> 병합?' +
+        '<button id="doMerge" type="button">병합</button><button id="clrMerge" type="button">취소</button>' +
+        '<span class="muted">자동 병합 아님 — 두 세션의 답을 합치고 뒤엣것은 사라져요</span></div>';
+    }
+    var sug = suggestions();
+    if (sug.length) {
+      html += '<div class="sess-sug">🕵 같은 학생일 수 있어요: ' + sug.map(function (s) {
+        return '<span class="pair"><b>' + esc(s.a) + '</b> · <b>' + esc(s.b) + '</b> <span class="rz">(' + esc(s.reason) + ')</span>' +
+          ' <button type="button" data-mi="' + esc(s.a) + '" data-mf="' + esc(s.b) + '" class="sm">병합</button>' +
+          '<button type="button" data-hn="' + esc(s.b) + '" class="sh">' + esc(s.b) + ' 숨김</button></span>';
+      }).join(' ') + '</div>';
+    }
+    bar.innerHTML = html;
+    bar.style.display = html ? '' : 'none';
+    var dm = document.getElementById('doMerge');
+    if (dm) dm.onclick = function () { sessionAction({ action: 'merge', into: mergeSel[0], from: mergeSel[1] }); mergeSel = []; };
+    var cm = document.getElementById('clrMerge');
+    if (cm) cm.onclick = function () { mergeSel = []; paintSuggestions(); Object.keys(rendered).forEach(function (n) { var b = rendered[n].querySelector('.cselbox'); if (b) b.checked = false; }); };
+    bar.querySelectorAll('button.sm').forEach(function (b) { b.onclick = function () { sessionAction({ action: 'merge', into: b.getAttribute('data-mi'), from: b.getAttribute('data-mf') }); }; });
+    bar.querySelectorAll('button.sh').forEach(function (b) { b.onclick = function () { sessionAction({ action: 'hide', nickname: b.getAttribute('data-hn') }); }; });
   }
 
   // ---- 크게 보기 (오버레이 3겹 닫기) ----
@@ -3848,6 +4052,34 @@ function renderSheetResultsPage(activity) {
   #modal .lab { color: var(--muted); font-size: 12.5px; margin-bottom: 10px; }
   #modal .txt { white-space: pre-wrap; word-break: break-word; font-size: 15px; line-height: 1.7; }
   #empty { text-align: center; color: var(--muted); padding: 40px 0; }
+
+  /* 학생 카드 보기 — 교사가 실제로 '읽는' 방식 */
+  .student-view { display: grid; grid-template-columns: 240px 1fr; gap: 14px; }
+  @media (max-width: 720px) { .student-view { grid-template-columns: 1fr; } }
+  .st-list { border: 1px solid var(--line); border-radius: 10px; overflow: hidden; max-height: 70vh; overflow-y: auto; }
+  .st-row { display: flex; align-items: center; gap: 8px; padding: 10px 12px; border-bottom: 1px solid var(--line); cursor: pointer; }
+  .st-row:hover { background: #f7fafc; }
+  .st-row.on { background: #ebf8ff; }
+  .st-row.ghost { opacity: .5; }
+  .st-row .nm { font-weight: 700; flex: 1; }
+  .st-row .pg { font-size: 12px; color: var(--muted); white-space: nowrap; }
+  .st-detail { border: 1px solid var(--line); border-radius: 10px; padding: 16px 18px; min-height: 300px; }
+  .st-detail .head { display: flex; align-items: center; gap: 10px; margin-bottom: 12px; }
+  .st-detail .head .nm { font-size: 20px; font-weight: 800; }
+  .st-detail .nav { margin-left: auto; display: flex; gap: 6px; }
+  .st-grp { margin-bottom: 16px; }
+  .st-grp h4 { font-size: 13px; color: #2b6cb0; margin: 0 0 8px; padding-bottom: 4px; border-bottom: 2px solid #ebf8ff; }
+  .st-qa { margin-bottom: 10px; }
+  .st-qa .lab { font-size: 12.5px; color: var(--muted); font-weight: 700; margin-bottom: 2px; }
+  .st-qa .val { white-space: pre-wrap; word-break: break-word; font-size: 15px; line-height: 1.6; }
+  .st-qa .val.none { color: #cbd5e1; }
+  /* 표 그룹 헤더 접기 */
+  th.grp { text-align: center; background: #edf2f7; cursor: pointer; font-weight: 800; color: #2b6cb0; white-space: nowrap; }
+  th.grp .caret { font-size: 10px; opacity: .7; }
+  th.fld { min-width: 150px; }
+  th.fld .g { display: block; font-size: 10.5px; color: #a0aec0; font-weight: 600; }
+  th.collapsed { min-width: 40px; writing-mode: initial; }
+  td.hiddencol, th.hiddencol { display: none; }
 </style>
 </head>
 <body>
@@ -3868,14 +4100,22 @@ function renderSheetResultsPage(activity) {
   </div>
 
   <div class="tabs">
-    <button id="tabTable" class="on">표로 보기</button>
+    <button id="tabStudent" class="on">👤 학생별 보기</button>
+    <button id="tabTable">표로 보기</button>
     <button id="tabField">필드별 모아보기</button>
   </div>
 
-  <div class="card" id="paneTable">
+  <div class="card" id="paneStudent">
+    <div class="student-view">
+      <div class="st-list" id="stList"></div>
+      <div class="st-detail" id="stDetail"><div class="muted">왼쪽에서 학생을 고르면 그 학생이 쓴 답을 그룹별로 모아 보여줘요. ←/→ 로 다음 학생.</div></div>
+    </div>
+  </div>
+
+  <div class="card" id="paneTable" style="display:none;">
     <div class="tblwrap"><table id="tbl"></table></div>
     <div id="empty">아직 응답이 없어요. 학생이 활동지를 열면 여기에 실시간으로 나타납니다.</div>
-    <div class="muted" style="margin-top:8px;">💡 칸을 클릭하면 전체 내용을 볼 수 있어요. 3초마다 자동 새로고침됩니다.</div>
+    <div class="muted" style="margin-top:8px;">💡 그룹 머리글을 누르면 그 그룹 열을 접을 수 있어요. 칸을 누르면 전체 내용. 3초마다 자동 새로고침.</div>
   </div>
 
   <div class="card" id="paneField" style="display:none;">
@@ -3920,41 +4160,126 @@ function renderSheetResultsPage(activity) {
       .catch(function () {});
   }
 
+  var curStu = 0;                 // 학생별 보기에서 보고 있는 학생 인덱스
+  var collapsed = {};             // 표에서 접은 그룹 { 그룹명: true }
+  var groupInit = false;
+
   function collected() { return (data.activity.fields || []).filter(function (f) { return f.collect; }); }
+
+  // 수집 필드를 그룹(문서 구조) 순서로 묶는다. group 이 없으면 '기타'.
+  function groups() {
+    var order = [], byName = {};
+    collected().forEach(function (f) {
+      var g = (f.group || '기타');
+      if (!byName[g]) { byName[g] = { name: g, fields: [] }; order.push(byName[g]); }
+      byName[g].fields.push(f);
+    });
+    return order;
+  }
 
   function paint() {
     var rows = data.rows || [];
-    var fs = collected();
     document.getElementById('stCount').textContent = rows.length + '명';
     document.getElementById('stDone').textContent = '제출 ' + rows.filter(function (r) { return r.submitted; }).length;
     document.getElementById('stClosed').style.display = data.activity.closed_at ? '' : 'none';
     document.getElementById('stCode').textContent = data.activity.join_code ? '입장 코드 ' + data.activity.join_code : '';
     document.getElementById('empty').style.display = rows.length ? 'none' : '';
+    // 표: 기본은 첫 그룹만 펼침
+    if (!groupInit && groups().length) { groups().forEach(function (g, i) { if (i > 0) collapsed[g.name] = true; }); groupInit = true; }
+    paintStudent();
+    paintTable();
+    paintField();
+  }
 
-    // ---- 표: 행=학생, 열=필드 ----
-    var h = '<thead><tr><th class="nick">학생</th><th>진행</th>';
-    fs.forEach(function (f) { h += '<th title="' + esc(f.section) + '">' + esc(f.label) + '</th>'; });
+  // ---- 학생별 보기: 목록 + 개별 그룹별 읽기 ----
+  function paintStudent() {
+    var rows = data.rows || [];
+    var lst = '';
+    rows.forEach(function (r, i) {
+      lst += '<div class="st-row' + (i === curStu ? ' on' : '') + (r.hidden ? ' ghost' : '') + '" data-i="' + i + '">' +
+        '<span class="nm">' + esc(r.nickname) + (r.hidden ? ' <span class="muted">(숨김)</span>' : '') + '</span>' +
+        '<span class="pg">' + r.filled + '/' + data.total + '</span>' +
+        '<span class="badge ' + (r.submitted ? 'done">제출' : 'live">작성중') + '</span></div>';
+    });
+    document.getElementById('stList').innerHTML = lst || '<div class="muted" style="padding:12px">아직 학생이 없어요.</div>';
+
+    var det = document.getElementById('stDetail');
+    if (!rows.length) { det.innerHTML = '<div class="muted">아직 응답이 없어요.</div>'; return; }
+    if (curStu >= rows.length) curStu = rows.length - 1;
+    var r = rows[curStu];
+    var h = '<div class="head"><span class="nm">' + esc(r.nickname) + '</span>' +
+      '<span class="badge ' + (r.submitted ? 'done">제출' : 'live">작성 중') + '</span>' +
+      '<span class="muted">' + r.filled + '/' + data.total + ' 칸</span>' +
+      '<span class="nav"><button id="stPrev">← 이전</button><button id="stNext">다음 →</button></span></div>';
+    groups().forEach(function (g) {
+      h += '<div class="st-grp"><h4>' + esc(g.name) + '</h4>';
+      g.fields.forEach(function (f) {
+        var v = show(r.answers[f.id], f).trim();
+        h += '<div class="st-qa"><div class="lab">' + esc(f.label) + '</div>' +
+          '<div class="val' + (v ? '' : ' none') + '">' + (v ? esc(v) : '—') + '</div></div>';
+      });
+      h += '</div>';
+    });
+    det.innerHTML = h;
+    var pv = document.getElementById('stPrev'), nx = document.getElementById('stNext');
+    if (pv) pv.onclick = function () { stepStudent(-1); };
+    if (nx) nx.onclick = function () { stepStudent(1); };
+  }
+  function stepStudent(d) {
+    var n = (data.rows || []).length; if (!n) return;
+    curStu = (curStu + d + n) % n;
+    paintStudent();
+  }
+
+  // ---- 표: 그룹 헤더 + 접기 ----
+  function paintTable() {
+    var rows = data.rows || [];
+    var gs = groups();
+    var h = '<thead><tr><th class="nick" rowspan="2">학생</th><th rowspan="2">진행</th>';
+    gs.forEach(function (g) {
+      var col = collapsed[g.name];
+      h += '<th class="grp" colspan="' + (col ? 1 : g.fields.length) + '" data-g="' + esc(g.name) + '">' +
+        esc(g.name) + ' <span class="caret">' + (col ? '▸' : '▾') + '</span></th>';
+    });
+    h += '</tr><tr>';
+    gs.forEach(function (g) {
+      if (collapsed[g.name]) { h += '<th class="fld collapsedh muted">' + g.fields.length + '칸</th>'; return; }
+      g.fields.forEach(function (f) { h += '<th class="fld" title="' + esc(f.label) + '">' + esc(f.label) + '</th>'; });
+    });
     h += '</tr></thead><tbody>';
     rows.forEach(function (r, ri) {
       h += '<tr><td class="nick">' + esc(r.nickname) +
         ' <span class="badge ' + (r.submitted ? 'done">제출' : 'live">작성 중') + '</span></td>' +
         '<td class="muted">' + r.filled + '/' + data.total + '</td>';
-      fs.forEach(function (f) {
-        var t = show(r.answers[f.id], f);
-        h += t
-          ? '<td class="cell" data-r="' + ri + '" data-f="' + esc(f.id) + '"><div class="clip">' + esc(t) + '</div></td>'
-          : '<td class="empty">—</td>';
+      gs.forEach(function (g) {
+        if (collapsed[g.name]) {
+          var done = g.fields.filter(function (f) { return show(r.answers[f.id], f).trim(); }).length;
+          h += '<td class="muted" style="text-align:center">' + done + '/' + g.fields.length + '</td>';
+          return;
+        }
+        g.fields.forEach(function (f) {
+          var t = show(r.answers[f.id], f);
+          h += t
+            ? '<td class="cell" data-r="' + ri + '" data-f="' + esc(f.id) + '"><div class="clip">' + esc(t) + '</div></td>'
+            : '<td class="empty">—</td>';
+        });
       });
       h += '</tr>';
     });
     h += '</tbody>';
     document.getElementById('tbl').innerHTML = rows.length ? h : '';
+  }
 
-    // ---- 필드별 모아보기 ----
+  // ---- 필드별 모아보기 ----
+  function paintField() {
+    var rows = data.rows || [];
+    var fs = collected();
     if (!curField && fs.length) curField = fs[0].id;
     var p = '';
-    fs.forEach(function (f) {
-      p += '<button data-f="' + esc(f.id) + '" class="' + (f.id === curField ? 'on' : '') + '">' + esc(f.label) + '</button>';
+    groups().forEach(function (g) {
+      g.fields.forEach(function (f) {
+        p += '<button data-f="' + esc(f.id) + '" class="' + (f.id === curField ? 'on' : '') + '" title="' + esc(g.name) + '">' + esc(f.label) + '</button>';
+      });
     });
     document.getElementById('pick').innerHTML = p;
 
@@ -3963,7 +4288,7 @@ function renderSheetResultsPage(activity) {
     if (f) {
       var wrote = rows.filter(function (r) { return show(r.answers[f.id], f).trim(); });
       l += '<div class="muted" style="margin-bottom:8px;">' + esc(f.label) + ' — ' + wrote.length + '명 작성' +
-           (f.section ? ' <span style="opacity:.7">· ' + esc(f.section) + '</span>' : '') + '</div>';
+           (f.group ? ' <span style="opacity:.7">· ' + esc(f.group) + '</span>' : '') + '</div>';
       if (!wrote.length) l += '<div id="empty">아직 이 칸에 쓴 학생이 없어요.</div>';
       wrote.forEach(function (r) {
         l += '<div class="ans"><div class="who">' + esc(r.nickname) + '</div><div class="txt">' +
@@ -3994,18 +4319,49 @@ function renderSheetResultsPage(activity) {
     var b = e.target.closest ? e.target.closest('button[data-f]') : null;
     if (!b) return;
     curField = b.getAttribute('data-f');
-    paint();
+    paintField();
   });
 
-  // ---- 탭 ----
+  // ---- 학생별 보기: 목록 클릭 ----
+  document.getElementById('stList').addEventListener('click', function (e) {
+    var row = e.target.closest ? e.target.closest('.st-row') : null;
+    if (!row) return;
+    curStu = Number(row.getAttribute('data-i'));
+    paintStudent();
+  });
+
+  // ---- 표: 그룹 헤더 클릭 = 접기/펼치기 ----
+  document.getElementById('tbl').addEventListener('click', function (e) {
+    var g = e.target.closest ? e.target.closest('th.grp') : null;
+    if (!g) return;
+    var name = g.getAttribute('data-g');
+    collapsed[name] = !collapsed[name];
+    paintTable();
+  });
+
+  // ---- 탭 (학생별 / 표 / 필드별) ----
+  var curTab = 's';
   function tab(which) {
+    curTab = which;
+    document.getElementById('tabStudent').className = which === 's' ? 'on' : '';
     document.getElementById('tabTable').className = which === 't' ? 'on' : '';
     document.getElementById('tabField').className = which === 'f' ? 'on' : '';
+    document.getElementById('paneStudent').style.display = which === 's' ? '' : 'none';
     document.getElementById('paneTable').style.display = which === 't' ? '' : 'none';
     document.getElementById('paneField').style.display = which === 'f' ? '' : 'none';
   }
+  document.getElementById('tabStudent').onclick = function () { tab('s'); };
   document.getElementById('tabTable').onclick = function () { tab('t'); };
   document.getElementById('tabField').onclick = function () { tab('f'); };
+
+  // ←/→ 로 학생 이동(학생별 보기에서, 입력 중이 아닐 때)
+  document.addEventListener('keydown', function (e) {
+    if (curTab !== 's') return;
+    var t = (e.target && e.target.tagName) || '';
+    if (t === 'INPUT' || t === 'TEXTAREA') return;
+    if (e.key === 'ArrowRight') { stepStudent(1); e.preventDefault(); }
+    else if (e.key === 'ArrowLeft') { stepStudent(-1); e.preventDefault(); }
+  });
 
   // ---- CSV ----
   // Excel 이 한글을 깨지 않게 BOM 을 붙인다.
