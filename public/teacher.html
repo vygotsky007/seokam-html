@@ -222,6 +222,15 @@
   .lowconf { padding: 10px 12px; background: #fffaf0; border: 1px solid #f6ad55; border-radius: 8px; }
   .lowconf button { margin-left: 8px; }
   .lowconf.imagemode { background: #ebf8ff; border-color: #63b3ed; color: #2a4365; }
+  /* 문서 등급 배너 */
+  .lowconf.grade-A { background: #f0fff4; border-color: #9ae6b4; }
+  .lowconf.grade-B { background: #fffaf0; border-color: #f6ad55; }
+  .lowconf.grade-C { background: #fff5f5; border-color: #fc8181; }
+  .graderow { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+  .gradebadge { display: inline-block; color: #fff; font-weight: 800; font-size: 13px; padding: 3px 10px; border-radius: 999px; }
+  .gwhy { color: #718096; font-size: 12.5px; }
+  .gradeact { margin-left: auto; display: flex; align-items: center; gap: 6px; }
+  .gradeact .keynote { color: #975a16; font-size: 12.5px; font-weight: 700; }
   .slice-page.cover { outline: 2px dashed #a0aec0; }
   .slice-page .cover-badge { position: absolute; top: 8px; left: 8px; background: rgba(45,55,72,.85); color: #fff; font-size: 12px; font-weight: 700; padding: 4px 8px; border-radius: 6px; z-index: 3; }
   #sliceDrawBtn.on, #sliceBlankBtn.on { background: #2b6cb0; color: #fff; border-color: #2b6cb0; }
@@ -2403,35 +2412,112 @@ function lowConfidenceReport(pages) {
     low: total === 0 || ratio >= 0.3 || emptyCols > 0
   };
 }
+// ================= 문서 등급 자동 판정 (A/B/C) =================
+// lowConfidenceReport(경계 관통·빈 칸·인코딩 깨짐)와 변환 결과(qHtml: 텍스트/이미지/확인필요)를 합쳐
+// 문서 하나를 A/B/C 로 판정한다. 등급이 변환 방식을 정한다 — C 는 자동 AI 변환을 권한다.
+//   A: 자동 인식이 거의 다 됨(텍스트 위주, 경계 깔끔)
+//   B: 대체로 좋으나 이미지로 남긴 문항이 있음(설계형 포함) — 확인 권장
+//   C: 자동 인식이 어려움(인코딩 깨짐·번호 못 찾음·이미지 다수·경계 관통 심함) — AI 변환/직접 그리기
+function documentGradeReport(pages) {
+  var rep = lowConfidenceReport(pages);
+  var nums = Object.keys(qHtml || {});
+  var converted = nums.length > 0;
+  var total = converted ? nums.length : rep.total;
+  var img = 0, need = 0;
+  nums.forEach(function (n) { var r = qHtml[n]; if (r && r.useImage) { img++; if (!r.reason) need++; } });
+  var txt = converted ? Math.max(0, nums.length - img) : 0;
+  var imgRatio = total ? img / total : 0;
+  var needRatio = total ? need / total : 0;
+
+  var grade, why = [];
+  if (rep.broken) { grade = 'C'; why.push('조판 인코딩이 깨져 텍스트를 읽을 수 없어요'); }
+  else if (rep.total === 0) { grade = 'C'; why.push('문항 번호를 하나도 못 찾았어요'); }
+  else if (imgRatio >= 0.5 || needRatio >= 0.3 || rep.ratio >= 0.35 || rep.emptyCols >= 2) {
+    grade = 'C';
+    if (imgRatio >= 0.5) why.push('절반 이상이 이미지로 남았어요');
+    if (needRatio >= 0.3) why.push('확인이 필요한 문항이 많아요');
+    if (rep.ratio >= 0.35) why.push('경계 ' + rep.total + '개 중 ' + rep.pierce + '개가 문장을 관통해요');
+    if (rep.emptyCols >= 2) why.push('영역이 안 잡힌 칸이 ' + rep.emptyCols + '곳');
+  } else if (img > 0 || need > 0 || rep.ratio >= 0.15 || rep.emptyCols >= 1) {
+    grade = 'B';
+    if (need > 0) why.push('확인이 필요한 문항 ' + need + '개');
+    else if (img > 0) why.push('이미지로 남긴 문항 ' + img + '개');
+    if (rep.ratio >= 0.15) why.push('경계가 살짝 겹치는 곳이 있어요');
+    if (rep.emptyCols >= 1) why.push('영역이 안 잡힌 칸 ' + rep.emptyCols + '곳');
+  } else { grade = 'A'; }
+
+  return { grade: grade, why: why, total: total, txt: txt, img: img, need: need, converted: converted, rep: rep };
+}
+
+// 등급 배너 — 예전 '자동 인식 신뢰도' 배너를 흡수한다. (호출부 이름은 renderLowConfidence 로 유지)
+var gradeAlwaysConvert = false;
+try { gradeAlwaysConvert = localStorage.getItem('gradeAlwaysConvert') === '1'; } catch (e) {}
 function renderLowConfidence(pages) {
   var box = document.getElementById('sliceLowConf');
-  var rep = lowConfidenceReport(pages);
-  console.info('[slice] 자동 인식 신뢰도', rep);
-  // 조판 인코딩 깨짐 → 이미지 모드 안내(직접 그리기 권유가 아니라, 전 문항 이미지 변환 예고).
-  // 영역 나누기는 좌표·번호로 정상 동작하므로 '직접 그리기' 를 권하지 않는다.
-  if (rep.broken) {
-    box.style.display = 'block';
-    box.className = 'lowconf imagemode';
-    box.innerHTML = '🖼 <b>이 문서는 이미지 모드로 처리돼요.</b> 조판 인코딩이라 텍스트를 읽을 수 없어(분수·수식이 깨져 추출됨) '
-      + '문항 영역은 번호·좌표로 정상 나누되, HTML 변환은 <b>전 문항을 원본 이미지</b>로 넣어요. '
-      + '필요하면 문항별로 [🤖 AI로 변환]을 눌러 텍스트로 바꿀 수 있어요.'
-      + (rep.total === 0 ? ' <b style="color:#c53030;">⚠ 문항 번호도 하나도 못 찾았어요 — 직접 그리기를 권해요.</b>' : '');
-    return;
-  }
-  if (!rep.low) { box.style.display = 'none'; box.innerHTML = ''; return; }
-  var why = [];
-  if (rep.total === 0) why.push('문항 번호를 하나도 못 찾았어요');
-  if (rep.ratio >= 0.3) why.push('경계 ' + rep.total + '개 중 ' + rep.pierce + '개가 문장 한가운데를 지나요');
-  if (rep.emptyCols) why.push('글이 있는데 영역이 안 잡힌 칸이 ' + rep.emptyCols + '곳이에요');
+  var g = documentGradeReport(pages);
+  console.info('[grade] 문서 등급', g);
+
+  var GC = { A: '#2f855a', B: '#975a16', C: '#c53030' };
+  var GLAB = { A: '자동 인식이 잘 됐어요', B: '대체로 좋아요 — 이미지 문항은 확인하세요', C: '자동 인식이 어려워요' };
+  var counts = g.converted
+    ? ' · ' + g.total + '문항 · 텍스트 ' + g.txt + ' · 이미지 ' + g.img + ' · 확인 필요 ' + g.need
+    : (g.total ? ' · 문항 ' + g.total + '개' : '');
+
   box.style.display = 'block';
-  box.className = 'lowconf';
-  box.innerHTML = (rep.total === 0 ? '⛔ <b>문항 번호를 하나도 못 찾았어요.</b> ' : '⚠ <b>이 문서는 자동 인식이 어려워요.</b> ')
-    + '(' + why.join(' · ') + ') 표·비정형 학습지는 직접 그리는 편이 빠르고 정확해요.';
-  var b = document.createElement('button');
-  b.className = 'btn-blue btn-sm';
-  b.textContent = '✏️ 처음부터 직접 그리기';
-  b.addEventListener('click', function () { document.getElementById('sliceBlankBtn').click(); });
-  box.appendChild(b);
+  box.className = 'lowconf grade-' + g.grade;
+  var head = '<span class="gradebadge" style="background:' + GC[g.grade] + '">' + g.grade + '등급</span> ' +
+    '<b>' + GLAB[g.grade] + '</b>' + counts +
+    (g.why.length ? ' <span class="gwhy">(' + g.why.map(escapeHtml).join(' · ') + ')</span>' : '');
+  box.innerHTML = '<div class="graderow">' + head + '<span class="gradeact" id="gradeAct"></span></div>';
+
+  var act = document.getElementById('gradeAct');
+  // A 등급이면 손댈 게 없다 — 배너를 옅게, 액션 없음
+  if (g.grade === 'A') return;
+
+  // 이미지로 남은(=텍스트로 못 바꾼) 문항들 — 변환 후에만 존재
+  var imgNums = Object.keys(qHtml || {}).filter(function (n) { return qHtml[n] && qHtml[n].useImage; });
+
+  // C 등급: 자동 AI 변환을 권한다(변환된 뒤 이미지 문항이 있을 때). 키 상태에 따라 안내가 갈린다.
+  if (g.grade === 'C' && imgNums.length) {
+    if (aiStatus.checked && !aiStatus.enabled) {
+      var note = document.createElement('span');
+      note.className = 'keynote';
+      note.textContent = '🔑 자동 텍스트 변환은 API 키(ANTHROPIC_API_KEY) 설정 후 쓸 수 있어요.';
+      act.appendChild(note);
+    } else {
+      var conv = document.createElement('button');
+      conv.className = 'btn-blue btn-sm'; conv.id = 'gradeConvertBtn';
+      conv.textContent = '🤖 자동 텍스트 변환 (' + imgNums.length + ')';
+      conv.disabled = aiBatchRunning;
+      conv.addEventListener('click', function () { startGradeConvert(imgNums); });
+      act.appendChild(conv);
+    }
+  }
+
+  // 수동 재지정 — 자동 판정이 틀렸을 때 교사가 직접. 표·비정형이면 처음부터 그리기.
+  var draw = document.createElement('button');
+  draw.className = 'btn-gray btn-sm'; draw.id = 'gradeDrawBtn';
+  draw.textContent = '✏️ 직접 그리기';
+  draw.addEventListener('click', function () { document.getElementById('sliceBlankBtn').click(); });
+  act.appendChild(draw);
+}
+
+// C 등급 자동 변환 — 확인창(비용·한도) + '항상 진행' 체크. 실제 변환은 기존 배치 경로 재사용.
+function startGradeConvert(imgNums) {
+  if (!imgNums || !imgNums.length) return;
+  var remaining = Math.max(0, aiStatus.limit - aiStatus.used);
+  if (!gradeAlwaysConvert) {
+    var msg = 'C등급 — 자동 인식이 어려운 문서예요.\n\n이미지로 남은 ' + imgNums.length + '개 문항을 AI로 텍스트 변환할까요?\n'
+      + '· 문항당 1회 호출(남은 한도 ' + remaining + '회)\n'
+      + '· 비용이 드는 작업이라 필요한 문항만 변환해요\n\n[확인]을 누르면 진행합니다.';
+    if (!confirm(msg)) return;
+    // '항상 진행' — 다음부터 안 묻는다(교사가 원하면)
+    if (confirm('다음부터 이 문서 유형은 묻지 않고 바로 변환할까요? (항상 진행)')) {
+      gradeAlwaysConvert = true;
+      try { localStorage.setItem('gradeAlwaysConvert', '1'); } catch (e) {}
+    }
+  }
+  aiConvertBatch(imgNums);
 }
 
 // 현재 문항이 잘려 나올 조각 미리보기
@@ -3541,6 +3627,8 @@ function renderHtmlEditor() {
   }
 
   renderHtmlTools(all);
+  // 변환 결과가 나왔으니 문서 등급을 실제 텍스트/이미지 개수로 다시 판정한다(C 등급이면 자동 변환 버튼도).
+  if (sliceState && sliceState.pages) renderLowConfidence(sliceState.pages);
   var simBar = similarBarEl();
   if (simBar) wrap.appendChild(simBar);
   var nums = htmlOnlyOdd ? all.filter(function (n) { return qHtml[n].useImage || qHtml[n].reason; }) : all;
