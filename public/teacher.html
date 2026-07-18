@@ -231,6 +231,21 @@
   .gwhy { color: #718096; font-size: 12.5px; }
   .gradeact { margin-left: auto; display: flex; align-items: center; gap: 6px; }
   .gradeact .keynote { color: #975a16; font-size: 12.5px; font-weight: 700; }
+  /* AI 자가 검수 */
+  .reviewqueue { padding: 10px 12px; background: #f7fafc; border: 1px solid var(--line); border-radius: 8px; }
+  .reviewqueue .rvsum { font-size: 13.5px; margin-bottom: 6px; }
+  .reviewqueue .rvsum .ok { color: #2f855a; }
+  .reviewqueue .rvsum .susp { color: #c53030; }
+  .reviewqueue .rvlist { display: flex; flex-direction: column; gap: 8px; }
+  .reviewqueue .rvitem { border: 1px solid #fed7d7; background: #fff5f5; border-radius: 8px; padding: 8px 10px; }
+  .reviewqueue .rvhead { font-size: 13px; }
+  .reviewqueue .rvreason { color: #742a2a; }
+  .reviewqueue .rvsug { font-size: 12.5px; color: #2a4365; background: #ebf8ff; border-radius: 6px; padding: 4px 8px; margin: 5px 0; }
+  .reviewqueue .rvact { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 4px; }
+  .rvbadge { font-size: 11px; font-weight: 800; padding: 1px 7px; border-radius: 999px; }
+  .rvbadge.ok { background: #c6f6d5; color: #22543d; }
+  .rvbadge.susp { background: #fed7d7; color: #742a2a; }
+  .qcard.rvflash { outline: 3px solid #f6ad55; outline-offset: 2px; transition: outline .2s; }
   .slice-page.cover { outline: 2px dashed #a0aec0; }
   .slice-page .cover-badge { position: absolute; top: 8px; left: 8px; background: rgba(45,55,72,.85); color: #fff; font-size: 12px; font-weight: 700; padding: 4px 8px; border-radius: 6px; z-index: 3; }
   #sliceDrawBtn.on, #sliceBlankBtn.on { background: #2b6cb0; color: #fff; border-color: #2b6cb0; }
@@ -3629,6 +3644,13 @@ function renderHtmlEditor() {
   renderHtmlTools(all);
   // 변환 결과가 나왔으니 문서 등급을 실제 텍스트/이미지 개수로 다시 판정한다(C 등급이면 자동 변환 버튼도).
   if (sliceState && sliceState.pages) renderLowConfidence(sliceState.pages);
+  // AI 자가 검수 요약·의심 큐
+  var rq = document.getElementById('reviewQueue');
+  if (!rq) {
+    rq = document.createElement('div'); rq.id = 'reviewQueue'; rq.className = 'reviewqueue'; rq.style.display = 'none';
+    rq.style.margin = '0 0 10px'; wrap.parentNode.insertBefore(rq, wrap);
+  }
+  renderReviewQueue();
   var simBar = similarBarEl();
   if (simBar) wrap.appendChild(simBar);
   var nums = htmlOnlyOdd ? all.filter(function (n) { return qHtml[n].useImage || qHtml[n].reason; }) : all;
@@ -3662,7 +3684,10 @@ function renderHtmlEditor() {
     var label = isG
       ? (sliceNums[num][0] + '~' + sliceNums[num][sliceNums[num].length - 1] + '번 (지문 공유)')
       : (num + '번');
-    head.innerHTML = '<b>' + label + '</b> <span class="qtype">' + typeLabel(q.type) + '</span>';
+    var rv = reviewStatus[num];
+    var rvBadge = (rv && rv.match === true && !rec.useImage) ? ' <span class="rvbadge ok" title="AI 검수: 원본과 일치">✓ 검수됨</span>'
+      : (rv && rv.match === false && !rv.ignored) ? ' <span class="rvbadge susp" title="AI 검수: 원본과 다를 수 있음">⚠ 의심</span>' : '';
+    head.innerHTML = '<b>' + label + '</b> <span class="qtype">' + typeLabel(q.type) + '</span>' + rvBadge;
 
     // 유형 수동 전환 — 파서가 틀렸을 때(보기를 못 찾아 단답형이 됐다 등) 교사가 바로잡는 최후 수단
     if (!(q.isGroup && q.type === 'group')) {
@@ -4007,8 +4032,24 @@ function renderHtmlTools(all) {
   });
   bar.appendChild(aiBulk);
 
+  // AI 자가 검수 — 텍스트로 변환된 문항이 원본 조각과 정말 일치하는지 대조한다.
+  var txtNums = all.filter(function (n) { return !qHtml[n].useImage && sliceImages[n]; });
+  var reviewBtn = document.createElement('button');
+  reviewBtn.className = 'btn-outline btn-sm'; reviewBtn.id = 'aiReviewBtn';
+  reviewBtn.textContent = '🔍 AI 자가 검수 (' + txtNums.length + ')';
+  reviewBtn.disabled = !txtNums.length || !aiStatus.enabled || aiBatchRunning || reviewRunning;
+  if (aiStatus.checked && !aiStatus.enabled) { reviewBtn.disabled = true; reviewBtn.title = 'API 키 설정 필요 (ANTHROPIC_API_KEY)'; reviewBtn.textContent = '🔍 자가 검수 — API 키 설정 필요'; }
+  reviewBtn.addEventListener('click', function () {
+    if (!txtNums.length) return;
+    if (!confirm('변환된 텍스트 문항 ' + txtNums.length + '개를 원본과 대조 검수할까요? (문항당 1회 호출, 남은 한도 ' + Math.max(0, aiStatus.limit - aiStatus.used) + ')')) return;
+    reviewBatch(txtNums);
+  });
+  bar.appendChild(reviewBtn);
+
   var prog = document.createElement('span'); prog.id = 'aiBatchProg'; prog.className = 'muted'; prog.style.marginLeft = '8px';
   bar.appendChild(prog);
+  var rprog = document.createElement('span'); rprog.id = 'reviewProg'; rprog.className = 'muted'; rprog.style.marginLeft = '8px';
+  bar.appendChild(rprog);
 }
 
 // ================= 비전 AI 변환(이미지 폴백 문항 → 구조화 텍스트) =================
@@ -4090,6 +4131,116 @@ function aiConvertBatch(nums) {
 }
 // 카드 영역만 다시 그린다(일괄 진행 중 도구바/요약은 유지)
 function renderHtmlEditorCardsOnly() { renderHtmlEditor(); }
+
+// ================= AI 자가 검수(변환 텍스트 ↔ 원본 조각 대조) =================
+// 변환이 조용히 틀렸을 수 있다 — 원본과 대조해 match/의심을 가른다. 의심은 큐로 모아 교사가 판단.
+var reviewStatus = {};   // num -> { reviewing, match, reason, suggestion, ignored, error }
+var reviewRunning = false;
+
+// 문항 → 검수에 보낼 평문(발문 + 지문 + 선지)
+function questionPlainText(q) {
+  if (!q) return '';
+  var parts = [];
+  if (q.stem) parts.push(String(q.stem));
+  if (q.passage) parts.push(String(q.passage));
+  (q.choices || []).forEach(function (c) { parts.push((c.marker || '') + ' ' + (c.text || '')); });
+  return parts.join('\n').replace(/<[^>]*>/g, '').trim();
+}
+
+function reviewOne(num) {
+  var rec = qHtml[num];
+  var img = sliceImages[num];
+  if (!rec || !img) return Promise.resolve({ ok: false });
+  var st = reviewStatus[num] || (reviewStatus[num] = {});
+  st.reviewing = true; st.error = '';
+  return fetch('/api/ai-review', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ image: img, num: num, text: questionPlainText(rec.parsed) }),
+  }).then(function (r) { return r.json(); }).then(function (d) {
+    st.reviewing = false;
+    if (!d || !d.ok) { st.error = (d && d.message) || '검수 실패'; return { ok: false }; }
+    st.match = !!d.parsed.match;
+    st.reason = d.parsed.reason || '';
+    st.suggestion = d.parsed.suggestion || '';
+    st.ignored = false;
+    if (typeof d.used === 'number') aiStatus.used = d.used;
+    return { ok: true };
+  }).catch(function (e) { st.reviewing = false; st.error = '호출 실패: ' + e.message; return { ok: false }; });
+}
+
+function reviewBatch(nums) {
+  if (reviewRunning) return;
+  reviewRunning = true;
+  var total = nums.length, done = 0, idx = 0;
+  var prog = document.getElementById('reviewProg');
+  function paint() { if (prog) prog.textContent = '⏳ 검수 ' + done + '/' + total; }
+  paint();
+  function next() {
+    if (idx >= nums.length) return Promise.resolve();
+    var n = nums[idx++];
+    return reviewOne(n).then(function () { done++; paint(); renderReviewQueue(); return next(); });
+  }
+  var workers = [];
+  for (var w = 0; w < Math.min(2, nums.length); w++) workers.push(next());
+  Promise.all(workers).then(function () {
+    reviewRunning = false;
+    renderHtmlEditor();
+  });
+}
+
+// 검수 요약 + 의심 큐. 요약 "N개 중 M개 일치". 의심은 사유·원본보기·제안적용·무시.
+function renderReviewQueue() {
+  var box = document.getElementById('reviewQueue');
+  if (!box) return;
+  var reviewed = Object.keys(reviewStatus).filter(function (n) { return reviewStatus[n] && !reviewStatus[n].reviewing && (reviewStatus[n].match !== undefined || reviewStatus[n].error); });
+  if (!reviewed.length) { box.style.display = 'none'; box.innerHTML = ''; return; }
+  var matched = reviewed.filter(function (n) { return reviewStatus[n].match; });
+  var suspects = reviewed.filter(function (n) { return reviewStatus[n].match === false && !reviewStatus[n].ignored; });
+
+  box.style.display = 'block';
+  var h = '<div class="rvsum"><b>🔍 AI 자가 검수</b> — ' + reviewed.length + '개 중 <b class="ok">' + matched.length + '개 일치</b>' +
+    (suspects.length ? ' · <b class="susp">' + suspects.length + '개 의심</b>' : ' · 의심 없음 👍') + '</div>';
+  if (suspects.length) {
+    h += '<div class="rvlist">' + suspects.map(function (n) {
+      var st = reviewStatus[n];
+      return '<div class="rvitem" data-n="' + n + '">' +
+        '<div class="rvhead"><b>' + n + '번</b> <span class="rvreason">' + escapeHtml(st.reason || '이미지와 다름') + '</span></div>' +
+        (st.suggestion ? '<div class="rvsug">제안: ' + escapeHtml(st.suggestion) + '</div>' : '') +
+        '<div class="rvact">' +
+        '<button class="btn-gray btn-sm" data-rv="see" data-n="' + n + '">원본 보기</button>' +
+        (st.suggestion ? '<button class="btn-blue btn-sm" data-rv="apply" data-n="' + n + '">제안 적용</button>' : '') +
+        '<button class="btn-outline btn-sm" data-rv="ignore" data-n="' + n + '">무시</button>' +
+        '<button class="btn-outline btn-sm" data-rv="image" data-n="' + n + '">이미지로 전환</button>' +
+        '</div></div>';
+    }).join('') + '</div>';
+  }
+  box.innerHTML = h;
+  box.querySelectorAll('button[data-rv]').forEach(function (b) {
+    var n = Number(b.getAttribute('data-n')), act = b.getAttribute('data-rv');
+    b.onclick = function () { reviewAction(act, n); };
+  });
+}
+
+function reviewAction(act, n) {
+  var st = reviewStatus[n]; if (!st) return;
+  if (act === 'ignore') { st.ignored = true; renderReviewQueue(); return; }
+  if (act === 'see') {
+    var card = document.querySelector('.qcard[data-num="' + n + '"]');
+    if (card) { card.scrollIntoView({ behavior: 'smooth', block: 'center' }); card.classList.add('rvflash'); setTimeout(function () { card.classList.remove('rvflash'); }, 1400); }
+    return;
+  }
+  if (act === 'image') { qHtml[n].useImage = true; st.ignored = true; renderHtmlEditor(); return; }
+  if (act === 'apply') {
+    var rec = qHtml[n];
+    if (rec && rec.parsed && st.suggestion) {
+      rec.parsed.stem = st.suggestion;              // 제안을 발문에 반영(교사가 카드에서 더 손볼 수 있다)
+      rec.html = questionToHtml(rec.parsed);
+      st.match = true; st.applied = true;            // 반영했으니 일치로 본다
+      renderHtmlEditor();
+    }
+    return;
+  }
+}
 
 function typeLabel(t) {
   var m = {

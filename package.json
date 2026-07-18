@@ -6,7 +6,7 @@
   "scripts": {
     "start": "node server.js",
     "fixture": "node test/make-fixture.js",
-    "test": "node test/make-fixture.js && node test/grade-e2e.js && node test/sheet-e2e.js && node test/sheet-live-e2e.js && node test/sheet-manyfields-e2e.js && node test/present-redesign-e2e.js && node test/e2e.js && node test/real-regression.js",
+    "test": "node test/make-fixture.js && node test/grade-e2e.js && node test/review-e2e.js && node test/sheet-e2e.js && node test/sheet-live-e2e.js && node test/sheet-manyfields-e2e.js && node test/present-redesign-e2e.js && node test/e2e.js && node test/real-regression.js",
     "test:sheet": "node test/sheet-e2e.js && node test/sheet-live-e2e.js && node test/sheet-manyfields-e2e.js",
     "test:present": "node test/present-redesign-e2e.js",
     "test:real": "node test/real-regression.js --table",
