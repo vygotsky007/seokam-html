@@ -134,6 +134,7 @@ router.post('/activities', async (req, res) => {
       group_label: q.group_label ?? null,
       // 문항 HTML화 결과 — 저장 시점에 정제(허용 태그만). 없으면 null → 학생 화면은 이미지로 폴백
       html_content: q.html_content ? sanitizeHtml(q.html_content) : null,
+      solution: q.solution ? String(q.solution).slice(0, 4000) : null,   // AI 정답·풀이(승인본)
     }));
 
     const { error: qErr } = await supabase.from('questions').insert(rows);
@@ -342,6 +343,15 @@ router.get('/activities/:id', async (req, res) => {
   return res.json({ ok: true, activity, questions });
 });
 
+// POST /api/activities/:id/show-solutions → 학생에게 풀이 노출 토글(마감 후에만 의미)
+router.post('/activities/:id/show-solutions', async (req, res) => {
+  const { id } = req.params;
+  const on = !!(req.body && req.body.on);
+  const { error } = await supabase.from('activities').update({ show_solutions: on }).eq('id', id);
+  if (error) return res.status(500).json({ ok: false, error: error.message });
+  return res.json({ ok: true, show_solutions: on });
+});
+
 // GET /api/activities/:id/version → { version } 만 가볍게 (학생 페이지 폴링용)
 router.get('/activities/:id/version', async (req, res) => {
   const { id } = req.params;
@@ -430,6 +440,7 @@ router.put('/activities/:id', async (req, res) => {
       group_label: q.group_label ?? null,
       // 문항 HTML화 결과 — 저장 시점에 정제(허용 태그만). 없으면 null → 학생 화면은 이미지로 폴백
       html_content: q.html_content ? sanitizeHtml(q.html_content) : null,
+      solution: q.solution ? String(q.solution).slice(0, 4000) : null,   // AI 정답·풀이(승인본)
     }));
     const { error: insErr } = await supabase.from('questions').insert(rows);
     if (insErr) {
@@ -448,7 +459,7 @@ router.get('/present/:id', async (req, res) => {
 
   const { data: activity, error: aErr } = await supabase
     .from('activities')
-    .select('id, title')
+    .select('id, title, show_solutions, closed_at')
     .eq('id', id)
     .single();
 
@@ -458,7 +469,7 @@ router.get('/present/:id', async (req, res) => {
 
   const { data: questions, error: qErr } = await supabase
     .from('questions')
-    .select('num, type, answer, graded, meta')
+    .select('num, type, answer, graded, meta, solution')
     .eq('activity_id', id)
     .order('num', { ascending: true });
 

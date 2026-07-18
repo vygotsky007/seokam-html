@@ -245,4 +245,73 @@ router.post('/ai-review', async (req, res) => {
   }
 });
 
+// ================= AI 정답·풀이 채우기 =================
+// 문항을 풀어 정답과 풀이를 제안한다. 확신이 낮으면(confidence:'low') 정답을 비워 두고 교사에게 직접 입력을 권한다.
+// 절대 자동 확정하지 않는다 — 교사가 승인해야 정답표에 들어간다(틀린 정답이 채점을 망치므로).
+const ANSWER_SCHEMA = {
+  type: 'object',
+  properties: {
+    answer: { type: 'string' },                    // 정답(확신 낮으면 빈 문자열)
+    solution: { type: 'string' },                  // 풀이(핵심 근거·과정)
+    confidence: { type: 'string', enum: ['high', 'low'] },
+  },
+  required: ['answer', 'solution', 'confidence'],
+  additionalProperties: false,
+};
+function buildAnswerPrompt(num, text) {
+  return '아래는 시험지 ' + num + '번 문항입니다:\n"""\n' + String(text || '').slice(0, 2000) + '\n"""\n\n' +
+    '이 문항을 풀어 정답과 풀이를 내세요.\n' +
+    '- answer: 정답. 객관식이면 선지 기호(①②… 또는 번호), 단답이면 답. 확신이 서지 않으면 빈 문자열로 두세요.\n' +
+    '- solution: 풀이(왜 그 답인지 핵심 근거·과정을 짧게).\n' +
+    '- confidence: 확실하면 high, 애매하면 low. low 면 answer 를 비우고 교사가 직접 넣게 하세요.\n' +
+    '읽을 수 없거나 그림이 필요해 풀 수 없으면 confidence=low, answer="" 로 두세요. 지어내지 마세요.';
+}
+
+const answerCache = new Map();
+// POST /api/ai-answer  body: { num, text, image? }
+router.post('/ai-answer', async (req, res) => {
+  if (!teacherOk(req)) return res.status(401).json({ ok: false, error: 'unauthorized', message: '교사 인증이 필요합니다.' });
+  const key = process.env.ANTHROPIC_API_KEY;
+  if (!key) return res.status(503).json({ ok: false, error: 'no_key', message: 'API 키 설정 필요 (ANTHROPIC_API_KEY 환경변수)' });
+
+  const { num, text, image } = req.body || {};
+  if (!text && !image) return res.status(400).json({ ok: false, error: 'bad_input', message: '문항 텍스트 또는 이미지가 필요합니다.' });
+
+  const content = [];
+  if (image && typeof image === 'string') {
+    const m = image.match(/^data:(image\/[a-zA-Z0-9.+-]+);base64,(.+)$/s);
+    if (m) content.push({ type: 'image', source: { type: 'base64', media_type: m[1], data: m[2] } });
+  }
+  content.push({ type: 'text', text: buildAnswerPrompt(parseInt(num, 10) || 0, text) });
+
+  const hash = crypto.createHash('sha256').update('ans::' + String(num) + '::' + String(text || '') + '::' + (image ? image.slice(0, 64) : '')).digest('hex');
+  if (answerCache.has(hash)) return res.json({ ok: true, cached: true, parsed: answerCache.get(hash), used: usedToday(), limit: DAILY_LIMIT });
+  if (usedToday() >= DAILY_LIMIT) return res.status(429).json({ ok: false, error: 'daily_limit', message: '하루 AI 상한(' + DAILY_LIMIT + '회)에 도달했습니다.' });
+
+  const payload = {
+    model: MODEL, max_tokens: 1200, thinking: { type: 'disabled' },
+    output_config: { format: { type: 'json_schema', schema: ANSWER_SCHEMA } },
+    messages: [{ role: 'user', content: content }],
+  };
+  try {
+    bumpDaily();
+    const r = await fetch(API_URL, {
+      method: 'POST',
+      headers: { 'x-api-key': key, 'anthropic-version': '2023-06-01', 'content-type': 'application/json' },
+      body: JSON.stringify(payload),
+    });
+    const data = await r.json();
+    if (!r.ok) return res.status(502).json({ ok: false, error: 'api_error', status: r.status, message: (data && data.error && data.error.message) || ('API 오류(' + r.status + ')') });
+    const tb = (data.content || []).find((b) => b.type === 'text');
+    if (!tb || !tb.text) return res.status(502).json({ ok: false, error: 'empty', message: 'AI 응답이 비었습니다.' });
+    let parsed;
+    try { parsed = JSON.parse(tb.text); } catch (e) { return res.status(502).json({ ok: false, error: 'parse', message: 'AI 응답 JSON 파싱 실패' }); }
+    answerCache.set(hash, parsed);
+    res.json({ ok: true, cached: false, parsed: parsed, used: usedToday(), limit: DAILY_LIMIT });
+  } catch (err) {
+    console.error('[ai-answer]', err);
+    res.status(502).json({ ok: false, error: 'network', message: 'AI 서버 호출 실패: ' + err.message });
+  }
+});
+
 module.exports = router;

@@ -246,6 +246,16 @@
   .rvbadge.ok { background: #c6f6d5; color: #22543d; }
   .rvbadge.susp { background: #fed7d7; color: #742a2a; }
   .qcard.rvflash { outline: 3px solid #f6ad55; outline-offset: 2px; transition: outline .2s; }
+  /* AI 정답·풀이 채우기 */
+  .answergen { padding: 10px 12px; background: #f7fafc; border: 1px solid var(--line); border-radius: 8px; margin-bottom: 8px; }
+  .answergen .agsum { font-size: 12.5px; color: #4a5568; margin-bottom: 6px; }
+  .answergen .agitem { border: 1px solid var(--line); border-radius: 8px; padding: 7px 10px; margin-bottom: 6px; background: #fff; }
+  .answergen .agitem.approved { border-color: #9ae6b4; background: #f0fff4; }
+  .answergen .agitem.err { border-color: #fed7d7; background: #fff5f5; }
+  .answergen .aghead { display: flex; align-items: center; gap: 8px; font-size: 13px; flex-wrap: wrap; }
+  .answergen .agans { font-weight: 800; color: #2b6cb0; }
+  .answergen .aglow { font-size: 11px; font-weight: 700; color: #975a16; background: #fffaf0; border-radius: 999px; padding: 1px 8px; }
+  .answergen .agsol { font-size: 12.5px; color: #2a4365; background: #ebf8ff; border-radius: 6px; padding: 5px 8px; margin-top: 5px; }
   .slice-page.cover { outline: 2px dashed #a0aec0; }
   .slice-page .cover-badge { position: absolute; top: 8px; left: 8px; background: rgba(45,55,72,.85); color: #fff; font-size: 12px; font-weight: 700; padding: 4px 8px; border-radius: 6px; z-index: 3; }
   #sliceDrawBtn.on, #sliceBlankBtn.on { background: #2b6cb0; color: #fff; border-color: #2b6cb0; }
@@ -366,11 +376,16 @@
           <label style="margin:0; font-weight:400;"><input type="radio" name="gradeMode" value="self" /> HTML 자가채점</label>
         </div>
         <div id="qtableWrap">
+          <div class="row" style="gap:8px; margin-bottom:6px;">
+            <button class="btn-outline btn-sm" id="aiAnswerBtn" type="button">🤖 AI 정답·풀이 채우기</button>
+            <span class="muted" id="aiAnswerProg"></span>
+          </div>
+          <div id="answerGenPanel" class="answergen" style="display:none;"></div>
           <table class="qtable" id="qtable" style="display:none;">
             <thead><tr><th class="num">번호</th><th>유형</th><th>정답</th><th style="width:56px;text-align:center;">채점</th></tr></thead>
             <tbody id="qbody"></tbody>
           </table>
-          <div class="muted" style="margin-top:6px;">💡 정답을 비워두거나 ‘채점’ 체크를 끄면 그 문항은 <b>채점에서 제외</b>됩니다. (예: 20문항 중 정답 넣은 것만 채점)</div>
+          <div class="muted" style="margin-top:6px;">💡 정답을 비워두거나 ‘채점’ 체크를 끄면 그 문항은 <b>채점에서 제외</b>됩니다. AI 정답은 <b>승인</b>해야 정답표에 들어가요.</div>
         </div>
 
         <label style="margin-top:14px;">학생 응시 방식</label>
@@ -4563,6 +4578,99 @@ function syncGradeMode() { document.getElementById('qtableWrap').style.display =
 document.querySelectorAll('input[name="gradeMode"]').forEach(function (r) { r.addEventListener('change', syncGradeMode); });
 syncGradeMode();
 
+// AI 정답·풀이 채우기 — 문항을 풀어 정답·풀이 제안 → 승인해야 정답표로. 확신 낮으면 정답 비움(직접 입력 권장).
+var solutionOf = {};      // num -> 승인된 풀이(발행 시 저장)
+var answerGen = {};       // num -> { loading, answer, solution, confidence, approved, error }
+var answerGenRunning = false;
+
+function questionTextForAnswer(num) {
+  var rec = qHtml[num];
+  if (rec && rec.parsed) return questionPlainText(rec.parsed);
+  return '';   // HTML 붙여넣기 경로 등: 텍스트가 없으면 이미지로 보낸다
+}
+
+function fillAnswersAI() {
+  if (answerGenRunning) return;
+  // 채점 대상(정답을 넣을) 문항만
+  var nums = [];
+  document.querySelectorAll('.q-type').forEach(function (sel) {
+    var num = parseInt(sel.getAttribute('data-num'), 10);
+    var g = document.querySelector('.q-graded[data-num="' + num + '"]');
+    if (sel.value !== 'essay' && (!g || g.checked)) nums.push(num);
+  });
+  if (!nums.length) { alert('정답을 채울 채점 문항이 없어요.'); return; }
+  if (aiStatus.checked && !aiStatus.enabled) { alert('AI 정답 채우기는 API 키(ANTHROPIC_API_KEY) 설정 후 쓸 수 있어요.'); return; }
+  if (!confirm(nums.length + '개 문항의 정답·풀이를 AI로 채울까요? (문항당 1회 호출, 남은 한도 ' + Math.max(0, aiStatus.limit - aiStatus.used) + ')\n\nAI 정답은 승인해야 정답표에 들어갑니다.')) return;
+
+  answerGenRunning = true;
+  var total = nums.length, done = 0, idx = 0;
+  var prog = document.getElementById('aiAnswerProg');
+  function paint() { if (prog) prog.textContent = '⏳ 정답 생성 ' + done + '/' + total; }
+  paint(); renderAnswerGen();
+  function one(num) {
+    answerGen[num] = { loading: true };
+    renderAnswerGen();
+    return fetch('/api/ai-answer', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ num: num, text: questionTextForAnswer(num), image: (!questionTextForAnswer(num) && sliceImages[num]) || undefined }),
+    }).then(function (r) { return r.json(); }).then(function (d) {
+      if (!d || !d.ok) { answerGen[num] = { error: (d && d.message) || '실패' }; return; }
+      var p = d.parsed || {};
+      answerGen[num] = {
+        answer: p.confidence === 'low' ? '' : (p.answer || ''),   // 확신 낮으면 정답 비움
+        solution: p.solution || '', confidence: p.confidence || 'low', approved: false,
+      };
+      if (typeof d.used === 'number') aiStatus.used = d.used;
+    }).catch(function (e) { answerGen[num] = { error: e.message }; })
+      .then(function () { done++; paint(); renderAnswerGen(); });
+  }
+  function next() { if (idx >= nums.length) return Promise.resolve(); return one(nums[idx++]).then(next); }
+  var workers = []; for (var w = 0; w < Math.min(2, nums.length); w++) workers.push(next());
+  Promise.all(workers).then(function () {
+    answerGenRunning = false;
+    if (prog) prog.textContent = '✅ 생성 완료 — 각 문항 [승인]을 눌러 정답표에 넣으세요';
+    renderAnswerGen();
+  });
+}
+
+function renderAnswerGen() {
+  var box = document.getElementById('answerGenPanel');
+  if (!box) return;
+  var nums = Object.keys(answerGen).map(Number).sort(function (a, b) { return a - b; });
+  if (!nums.length) { box.style.display = 'none'; box.innerHTML = ''; return; }
+  box.style.display = 'block';
+  box.innerHTML = '<div class="agsum">🤖 AI 정답·풀이 제안 — <b>승인</b>해야 정답표에 들어갑니다. 확신이 낮은 문항은 정답을 비워 두었어요(직접 입력 권장).</div>' +
+    nums.map(function (num) {
+      var a = answerGen[num];
+      if (a.loading) return '<div class="agitem"><b>' + num + '번</b> <span class="muted">생성 중…</span></div>';
+      if (a.error) return '<div class="agitem err"><b>' + num + '번</b> <span class="muted">' + escapeHtml(a.error) + '</span></div>';
+      var lowNote = (a.confidence === 'low') ? '<span class="aglow">확신 낮음 — 직접 입력 권장</span>' : '';
+      return '<div class="agitem' + (a.approved ? ' approved' : '') + '"><div class="aghead"><b>' + num + '번</b> ' +
+        '정답 <span class="agans">' + (a.answer ? escapeHtml(a.answer) : '<i class="muted">비움</i>') + '</span> ' + lowNote +
+        '<button class="btn-outline btn-sm" data-ag="approve" data-n="' + num + '" style="margin-left:auto">' + (a.approved ? '↩ 승인 취소' : '✅ 승인(정답표에 넣기)') + '</button></div>' +
+        (a.solution ? '<div class="agsol">풀이: ' + escapeHtml(a.solution) + '</div>' : '') + '</div>';
+    }).join('');
+  box.querySelectorAll('button[data-ag]').forEach(function (b) {
+    var num = Number(b.getAttribute('data-n'));
+    b.onclick = function () { approveAnswer(num, !answerGen[num].approved); };
+  });
+}
+
+function approveAnswer(num, on) {
+  var a = answerGen[num]; if (!a) return;
+  a.approved = on;
+  var ansEl = document.querySelector('.q-answer[data-num="' + num + '"]');
+  if (on) {
+    if (ansEl && a.answer) ansEl.value = a.answer;   // 정답표에 반영(확신 낮아 비었으면 교사가 직접)
+    solutionOf[num] = a.solution || '';
+  } else {
+    delete solutionOf[num];
+  }
+  renderAnswerGen();
+}
+
+document.getElementById('aiAnswerBtn').addEventListener('click', fillAnswersAI);
+
 function collectQuestions() {
   if (currentGradeMode() === 'self') return [];
   var questions = [];
@@ -4575,6 +4683,7 @@ function collectQuestions() {
       num: num, type: type,
       answer: type === 'essay' ? '' : (ansEl ? ansEl.value.trim() : ''),
       graded: gEl ? gEl.checked : true,
+      solution: solutionOf[num] || '',
     };
     // 문항 나누기로 만든 조각 이미지가 있으면 함께 저장
     if (sliceImages[num]) q.slice_image = sliceImages[num];

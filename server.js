@@ -52,7 +52,7 @@ app.get('/go/:id', async (req, res) => {
 
   const { data: activity, error } = await supabase
     .from('activities')
-    .select('id, title, html_body, status, version, view_mode, kind, fields, closed_at')
+    .select('id, title, html_body, status, version, view_mode, kind, fields, closed_at, show_solutions')
     .eq('id', id)
     .single();
 
@@ -69,7 +69,7 @@ app.get('/go/:id', async (req, res) => {
   if (activity.view_mode === 'single') {
     const { data: questions } = await supabase
       .from('questions')
-      .select('num, type, slice_image, group_label, html_content, meta')
+      .select('num, type, slice_image, group_label, html_content, meta, solution')
       .eq('activity_id', id)
       .order('num', { ascending: true });
     const qs = (questions || []).filter((q) => q); // 안전
@@ -252,6 +252,10 @@ function renderPresentPage(activity, sliceByNum) {
   .q-answer .keyrow { display: flex; gap: 6px; margin-top: 10px; }
   .q-answer .keyrow input { flex: 1; min-width: 0; padding: 8px 10px; font-size: 14px; border: 1px solid #475569; background: #0f172a; color: #e2e8f0; border-radius: 8px; }
   .q-answer .keyrow button { padding: 8px 12px; font-size: 13px; font-weight: 800; border: 0; background: #3b82f6; color: #fff; border-radius: 8px; cursor: pointer; }
+  .solrow { display: flex; align-items: center; gap: 10px; margin-top: 12px; flex-wrap: wrap; }
+  .solrow button { padding: 8px 12px; font-size: 13px; font-weight: 800; border: 1px solid #475569; background: #334155; color: #e2e8f0; border-radius: 8px; cursor: pointer; }
+  .solrow .solpub { font-size: 12.5px; color: #cbd5e1; display: flex; align-items: center; gap: 5px; }
+  .soltext { margin-top: 8px; white-space: pre-wrap; word-break: break-word; font-size: 15px; line-height: 1.6; color: #d1fae5; background: #14321f; border: 1px solid #22c55e44; border-radius: 8px; padding: 10px 12px; }
   .item.near { background: #422006; }
   .mark.warn { color: #f59e0b; border: 0; background: transparent; font-size: 18px; cursor: pointer; }
   .empty { color: #64748b; padding: 24px; text-align: center; }
@@ -389,8 +393,9 @@ ${body}
   var ACTIVITY_ID = ${JSON.stringify(activityId)};
   var SLICE_BY_NUM = ${JSON.stringify(slices)};
   var HAS_SLICES = ${hasSlices ? 'true' : 'false'};
-  var state = { questions: [], students: [], curIdx: 0, filter: 'all', reveal: false };
+  var state = { questions: [], students: [], curIdx: 0, filter: 'all', reveal: false, closed: false, showSolutions: false };
   var lastProblemNum = null;
+  var showSolution = false;      // 발표 중 풀이를 펼쳐 놨는지(교사 화면)
 
   function fetchData() {
     return fetch('/api/present/' + ACTIVITY_ID)
@@ -399,6 +404,8 @@ ${body}
         if (!data.ok) throw new Error(data.error || '조회 실패');
         state.questions = data.questions || [];
         state.students = data.students || [];
+        state.closed = !!(data.activity && data.activity.closed_at);
+        state.showSolutions = !!(data.activity && data.activity.show_solutions);
         if (state.curIdx >= state.questions.length) state.curIdx = 0;
         renderProblem(); // 조각 모드: 현재 문항 이미지 반영(바뀔 때만)
         render(); // 오른쪽 통계만 갱신
@@ -571,9 +578,29 @@ ${body}
       '<button id="keySave" type="button">저장</button>' +
       '</div>';
 
+    // 풀이 보기 — AI 정답·풀이(승인본)가 있으면 교사가 펼쳐 보고, 마감 후엔 학생에게도 공개 토글
+    var solHtml = '';
+    if (q.solution) {
+      solHtml = '<div class="solrow">' +
+        '<button id="solToggle" type="button">' + (showSolution ? '🙈 풀이 숨기기' : '💡 풀이 보기') + '</button>' +
+        (state.closed ? '<label class="solpub"><input type="checkbox" id="solPub"' + (state.showSolutions ? ' checked' : '') + '> 학생에게 공개(마감됨)</label>'
+          : '<span class="muted" style="font-size:12px">마감 후 학생 공개 가능</span>') +
+        '</div>' + (showSolution ? '<div class="soltext">' + escapeHtml(q.solution) + '</div>' : '');
+    }
+
     el.innerHTML =
       '<div><span class="qnum">' + q.num + '번 문항</span><span class="qtype">' + typeLabel + '</span></div>' +
-      '<div class="lbl">정답</div>' + valHtml + keyHtml + rateHtml;
+      '<div class="lbl">정답</div>' + valHtml + keyHtml + rateHtml + solHtml;
+
+    var solT = document.getElementById('solToggle');
+    if (solT) solT.onclick = function () { showSolution = !showSolution; renderAnswer(); };
+    var solP = document.getElementById('solPub');
+    if (solP) solP.onchange = function () {
+      state.showSolutions = solP.checked;
+      fetch('/api/activities/' + ACTIVITY_ID + '/show-solutions', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ on: solP.checked }),
+      });
+    };
 
     var inp = document.getElementById('keyInput');
     if (inp) {
@@ -1820,12 +1847,15 @@ function renderStudentSinglePage(activity, questions) {
   const title = escapeHtml(activity.title || '활동');
   const activityId = activity.id;
   const version = Number(activity.version) || 1;
+  // 풀이는 마감 후 + 교사가 공개 토글을 켰을 때만 학생에게 내려보낸다(시험 중 유출 방지).
+  const revealSolutions = !!(activity.closed_at && activity.show_solutions);
   const qData = (questions || []).map((q) => ({
     num: q.num, type: q.type || 'short',
     slice_image: q.slice_image || null, group_label: q.group_label || null,
     // 변환된 HTML 이 있으면 이걸로 렌더(확대해도 안 깨짐). 없으면 조각 이미지로 폴백.
     html_content: q.html_content ? sanitizeHtml(q.html_content) : null,
     meta: q.meta || {},          // 선긋기·기호 채우기·번호 버튼처럼 구조가 필요한 유형
+    solution: revealSolutions && q.solution ? String(q.solution) : null,   // 마감+공개일 때만
   }));
 
   return `<!doctype html>
@@ -1843,6 +1873,9 @@ function renderStudentSinglePage(activity, questions) {
   .top input.nick { width: 100%; padding: 9px; font-size: 15px; border: 1px solid #cbd5e1; border-radius: 8px; margin-bottom: 8px; }
   .prog { height: 8px; background: #edf2f7; border-radius: 999px; overflow: hidden; margin-bottom: 8px; }
   .prog > div { height: 100%; background: #48bb78; width: 0; transition: width .2s; }
+  .qsolution { margin-top: 14px; background: #f0fff4; border: 1px solid #9ae6b4; border-radius: 10px; padding: 12px 14px; }
+  .qsolution .soltitle { font-weight: 800; color: #22543d; margin-bottom: 6px; }
+  .qsolution .soltext { white-space: pre-wrap; word-break: break-word; line-height: 1.6; }
   .chips { display: flex; flex-wrap: wrap; gap: 6px; }
   .chip { width: 34px; height: 34px; border-radius: 8px; border: 2px solid transparent; font-weight: 800; font-size: 13px; cursor: pointer; background: #e2e8f0; color: #4a5568; }
   .chip.answered { background: #c6f6d5; color: #22543d; }
@@ -2674,6 +2707,12 @@ function renderStudentSinglePage(activity, questions) {
       html += '<div class="noimg" style="color:#e11d48;">🙏 문항을 불러올 수 없어요</div>';
     }
     html += '<div class="answers" id="answers"></div><div id="doneHint"></div>';
+    // 풀이 — 마감 후 교사가 공개했을 때만 서버가 s.solution 을 내려준다
+    var qsol = QUESTIONS.filter(function (x) { return x.num === (s.nums && s.nums[0]); })[0];
+    if (qsol && qsol.solution) {
+      html += '<div class="qsolution"><div class="soltitle">💡 풀이</div><div class="soltext">' +
+        String(qsol.solution).replace(/[&<>"']/g, function (c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]; }) + '</div></div>';
+    }
     html += '<div class="padbar"><button class="padbtn" id="padToggle" type="button">✏️ 연습장</button></div><div id="padHost"></div>';
     el.innerHTML = html;
     hideTailBlank(el, s);      // 발문 끝 "…… ( )" 는 탭 유형에선 잔재다(원문은 그대로 둔다)
