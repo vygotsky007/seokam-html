@@ -2843,9 +2843,28 @@ function renderStudentSinglePage(activity, questions) {
   // 살아 있음 + 지금 보는 문항 + 지금까지의 답을 함께 올린다.
   // 답을 올려 두면 [마감] 때 서버가 미제출 학생의 답을 그대로 제출할 수 있다(브라우저가 닫혀도 남는다).
   var lastNoticeAt = null;
+  // 닉네임 충돌 확인 — 이미 접속 중이면 본인 확인 후 이어받기/새 이름
+  var nickOk = '';
+  var joinedNicks = {};    // 이 클라이언트가 이미 하트비트로 점유한 닉(자기 세션을 충돌로 오인하지 않게)
+  function checkNick() {
+    var nick = (document.getElementById('nick').value || '').trim();
+    if (!nick || nick === nickOk || joinedNicks[nick]) { heartbeat(); return; }
+    fetch('/api/live/nickname-check?activityId=' + ACTIVITY_ID + '&nickname=' + encodeURIComponent(nick))
+      .then(function (r) { return r.json(); }).then(function (d) {
+        // 확인하는 사이 이 클라이언트가 그 닉으로 하트비트했다면(=우리 세션) 충돌로 보지 않는다
+        if (joinedNicks[nick]) { nickOk = nick; return; }
+        if (!d || !d.ok || !d.taken || !d.online) { nickOk = nick; heartbeat(); return; }
+        if (confirm('이미 "' + nick + '"이(가) 접속해 있어요.\\n\\n본인이 폰을 바꿔 다시 들어온 거면 [확인] — 쓰던 답을 불러옵니다.\\n다른 사람이면 [취소] 후 이름을 바꿔 주세요(예: ' + nick + '2).')) {
+          if (d.answers && typeof d.answers === 'object') { answers = d.answers; render(); }
+          nickOk = nick; heartbeat();
+        } else { var el = document.getElementById('nick'); el.value = ''; el.focus(); }
+      }).catch(function () { nickOk = nick; heartbeat(); });
+  }
+
   function heartbeat() {
     var nick = (document.getElementById('nick').value || '').trim();
     if (!nick) return;                                  // 닉네임 전에는 누구인지 알 수 없다
+    joinedNicks[nick] = true;                           // 이제 이 닉은 이 클라이언트 것 — 재확인 때 자기 세션 오인 방지
     fetch('/api/live/heartbeat', {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
@@ -2936,7 +2955,7 @@ function renderStudentSinglePage(activity, questions) {
     ['prevBtn', 'nextBtn', 'laterBtn'].forEach(function (id) { document.getElementById(id).disabled = true; });
   }
   setInterval(heartbeat, 5000);
-  document.getElementById('nick').addEventListener('change', heartbeat);   // 이름 넣자마자 접속으로 잡힌다
+  document.getElementById('nick').addEventListener('change', checkNick);   // 이름 넣자마자 접속으로 잡힌다(충돌이면 확인)
 
   // 버전 폴링(수정 알림)
   document.getElementById('reloadBtn').onclick = function () { location.reload(); };
@@ -3423,6 +3442,7 @@ function renderSheetStudentPage(activity) {
   function push() {
     var nick = (nickEl.value || '').trim();
     if (!nick) { saveEl.textContent = '닉네임 먼저'; saveEl.className = ''; return; }
+    joinedNicks[nick] = true;                           // 이 닉은 이 클라이언트 것(자기 세션 오인 방지)
     fetch('/api/live/heartbeat', {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ activityId: ACTIVITY_ID, nickname: nick, currentQ: null, answers: answers }),
@@ -3451,7 +3471,31 @@ function renderSheetStudentPage(activity) {
     }
   });
   nickEl.addEventListener('input', function () { persist(); });
-  nickEl.addEventListener('blur', function () { if ((nickEl.value || '').trim()) push(); });
+  nickEl.addEventListener('blur', function () { if ((nickEl.value || '').trim()) checkNick(); });
+
+  // ---- 닉네임 충돌 확인 ----
+  // 이미 접속 중인 이름이면: 본인이면 [이어서 하기](기존 답 이어받기), 아니면 다른 이름을 권한다.
+  var nickOk = '';   // 충돌 확인을 통과한(또는 이어받기로 확정한) 닉네임
+  var joinedNicks = {};   // 이 클라이언트가 이미 점유한 닉(자기 세션 오인 방지)
+  function checkNick() {
+    var nick = (nickEl.value || '').trim();
+    if (!nick || nick === nickOk || joinedNicks[nick]) { push(); return; }
+    fetch('/api/live/nickname-check?activityId=' + ACTIVITY_ID + '&nickname=' + encodeURIComponent(nick))
+      .then(function (r) { return r.json(); }).then(function (d) {
+        if (joinedNicks[nick]) { nickOk = nick; return; }   // 그 사이 우리가 점유함 → 자기 세션
+        if (!d || !d.ok || !d.taken || !d.online) { nickOk = nick; push(); return; }
+        // 이미 접속 중 — 본인 확인
+        var cont = confirm('이미 "' + nick + '"이(가) 접속해 있어요.\\n\\n본인이 폰을 바꿔 다시 들어온 거면 [확인]을 눌러 이어서 하세요(쓰던 답을 불러옵니다).\\n다른 사람이면 [취소]를 누르고 이름을 바꿔 주세요(예: ' + nick + '2).');
+        if (cont) {
+          // 이어서 하기 — 기존 답을 이 화면으로 불러온다(덮어쓰기 사고 방지)
+          if (d.answers && typeof d.answers === 'object') { answers = d.answers; restore(); paintProgress(); persist(); }
+          nickOk = nick; push();
+        } else {
+          nickEl.value = ''; nickEl.focus();
+          if (noticeEl) { noticeEl.style.display = 'block'; noticeEl.textContent = '다른 이름을 넣어 주세요 (예: ' + nick + '2).'; }
+        }
+      }).catch(function () { nickOk = nick; push(); });
+  }
 
   // 체크박스는 수집 대상이 아니어도 진행률 바는 움직여야 한다(원본이 그랬다).
   Array.prototype.forEach.call(allBoxes, function (b) {
@@ -3718,7 +3762,7 @@ function renderSheetPresentPage(activity) {
   // ---- 유령 세션 감지: 이름 포함관계 or 답 유사 쌍 → 교사에게 제안(자동 병합은 안 함) ----
   function norm(s) { return String(s || '').replace(/\s+/g, '').toLowerCase(); }
   function answersText(r) {
-    return collectedFields().map(function (f) { return show(r, f); }).join('');
+    return collectedFields().map(function (f) { return show(r, f); }).join('|');
   }
   function collectedFields() { return ((data && data.activity.fields) || []).filter(function (f) { return f.collect; }); }
   function similar(a, b) {

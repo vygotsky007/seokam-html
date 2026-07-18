@@ -143,6 +143,23 @@ router.post('/live/message/seen', async (req, res) => {
   return res.json({ ok: true });
 });
 
+// ---- 닉네임 충돌 확인 ----
+// 같은 활동에 이미 접속 중인 닉네임인지 학생 화면이 물어본다.
+// taken: 그 닉네임 세션이 있음 / online: 최근(STALE_MS 내) 접속 / answers: '이어서 하기'로 이어받을 답.
+router.get('/live/nickname-check', async (req, res) => {
+  const { activityId, nickname } = req.query;
+  const name = String(nickname || '').trim();
+  if (!activityId || !name) return res.json({ ok: true, taken: false, online: false });
+
+  const { data, error } = await supabase
+    .from('live_sessions').select('nickname, answers, submitted, last_seen')
+    .eq('activity_id', activityId).eq('nickname', name).single();
+
+  if (error || !data) return res.json({ ok: true, taken: false, online: false });
+  const online = Date.now() - new Date(data.last_seen).getTime() < STALE_MS;
+  return res.json({ ok: true, taken: true, online, submitted: !!data.submitted, answers: data.answers || {} });
+});
+
 // ---- 교사 대시보드가 3초마다 부르는 현황 ----
 router.get('/live/state', async (req, res) => {
   const { activityId } = req.query;
