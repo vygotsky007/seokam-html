@@ -141,7 +141,16 @@ async function drag(page, box, x0, y0, x1, y1) {   // 페이지 px 좌표로 드
   console.log('\n[1부] 교사 화면 — 실제 PDF 업로드 → 자동 인식 → HTML 변환');
   // =========================================================
   await page.goto(`http://127.0.0.1:${STATIC_PORT}/teacher.html`);
+  ok('업로드 전: 편집 영역(examBody)이 감춰져 있다', !(await page.locator('#examBody').isVisible()));
   await page.setInputFiles('#fileInput', PDF);
+  await page.waitForSelector('#examBody', { state: 'visible', timeout: 20000 });
+  ok('PDF 업로드 → 시험지로 인식(감지 배너)', (await page.locator('#detectBanner').textContent()).includes('시험지'));
+  ok('업로드 후: 단계 칩이 나타난다', await page.locator('#examSteps').isVisible());
+  // 고급 설정 안에 PDF 변환 라디오·문항 수가 도달 가능(펼치면 보인다)
+  await page.locator('#advExam > summary').click();
+  ok('고급 설정에서 PDF 변환 라디오 도달 가능', await page.locator('input[name="pdfMode"]').first().isVisible());
+  ok('고급 설정에서 문항 수 입력 도달 가능', await page.locator('#qcount').isVisible());
+  await page.locator('#advExam > summary').click();   // 다시 접기(이후 흐름 방해 없이)
   await page.waitForSelector('#sliceBtn', { state: 'visible', timeout: 20000 });
   await page.click('#sliceBtn');
   await page.waitForSelector('.slice-page .qbox', { timeout: 30000 });

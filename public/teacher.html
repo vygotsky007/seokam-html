@@ -56,8 +56,27 @@
   #sheetTable tr.off { opacity: .5; }
   .steps { display: flex; gap: 8px; margin-bottom: 16px; }
   .step { flex: 1; text-align: center; padding: 10px; border: 1px solid var(--line); border-radius: 10px; font-size: 13px; font-weight: 700; color: var(--gray); background: #fbfcfe; }
-  .step.on { color: #fff; background: var(--blue); border-color: var(--blue); }
+  .step.on { color: #fff; background: var(--blue); border-color: var(--blue); }   /* 현재 단계 */
+  .step.done { color: #22543d; background: #c6f6d5; border-color: #9ae6b4; }        /* 완료 */
+  .step.done::before { content: '✓ '; }
   .step b { display: block; font-size: 11px; opacity: .8; font-weight: 600; }
+  /* 앱 헤더 + 자동 감지 배너 + 큰 드롭존 + 고급 설정 */
+  .apphead { display: flex; align-items: baseline; gap: 8px; margin-bottom: 14px; }
+  .apphead .applogo { font-size: 22px; font-weight: 900; letter-spacing: -.5px; }
+  .apphead .apptag { color: var(--gray); font-size: 14px; }
+  .detectbanner { padding: 10px 14px; border-radius: 10px; margin-bottom: 14px; font-size: 14px; display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+  .detectbanner.exam { background: #ebf5ff; border: 1px solid #90cdf4; }
+  .detectbanner.sheet { background: #f0fff4; border: 1px solid #9ae6b4; }
+  .detectbanner button { margin-left: auto; }
+  .dropzone.hero { padding: 34px 16px; border-width: 3px; }
+  .dropzone.hero .big { font-size: 18px; }
+  details.advanced { margin-top: 12px; border: 1px solid var(--line); border-radius: 10px; background: #fbfcfe; }
+  details.advanced > summary { cursor: pointer; padding: 10px 12px; font-size: 13px; font-weight: 700; color: var(--gray); list-style: none; }
+  details.advanced > summary::-webkit-details-marker { display: none; }
+  details.advanced > summary::before { content: '▸ '; }
+  details.advanced[open] > summary::before { content: '▾ '; }
+  details.advanced > *:not(summary) { margin-left: 12px; margin-right: 12px; }
+  details.advanced[open] { padding-bottom: 12px; }
 
   /* 좌우 편집기 */
   .editor { display: flex; gap: 18px; align-items: flex-start; }
@@ -314,63 +333,73 @@
 
 <div class="wrap">
   <div class="card">
-    <!-- 입구 고르기 — 시험지(HTML·PDF)와 HTML 활동지는 완전히 다른 파이프라인이다. -->
-    <div class="kindtabs">
-      <button type="button" class="kindtab on" id="kindExam">📄 시험지 <b>HTML · PDF · 문항 나누기</b></button>
-      <button type="button" class="kindtab" id="kindSheet">🎨 HTML 활동지 <b>원본 디자인 그대로 · 입력칸 자동 감지</b></button>
+    <!-- 업로드가 주인공 — 파일 확장자·내용으로 시험지/활동지를 자동 감지한다(입구 탭 없음). -->
+    <div class="apphead"><span class="applogo">📝 문제샘</span><span class="apptag">올리면, 수업이 됩니다</span></div>
+
+    <!-- 자동 감지 결과 배너(오판 시 전환 버튼) -->
+    <div id="detectBanner" class="detectbanner" style="display:none;"></div>
+
+    <!-- 숨은 입구 전환 — 자동 감지·배너 전환 버튼이 쓴다(사람이 탭을 고르지 않는다) -->
+    <div class="kindtabs" id="kindtabs" style="display:none;">
+      <button type="button" class="kindtab on" id="kindExam">시험지</button>
+      <button type="button" class="kindtab" id="kindSheet">활동지</button>
     </div>
 
     <div id="paneExam">
-    <div class="steps">
-      <div class="step on" id="step1">1. 문제<b>파일·붙여넣기</b></div>
-      <div class="step" id="step2">2. 정답<b>채점 설정</b></div>
-      <div class="step" id="step3">3. 발행<b>QR·코드 배포</b></div>
+    <div class="steps" id="examSteps" style="display:none;">
+      <div class="step on" id="step1">① 나누기</div>
+      <div class="step" id="step2">② 정답</div>
+      <div class="step" id="step3">③ 발행</div>
     </div>
 
     <div class="editor">
       <!-- 왼쪽: 설정 -->
       <div class="ed-left">
-        <label for="title">활동 제목</label>
-        <input id="title" type="text" placeholder="예) 3단원 쪽지시험" />
+        <div id="examTitleRow" style="display:none;">
+          <label for="title">활동 제목</label>
+          <input id="title" type="text" placeholder="예) 3단원 쪽지시험" />
+        </div>
 
-        <label>문제 파일 (HTML 또는 PDF)</label>
-        <div class="dropzone" id="dropzone">
-          <input id="fileInput" type="file" accept=".html,.htm,.pdf" />
-          <div class="big">📄 파일을 여기로 끌어놓거나 클릭해서 선택</div>
-          <div class="muted" id="fileHint">.html 은 그대로 불러오고, .pdf 는 브라우저에서 변환합니다.</div>
+        <div class="dropzone hero" id="dropzone">
+          <input id="fileInput" type="file" accept=".pdf,.html,.htm" />
+          <div class="big">📤 시험지·활동지 파일을 올리세요</div>
+          <div class="muted" id="fileHint">.pdf 또는 .html — 올리면 종류를 자동으로 알아봐요.</div>
         </div>
-        <div class="row" style="margin-top:8px; gap:16px;">
-          <span class="muted" style="font-weight:600;">PDF 변환 방식</span>
-          <label style="margin:0; font-weight:400;"><input type="radio" name="pdfMode" value="image" checked /> 그림으로(이미지)</label>
-          <label style="margin:0; font-weight:400;"><input type="radio" name="pdfMode" value="text" /> 글자로(텍스트·TTS)</label>
-          <label style="margin:0; font-weight:400;"><input type="radio" name="pdfMode" value="rich" /> HTML 재구성 ★ (글자+그림)</label>
-        </div>
-        <div class="muted" id="pdfModeHint" style="margin-top:4px;">그림 모드는 페이지를 통째로 이미지로 넣습니다. <b>HTML 재구성</b>은 <b>문항 나누기 결과를 문항별 HTML(발문·지문·선지)로</b> 재구성하고, 변환이 안 된 문항만 조각 이미지로 넣습니다.</div>
+        <!-- 업로드 전에는 감춘다: 첫 화면은 올리기 존 + 진행 목록만(상시 설명문 0). 파일을 올리면 revealExam() 이 편다. -->
+        <div id="examBody" style="display:none;">
         <div id="richNotice" style="display:none; margin-top:6px; padding:8px 12px; background:#fffaf0; border:1px solid #f6ad55; border-radius:8px; font-size:13px; font-weight:700; color:#975a16;">
-          ⚠ HTML 재구성을 쓰려면 먼저 <b>[✂️ 문항 나누기]</b> → <b>[이대로 저장]</b> 을 실행하세요. 그래야 문항별 HTML로 재구성됩니다.
+          ⚠ HTML 재구성을 쓰려면 먼저 <b>[✂️ 문항 나누기]</b> → <b>[이대로 저장]</b> 을 실행하세요.
         </div>
-        <div class="row" style="margin-top:6px;">
+        <div class="row" style="margin-top:8px;">
           <button class="btn-gray btn-sm" id="revertImageBtn" style="display:none;">🖼 그림 모드로 되돌리기</button>
           <button class="btn-blue btn-sm" id="sliceBtn" style="display:none;">✂️ 문항 나누기</button>
           <button class="btn-green btn-sm" id="toHtmlBtn" style="display:none;">🔤 HTML로 변환</button>
           <span class="muted" id="sliceStatus"></span>
         </div>
 
-        <div class="row" style="margin-top:10px;">
-          <label style="margin:0;">문항 수</label>
-          <input id="qcount" type="number" min="0" max="100" value="3" style="width:90px;" />
-          <button class="btn-gray btn-sm" id="buildRows">문항표 만들기</button>
-          <span class="muted">PDF 답 입력칸(q1..qN)과 문항표에 함께 쓰입니다.</span>
-        </div>
+        <!-- 고급 설정 — 변환 방식 강제·문항 수·직접 편집. 자동 판정을 덮어쓸 때만 편다(상시 노출 안 함). -->
+        <details class="advanced" id="advExam">
+          <summary>⚙ 고급 설정 — 변환 방식·문항 수·HTML 직접 편집</summary>
+          <div class="row" style="margin-top:8px; gap:16px;">
+            <span class="muted" style="font-weight:600;">PDF 변환 방식(자동)</span>
+            <label style="margin:0; font-weight:400;"><input type="radio" name="pdfMode" value="image" checked /> 그림</label>
+            <label style="margin:0; font-weight:400;"><input type="radio" name="pdfMode" value="text" /> 글자(TTS)</label>
+            <label style="margin:0; font-weight:400;"><input type="radio" name="pdfMode" value="rich" /> HTML 재구성</label>
+          </div>
+          <div class="row" style="margin-top:10px;">
+            <label style="margin:0;">문항 수</label>
+            <input id="qcount" type="number" min="0" max="100" value="3" style="width:90px;" />
+            <button class="btn-gray btn-sm" id="buildRows">문항표 만들기</button>
+          </div>
+          <label style="margin-top:14px;">붙여넣기 / 직접 편집 (학생용 HTML)</label>
+          <textarea id="htmlBody" placeholder="여기에 문제 HTML을 붙여넣어도 됩니다. 답 입력칸 name 은 q1, q2 … 규칙."></textarea>
+          <div id="answerFallback" style="display:none; align-items:center; gap:10px; margin-top:8px; padding:8px 12px; background:#fffaf0; border:1px solid #f6e05e; border-radius:8px;">
+            <span class="muted" style="color:#975a16;">답칸을 자동으로 못 찾았어요. 문항 수에 맞춰 답칸 블록을 새로 넣을까요?</span>
+            <button class="btn-gray btn-sm" id="answerRemakeBtn" type="button">답칸 다시 만들기</button>
+          </div>
+        </details>
 
-        <label style="margin-top:14px;">붙여넣기 / 직접 편집 (학생용 HTML)</label>
-        <textarea id="htmlBody" placeholder="파일을 올리거나 여기에 문제 HTML을 붙여넣으세요. 답 입력칸 name 은 q1, q2 … 규칙."></textarea>
-        <div id="answerFallback" style="display:none; align-items:center; gap:10px; margin-top:8px; padding:8px 12px; background:#fffaf0; border:1px solid #f6e05e; border-radius:8px;">
-          <span class="muted" style="color:#975a16;">답칸을 자동으로 못 찾았어요. 문항 수에 맞춰 답칸 블록을 새로 넣을까요?</span>
-          <button class="btn-gray btn-sm" id="answerRemakeBtn" type="button">답칸 다시 만들기</button>
-        </div>
-
-        <label style="margin-top:14px;">채점 방식</label>
+        <label style="margin-top:14px;" id="gradeModeLabel">채점 방식</label>
         <div class="row" style="gap:16px;">
           <label style="margin:0; font-weight:400;"><input type="radio" name="gradeMode" value="teacher" checked /> 교사 정답표</label>
           <label style="margin:0; font-weight:400;"><input type="radio" name="gradeMode" value="self" /> HTML 자가채점</label>
@@ -414,10 +443,11 @@
             </div>
           </div>
         </div>
+        </div><!-- /examBody -->
       </div>
 
-      <!-- 오른쪽: 실시간 미리보기 -->
-      <div class="ed-right">
+      <!-- 오른쪽: 실시간 미리보기 (업로드 후에만 편다) -->
+      <div class="ed-right" id="examPreview" style="display:none;">
         <div class="preview-head"><b>학생 화면 미리보기</b><span class="tag">실시간</span></div>
         <iframe id="preview" class="preview-frame" title="미리보기"></iframe>
       </div>
@@ -722,24 +752,109 @@ fileInput.addEventListener('change', function (e) { if (e.target.files[0]) handl
 ['dragleave', 'drop'].forEach(function (ev) { dz.addEventListener(ev, function (e) { e.preventDefault(); dz.classList.remove('drag'); }); });
 dz.addEventListener('drop', function (e) { var f = e.dataTransfer.files && e.dataTransfer.files[0]; if (f) handleFile(f); });
 
+var lastUpload = { text: '', name: '' };   // 오판 전환 때 다시 쓸 원본
+
+// 파일 종류를 내용으로 판정한다: 자가채점 답칸(name=q1)은 시험지, 입력칸(textarea·contenteditable)이 있으면 활동지.
+function detectKind(htmlText) {
+  if (/name\s*=\s*["']q\d+["']/i.test(htmlText)) return 'exam';       // 자가채점 시험지 HTML
+  try {
+    var clean = window.sanitizeSheet(htmlText);
+    var doc = new DOMParser().parseFromString(clean, 'text/html');
+    var fields = window.SheetFields.detectFields(doc);
+    if (fields.filter(function (f) { return f.collect; }).length) return 'sheet';
+  } catch (e) {}
+  return 'exam';
+}
+
+// 감지 결과 배너 + 오판 전환 버튼
+function showDetectBanner(kind, source) {
+  var box = document.getElementById('detectBanner');
+  var isSheet = kind === 'sheet';
+  box.style.display = 'block';
+  box.className = 'detectbanner ' + (isSheet ? 'sheet' : 'exam');
+  // PDF 는 언제나 시험지라 오판 전환을 두지 않는다(전환 대상은 HTML 뿐).
+  var canSwitch = source !== 'pdf';
+  box.innerHTML = (isSheet ? '🎨 <b>활동지</b>로 인식했어요' : '📄 <b>시험지</b>' + (source === 'pdf' ? '(PDF)' : '') + '로 인식했어요') +
+    ' <span class="muted">— 자동으로 알맞은 화면을 열었어요.</span>' +
+    (canSwitch ? '<button class="btn-gray btn-sm" id="detectSwitch" type="button">아니요, ' + (isSheet ? '시험지' : '활동지') + '예요</button>' : '');
+  var sw = document.getElementById('detectSwitch');
+  if (sw) sw.onclick = function () { switchKind(isSheet ? 'exam' : 'sheet'); };
+}
+
+// 오판 전환 — 저장해 둔 원본으로 반대 파이프라인에 태운다
+function switchKind(kind) {
+  if (kind === 'sheet') {
+    kindTab('sheet');
+    if (window.ingestSheet) ingestSheet(lastUpload.text, lastUpload.name);
+    showDetectBanner('sheet');
+  } else {
+    kindTab('exam');
+    revealExam();
+    document.getElementById('htmlBody').value = lastUpload.text;
+    updatePreview();
+    showDetectBanner('exam');
+  }
+}
+
 function handleFile(file) {
   var name = (file.name || '').toLowerCase();
   var hint = document.getElementById('fileHint');
   if (name.endsWith('.pdf')) {
     if (!window.pdfjsLib) { alert('PDF 라이브러리(pdf.js)를 불러오지 못했습니다.'); return; }
+    kindTab('exam');
+    revealExam();
+    showDetectBanner('exam', 'pdf');
     convertPdf(file, hint);
   } else if (name.endsWith('.html') || name.endsWith('.htm')) {
     var reader = new FileReader();
     reader.onload = function () {
-      document.getElementById('htmlBody').value = reader.result;
-      hint.textContent = '✅ ' + file.name + ' 불러옴 (' + reader.result.length + '자).';
-      updatePreview();
+      var text = reader.result;
+      lastUpload = { text: text, name: file.name };
+      var kind = detectKind(text);
+      if (kind === 'sheet') {
+        kindTab('sheet');
+        if (window.ingestSheet) ingestSheet(text, file.name);
+        showDetectBanner('sheet');
+      } else {
+        kindTab('exam');
+        revealExam();
+        document.getElementById('htmlBody').value = text;
+        hint.textContent = '✅ ' + file.name + ' 불러옴 (' + text.length + '자).';
+        updatePreview();
+        showDetectBanner('exam');
+      }
     };
     reader.onerror = function () { alert('파일을 읽지 못했습니다.'); };
     reader.readAsText(file, 'utf-8');
   } else {
     alert('.html 또는 .pdf 파일만 지원합니다.');
   }
+}
+
+// 첫 화면은 올리기 존 + 진행 목록만. 파일을 올리거나 기존 활동을 열면 편집 영역을 편다.
+function revealExam() {
+  ['examSteps', 'examTitleRow', 'examBody', 'examPreview'].forEach(function (id) {
+    var el = document.getElementById(id); if (el) el.style.display = '';
+  });
+  updateSteps();
+}
+
+// 단계 칩: ① 나누기 → ② 정답 → ③ 발행. 완료=done, 현재=on, 미래=기본.
+// 활동지는 정답 단계가 없어 별도 흐름(sheetKind)을 쓴다 — 여기선 시험지 흐름만 표시.
+function updateSteps() {
+  var s1 = document.getElementById('step1'), s2 = document.getElementById('step2'), s3 = document.getElementById('step3');
+  if (!s1 || !s2 || !s3) return;
+  s1.className = s2.className = s3.className = 'step';
+  var uploaded = (document.getElementById('htmlBody').value || '').trim().length > 0 || hasSavedSlices();
+  var published = document.getElementById('publishBox') && document.getElementById('publishBox').classList.contains('show');
+  if (published) { s1.className = s2.className = s3.className = 'step done'; return; }
+  if (!uploaded) { s1.className = 'step on'; return; }   // ① 파일 올리기 전
+  s1.className = 'step done';
+  // 정답표에 정답을 하나라도 넣었으면 ② 완료로 본다
+  var hasAns = false;
+  document.querySelectorAll('.q-answer').forEach(function (a) { if ((a.value || '').trim()) hasAns = true; });
+  if (hasAns || currentGradeMode() === 'self') { s2.className = 'step done'; s3.className = 'step on'; }
+  else s2.className = 'step on';
 }
 
 function currentPdfMode() { var s = document.querySelector('input[name="pdfMode"]:checked'); return s ? s.value : 'image'; }
@@ -4712,10 +4827,12 @@ function updatePreview() {
     '<button style="width:100%;margin-top:12px;padding:13px;background:#2f855a;color:#fff;border:0;border-radius:10px;font-weight:700" disabled>선생님께 제출</button>' +
     '</body></html>';
   document.getElementById('preview').srcdoc = doc;
+  updateSteps();
 }
 function escapeAttr(s) { return String(s).replace(/[<>&"]/g, function (c) { return { '<': '&lt;', '>': '&gt;', '&': '&amp;', '"': '&quot;' }[c]; }); }
 document.getElementById('title').addEventListener('input', updatePreview);
 document.getElementById('htmlBody').addEventListener('input', updatePreview);
+document.getElementById('qbody').addEventListener('input', updateSteps);   // 정답 입력 → ② 완료 반영
 updatePreview();
 
 // ================= 유사 문제(쌍둥이 문항) =================
@@ -5021,7 +5138,7 @@ function showPublish(id, code) {
   if (window.QRCode) { new QRCode(qb, { text: goUrl, width: 128, height: 128 }); }
   else { qb.innerHTML = '<span class="muted">QR 생성 실패</span>'; }
   document.getElementById('publishBox').classList.add('show');
-  document.getElementById('step3').classList.add('on');
+  updateSteps();   // ①②③ 모두 완료로
   document.getElementById('publishBox').scrollIntoView({ behavior: 'smooth' });
 }
 
@@ -5031,6 +5148,7 @@ function enterEditMode(id) {
     .then(function (data) {
       if (!data.ok) throw new Error(data.error || '조회 실패');
       editingId = id;
+      revealExam();
       document.getElementById('title').value = data.activity.title || '';
       document.getElementById('htmlBody').value = data.activity.html_body || '';
       // 기존 활동(마커 없는 html_body): 답칸 블록 감지해 마커 소급 삽입, 실패하면 폴백 안내

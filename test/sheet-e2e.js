@@ -125,13 +125,30 @@ function watch(page, tag, sink) {
     watch(t, '교사', tErrors);
     await t.goto(APP + '/teacher.html');
 
-    // 활동지 탭으로
-    await t.click('#kindSheet');
-    ok('HTML 활동지 탭이 열린다', await t.locator('#paneSheet').isVisible());
-    ok('시험지 탭은 가려진다(입구가 갈린다)', !(await t.locator('#paneExam').isVisible()));
+    // 검증(1) 첫 화면 = 올리기 존 + 진행 목록만. 상시 설명문·정답표·라디오·단계칩은 안 보인다.
+    ok('첫 화면: 업로드 존이 보인다', await t.locator('#dropzone').isVisible());
+    ok('첫 화면: 진행 중인 활동 목록이 보인다', await t.locator('#openList').isVisible());
+    ok('첫 화면: 정답표(qtable) 영역이 감춰져 있다', !(await t.locator('#qbody').isVisible()));
+    ok('첫 화면: 채점 방식 라디오가 안 보인다', !(await t.locator('input[name="gradeMode"]').first().isVisible()));
+    ok('첫 화면: PDF 변환 라디오가 안 보인다', !(await t.locator('input[name="pdfMode"]').first().isVisible()));
+    ok('첫 화면: 단계 칩이 감춰져 있다', !(await t.locator('#examSteps').isVisible()));
+    ok('첫 화면: 미리보기 패널이 감춰져 있다', !(await t.locator('#examPreview').isVisible()));
 
-    // 실물 파일 업로드
-    await t.setInputFiles('#sheetFile', FIXTURE);
+    // 통합 업로드 — 활동지 HTML 을 올리면 자동으로 활동지로 인식해 화면을 연다(탭 선택 없음)
+    await t.setInputFiles('#fileInput', FIXTURE);
+    await t.waitForSelector('#paneSheet', { state: 'visible', timeout: 5000 });
+    ok('활동지 HTML → 자동으로 활동지 화면이 열린다', await t.locator('#paneSheet').isVisible());
+    ok('시험지 화면은 가려진다(입구가 갈린다)', !(await t.locator('#paneExam').isVisible()));
+    ok('감지 배너가 "활동지"로 뜬다', (await t.locator('#detectBanner').textContent()).includes('활동지'));
+
+    // 검증(4) 오판 전환 토글: [아니요, 시험지예요] → 시험지 화면, 다시 누르면 활동지로 복귀
+    ok('감지 배너에 오판 전환 버튼이 있다', await t.locator('#detectSwitch').isVisible());
+    await t.click('#detectSwitch');
+    await t.waitForSelector('#paneExam', { state: 'visible', timeout: 5000 });
+    ok('오판 전환 → 시험지 화면이 열린다', await t.locator('#paneExam').isVisible());
+    ok('전환 후 배너가 "시험지"로 바뀐다', (await t.locator('#detectBanner').textContent()).includes('시험지'));
+    await t.click('#detectSwitch');   // 다시 활동지로 복귀해 이후 흐름 계속
+    await t.waitForSelector('#paneSheet', { state: 'visible', timeout: 5000 });
     await t.waitForSelector('#sheetFieldsBox', { state: 'visible', timeout: 5000 });
 
     const rows = await t.locator('#sheetBody tr').count();

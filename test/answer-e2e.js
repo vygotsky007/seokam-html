@@ -68,6 +68,7 @@ function startApp() {
     await sleep(200);
     // 문항표 3개 + qHtml(정답 생성용 텍스트)
     await t.evaluate(() => {
+      window.revealExam();   // 업로드 없이 정답 단계로 바로 진입(편집 영역 펼치기)
       document.getElementById('qcount').value = '3';
       window.buildRows();
       window.qHtml = {};
