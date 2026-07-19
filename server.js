@@ -1379,6 +1379,10 @@ function renderLivePage(activity) {
   .gotorow { display: flex; gap: 6px; align-items: center; margin-top: 8px; }
   .gotorow select { flex: 1; padding: 8px; font-size: 13px; border: 1px solid #cbd5e1; border-radius: 8px; }
   .gotorow button { padding: 8px 12px; font-weight: 800; color: #fff; background: #2f855a; border: 0; border-radius: 8px; cursor: pointer; }
+  /* 클릭 발견성 — 한 번만 뜨는 안내(닫으면 다시 안 뜬다) */
+  #clickHint { display: none; align-items: center; gap: 10px; margin: 0 0 12px; padding: 9px 12px;
+    background: #ebf8ff; border: 1px solid #90cdf4; border-radius: 10px; font-size: 13px; color: #2a4365; }
+  #clickHint .x { margin-left: auto; border: 0; background: transparent; font-size: 16px; cursor: pointer; color: #4a5568; }
 </style>
 </head>
 <body>
@@ -1400,6 +1404,7 @@ function renderLivePage(activity) {
 
     <div class="card">
       <h2>📊 진행 매트릭스 <span class="muted" id="mxHint">— 문항 번호를 누르면 응답 분포를 볼 수 있어요</span></h2>
+      <div id="clickHint">💡 <b>학생 이름</b>을 누르면 개별 메시지, <b>칸·막대</b>를 누르면 그 학생에게 이동·채움 요청을 보낼 수 있어요.<button type="button" class="x" title="다시 안 보기">✕</button></div>
       <div class="scroller"><table class="matrix" id="matrix"></table></div>
       <div id="bars" style="display:none"></div>
     </div>
@@ -1705,7 +1710,12 @@ function renderLivePage(activity) {
   }
 
   // ---- 학생 패널: 상태 · 답 목록 · 개별 메시지(전체 공지와 다른 채널) ----
-  var QUICK = ['잘하고 있어요 👍', '다시 확인해 보세요', '선생님한테 오세요'];
+  // 활동지에는 맥락에 맞는 문구를 하나 더 준다("이 부분 더 자세히 써 보세요").
+  function quickPhrases() {
+    var q = ['잘하고 있어요 👍', '다시 확인해 보세요', '선생님한테 오세요'];
+    if (isSheet()) q.push('이 부분 더 자세히 써 보세요');
+    return q;
+  }
 
   document.getElementById('stuClose').onclick = function () {
     openStu = null;
@@ -1752,8 +1762,9 @@ function renderLivePage(activity) {
         '</select><button type="button" id="stuGoto">이동 요청</button></div>';
     }
 
+    var quick = quickPhrases();
     h += '<div class="lbl" style="font-weight:800;font-size:13px;margin:14px 0 4px;">개별 메시지</div>';
-    h += '<div class="quick">' + QUICK.map(function (t, i) {
+    h += '<div class="quick">' + quick.map(function (t, i) {
       return '<button type="button" data-quick="' + i + '">' + esc(t) + '</button>';
     }).join('') + '</div>';
     h += '<div class="msgbar"><input id="stuMsg" type="text" placeholder="이 학생에게만 보내는 말" autocomplete="off" />' +
@@ -1787,7 +1798,7 @@ function renderLivePage(activity) {
       if (e.key === 'Enter') { sendMessage(st.nickname, this.value); this.value = ''; }
     });
     panel.querySelectorAll('button[data-quick]').forEach(function (b) {
-      b.onclick = function () { sendMessage(st.nickname, QUICK[Number(b.getAttribute('data-quick'))]); };
+      b.onclick = function () { sendMessage(st.nickname, quick[Number(b.getAttribute('data-quick'))]); };
     });
     panel.querySelectorAll('button.fillbtn').forEach(function (b) {
       b.onclick = function () {
@@ -1901,6 +1912,20 @@ function renderLivePage(activity) {
       poll();
     }).catch(function (e) { alert('마감 실패: ' + e.message); });
   };
+
+  // 클릭 발견성 안내 — 한 번만 보여 주고, 닫으면 다시 안 뜬다.
+  (function () {
+    var HK = 'mjs-live-hint-dismissed';
+    var el = document.getElementById('clickHint');
+    if (!el) return;
+    var seen = false;
+    try { seen = !!localStorage.getItem(HK); } catch (e) {}
+    if (!seen) el.style.display = 'flex';
+    el.querySelector('.x').onclick = function () {
+      el.style.display = 'none';
+      try { localStorage.setItem(HK, '1'); } catch (e) {}
+    };
+  })();
 
   poll();
   setInterval(poll, 3000);   // 3초 폴링이면 교실에서 충분하다(WebSocket 불필요)

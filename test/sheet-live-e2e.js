@@ -252,6 +252,14 @@ async function write(page, idx, text) {
     const foot = await lv.locator('#matrix tfoot td').allTextContents();
     ok('하단 집계 행이 필드 기준으로 센다', foot.length === collect.length + 1 && foot[1] === '2', JSON.stringify(foot));
 
+    // 클릭 발견성 — 1회성 힌트(닫으면 재표시 안 함)
+    ok('클릭 힌트가 처음엔 보인다', await lv.locator('#clickHint').isVisible());
+    await lv.locator('#clickHint .x').click();
+    ok('힌트 ✕ 를 누르면 사라진다', !(await lv.locator('#clickHint').isVisible()));
+    await lv.reload();
+    await lv.waitForSelector('#matrix tbody td.name');
+    ok('새로고침해도 힌트가 다시 뜨지 않는다(localStorage)', !(await lv.locator('#clickHint').isVisible()));
+
     // 학생 패널 — 칸별로 쓴 글
     await lv.locator('#matrix tbody td.name').first().click();
     await lv.waitForSelector('#stuPanel.show');
@@ -259,6 +267,8 @@ async function write(page, idx, text) {
     ok('학생 패널에 칸별로 쓴 글이 보인다', /칸별로 쓴 글/.test(panel) && /프롬프트 문장/.test(panel));
     ok('활동지에는 문항 이동 요청이 없다', (await lv.locator('#stuGoto').count()) === 0);
     ok('개별 메시지 UI 는 그대로 있다', (await lv.locator('#stuSend').count()) === 1);
+    const quickTexts = await lv.locator('#stuBody .quick button').allTextContents();
+    ok('활동지 맥락 문구가 추가된다(더 자세히)', quickTexts.some((t) => t.includes('이 부분 더 자세히 써 보세요')), JSON.stringify(quickTexts));
 
     // 개별 메시지 (이동 요청 UI 가 없어도 바인딩이 살아 있는지)
     await lv.fill('#stuMsg', '가영아 잘 쓰고 있어!');
