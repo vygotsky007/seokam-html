@@ -1299,6 +1299,9 @@ function renderLivePage(activity) {
   table.matrix th.name, table.matrix td.name { text-align: left; white-space: nowrap; font-weight: 700; position: sticky; left: 0; background: #fff; }
   table.matrix th.qh { cursor: pointer; }
   table.matrix th.qh:hover { background: #ebf8ff; }
+  /* 전체 이동 📣 — 평소엔 자리만 잡고 숨어 있다가 머리글에 hover 하면 보인다(레이아웃 안 흔들림) */
+  table.matrix th.qh .mega { visibility: hidden; opacity: 0; margin-left: 4px; cursor: pointer; font-size: 12px; transition: opacity .12s; }
+  table.matrix th.qh:hover .mega { visibility: visible; opacity: 1; }
   /* 활동지 열 머리글 — 번호가 아니라 라벨이라 자리가 더 필요하다. 누를 것도 없으니 손모양 없음 */
   table.matrix th.fh { cursor: default; min-width: 62px; max-width: 96px; font-size: 11.5px; line-height: 1.3; white-space: normal; word-break: break-all; }
   table.matrix th.fh:hover { background: #f7fafc; }
@@ -1311,6 +1314,8 @@ function renderLivePage(activity) {
   #bars .btrack { flex: 1; display: flex; gap: 2px; height: 20px; }
   #bars .bseg { position: relative; background: #edf2f7; border-radius: 3px; overflow: hidden; min-width: 6px; }
   #bars .bfill { position: absolute; left: 0; top: 0; bottom: 0; }
+  #bars .bseg.cansend { cursor: pointer; }
+  #bars .bseg.cansend:hover { outline: 2px solid #f6ad55; outline-offset: 1px; }
   #bars .bnum { flex: 0 0 52px; text-align: right; font-size: 12.5px; color: #4a5568; font-weight: 700; }
   #bars .blegend { display: flex; flex-wrap: wrap; gap: 12px; margin-top: 10px; font-size: 12px; color: #718096; }
   #bars .blegend span { display: flex; align-items: center; gap: 5px; }
@@ -1348,6 +1353,10 @@ function renderLivePage(activity) {
   .ansrow .n { flex: 0 0 40px; font-weight: 800; color: #4a5568; }
   .ansrow .v { flex: 1; word-break: break-word; }
   .ansrow .v.none { color: #a0aec0; }
+  .ansrow .fillbtn { flex: 0 0 auto; align-self: center; padding: 5px 9px; font-size: 12px; font-weight: 800;
+    border: 1px solid #f6ad55; background: #fffaf0; color: #975a16; border-radius: 999px; cursor: pointer; white-space: nowrap; }
+  .ansrow .fillbtn:hover { background: #feebc8; }
+  .ansrow .fillbtn:disabled { background: #f0fff4; border-color: #9ae6b4; color: #22543d; cursor: default; }
   .quick { display: flex; flex-wrap: wrap; gap: 6px; margin: 8px 0; }
   .quick button { padding: 7px 10px; font-size: 12px; font-weight: 700; border: 1px solid #cbd5e1; background: #f7fafc; border-radius: 999px; cursor: pointer; }
   .msgbar { display: flex; gap: 6px; }
@@ -1502,12 +1511,12 @@ function renderLivePage(activity) {
     noteTyping();
 
     document.getElementById('mxHint').innerHTML = useBars()
-      ? '— 필드가 많아 <b>진행 막대</b>로 봅니다(그룹별 색). 막대를 누르면 그 학생의 그룹별 채움 상태가 열려요.'
+      ? '— 필드가 많아 <b>진행 막대</b>로 봅니다(그룹별 색). 막대를 누르면 그 학생 상세가, <b>빈 그룹을 누르면</b> 그 학생에게 채움 요청이 가요.'
       : isSheet()
       ? '— 열은 <b>수집 칸</b>이에요. <span style="background:#c6f6d5;padding:0 6px;border-radius:4px;">입력 있음</span> ' +
         '<span style="background:#bee3f8;padding:0 6px;border-radius:4px;">입력 중</span> ' +
-        '<span style="background:#edf2f7;padding:0 6px;border-radius:4px;">비어 있음</span> · 이름·칸을 누르면 쓴 글이 보여요'
-      : '— 문항 번호를 누르면 응답 분포를 볼 수 있어요';
+        '<span style="background:#edf2f7;padding:0 6px;border-radius:4px;">비어 있음</span> · 이름·칸을 누르면 쓴 글이 보이고, 상세에서 빈 칸에 <b>채움 요청</b>을 보낼 수 있어요'
+      : '— 문항 번호를 누르면 응답 분포가 열려요 · <b>칸=학생 보내기</b> · <b>번호 머리글의 📣=전체 보내기</b>';
 
     // ---- 필드 많은 활동지: 진행 막대(매트릭스 대신) ----
     if (useBars()) {
@@ -1528,7 +1537,9 @@ function renderLivePage(activity) {
     // ---- 진행 매트릭스 ----
     var h = '<thead><tr><th class="name">학생</th>';
     cs.forEach(function (c) {
-      h += '<th class="qh' + (isSheet() ? ' fh' : '') + '" data-q="' + esc(String(c.key)) + '" title="' + esc(c.title) + '">' + esc(c.head) + '</th>';
+      // 시험지 열 머리글엔 hover 시 📣 가 뜬다 — 누르면 '전체를 이 문항으로'(롱프레스와 같은 동작을 눈에 보이게).
+      var mega = isSheet() ? '' : '<span class="mega" title="전체를 ' + esc(c.head) + '번으로 보내기">📣</span>';
+      h += '<th class="qh' + (isSheet() ? ' fh' : '') + '" data-q="' + esc(String(c.key)) + '" title="' + esc(c.title) + '">' + esc(c.head) + mega + '</th>';
     });
     h += '</tr></thead><tbody>';
     sts.forEach(function (st) {
@@ -1563,7 +1574,10 @@ function renderLivePage(activity) {
       document.querySelectorAll('th.qh').forEach(function (th) {
         var q = Number(th.getAttribute('data-q'));
         th.onclick = function () { pickedQ = q; renderDist(); };
-        // 열 머리글 우클릭/길게 누르기 = "다 같이 N번 보세요"
+        // 📣 클릭 = "다 같이 N번 보세요"(전체 이동). 머리글 본체 클릭(분포 보기)과 갈리게 stopPropagation.
+        var mega = th.querySelector('.mega');
+        if (mega) mega.onclick = function (e) { e.stopPropagation(); showPop(e, null, q); };
+        // 우클릭/길게 누르기도 그대로 둔다(터치·습관 사용자용)
         th.oncontextmenu = function (e) { e.preventDefault(); showPop(e, null, q); return false; };
         var timer = null;
         th.onpointerdown = function (e) { timer = setTimeout(function () { showPop(e, null, q); }, 550); };
@@ -1608,7 +1622,10 @@ function renderLivePage(activity) {
         (st.submitted ? '<span class="badge sub">제출</span>' : '') + '</div><div class="btrack">';
       gs.forEach(function (g, gi) {
         var gf = g.cols.filter(function (c) { return hasVal(st, c); }).length;
-        html += '<span class="bseg" style="flex:' + g.cols.length + '" title="' + esc(g.name) + ' ' + gf + '/' + g.cols.length + '">' +
+        var hasEmpty = gf < g.cols.length;
+        html += '<span class="bseg' + (hasEmpty ? ' cansend' : '') + '" data-nick="' + esc(st.nickname) + '" data-g="' + gi + '"' +
+          ' style="flex:' + g.cols.length + '" title="' + esc(g.name) + ' ' + gf + '/' + g.cols.length +
+          (hasEmpty ? ' · 눌러서 빈 칸 채움 요청' : '') + '">' +
           '<span class="bfill" style="width:' + Math.round(gf / g.cols.length * 100) + '%;background:' + BAR_PALETTE[gi % BAR_PALETTE.length] + '"></span></span>';
       });
       html += '</div><div class="bnum">' + filled + '/' + total + '</div></div>';
@@ -1620,6 +1637,21 @@ function renderLivePage(activity) {
     document.getElementById('bars').innerHTML = html;
     document.querySelectorAll('#bars .barrow').forEach(function (row) {
       row.onclick = function () { openStu = row.getAttribute('data-nick'); renderStu(); };
+    });
+    // 빈 세그먼트(그룹) 클릭 = 그 그룹에서 아직 비어 있는 '첫 칸'을 지목해 채움 요청.
+    // 행 클릭(패널 열기)으로 번지지 않도록 stopPropagation.
+    document.querySelectorAll('#bars .bseg.cansend').forEach(function (seg) {
+      seg.onclick = function (e) {
+        e.stopPropagation();
+        var nick = seg.getAttribute('data-nick');
+        var g = groupsOfCols()[Number(seg.getAttribute('data-g'))];
+        var st = (state.students || []).filter(function (s) { return s.nickname === nick; })[0];
+        if (!g || !st) return;
+        var empty = g.cols.filter(function (c) { return !hasVal(st, c); });
+        if (!empty.length) { openStu = nick; renderStu(); return; }
+        var f = empty[0];
+        showFillPop(e, nick, String(f.key), (f.field && f.field.label) || f.head);
+      };
     });
   }
 
@@ -1647,8 +1679,20 @@ function renderLivePage(activity) {
   }
   function hidePop() { pop.classList.remove('show'); }
   document.addEventListener('click', function (e) {
-    if (!pop.contains(e.target) && !e.target.closest('td.cell') && !e.target.closest('th.qh')) hidePop();
+    if (!pop.contains(e.target) && !e.target.closest('td.cell') && !e.target.closest('th.qh') && !e.target.closest('.bseg')) hidePop();
   });
+
+  // ---- 채움 요청 팝오버(활동지 빈 세그먼트) ----
+  function showFillPop(e, nickname, fid, label) {
+    pop.classList.add('show');
+    pop.style.left = Math.min(e.pageX + 8, window.innerWidth - 240) + 'px';
+    pop.style.top = (e.pageY + 8) + 'px';
+    pop.innerHTML = '<div class="pt">' + esc(nickname) + ' 학생에게<br>‘' + esc(label) + '’ 칸을 채우라고 알릴까요?</div>' +
+      '<div class="pa"><button type="button" class="go" id="popFill">✏️ 채움 요청</button>' +
+      '<button type="button" id="popNo">취소</button></div>';
+    document.getElementById('popFill').onclick = function () { hidePop(); requestFill(nickname, fid, label); };
+    document.getElementById('popNo').onclick = hidePop;
+  }
 
   function requestGoto(nicknames, q) {
     fetch('/api/live/goto', {
@@ -1689,9 +1733,15 @@ function renderLivePage(activity) {
       (isSheet() ? '칸별로 쓴 글 (원문 그대로)' : '문항별 답 (원문 그대로)') + '</div>';
     h += cs.map(function (c) {
       var v = showVal(st, c);
+      // 활동지에서 아직 비어 있는 '수집 칸'에는 그 칸을 지목해 채워 달라고 알리는 버튼을 붙인다.
+      // (이동 개념이 없는 활동지에서 [여기로 보내기]에 해당하는 동작)
+      var fill = (isSheet() && c.field && c.field.collect && !v)
+        ? '<button type="button" class="fillbtn" data-fid="' + esc(String(c.key)) +
+          '" data-label="' + esc(c.field.label || c.head) + '" title="이 칸을 채워 달라고 알리기">✏️ 채움 요청</button>'
+        : '';
       return '<div class="ansrow"><span class="n"' + (isSheet() ? ' title="' + esc(c.title) + '"' : '') + '>' +
         esc(isSheet() ? c.head : c.key + '번') + '</span>' +
-        '<span class="v' + (v ? '' : ' none') + '">' + (v ? esc(v) : '—') + '</span></div>';
+        '<span class="v' + (v ? '' : ' none') + '">' + (v ? esc(v) : '—') + '</span>' + fill + '</div>';
     }).join('');
 
     // 문항 이동 요청은 보낼 번호가 있어야 성립한다 — 활동지는 한 장짜리라 이동이라는 개념이 없다.
@@ -1739,6 +1789,23 @@ function renderLivePage(activity) {
     panel.querySelectorAll('button[data-quick]').forEach(function (b) {
       b.onclick = function () { sendMessage(st.nickname, QUICK[Number(b.getAttribute('data-quick'))]); };
     });
+    panel.querySelectorAll('button.fillbtn').forEach(function (b) {
+      b.onclick = function () {
+        b.disabled = true; b.textContent = '요청함 ✓';
+        requestFill(st.nickname, b.getAttribute('data-fid'), b.getAttribute('data-label'));
+      };
+    });
+  }
+
+  // ---- 채움 요청: 비어 있는 특정 칸을 지목해 그 학생에게만 알린다(활동지 전용) ----
+  function requestFill(nickname, fid, label) {
+    fetch('/api/live/fill', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ activityId: ACTIVITY_ID, nickname: nickname, fid: fid, label: label }),
+    }).then(function (r) { return r.json(); }).then(function (d) {
+      if (!d.ok) throw new Error(d.error || '실패');
+      poll();
+    }).catch(function (e) { alert('채움 요청 실패: ' + e.message); });
   }
 
   function sendMessage(nickname, text) {
@@ -3260,6 +3327,26 @@ function renderSheetStudentPage(activity) {
     background: #fefcbf; color: #744210; padding: 10px 14px; font-size: 14px; font-weight: 700;
     font-family: system-ui, sans-serif; display: none;
   }
+  /* 선생님이 나에게 보낸 메시지 — 위쪽에 뜬다(하단 바·공지와 겹치지 않게).
+     그냥 메시지는 파란 계열, 채움 요청은 [바로 가기]가 붙는다. */
+  #__mjsMsg {
+    position: fixed; left: 0; right: 0; top: 0; z-index: 2147483001;
+    background: #2b6cb0; color: #fff; padding: 12px 14px; display: none;
+    font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
+    box-shadow: 0 4px 18px rgba(0,0,0,.28);
+  }
+  #__mjsMsg .ml { font-size: 11px; font-weight: 800; opacity: .85; margin-bottom: 3px; }
+  #__mjsMsg .mt { font-size: 15px; font-weight: 800; }
+  #__mjsMsg .ma { margin-top: 9px; display: flex; gap: 8px; }
+  #__mjsMsg button { padding: 9px 15px; font-size: 14px; font-weight: 800; border: 0; border-radius: 8px; cursor: pointer; min-height: 40px; }
+  #__mjsMsg .go { background: #fff; color: #2b6cb0; }
+  #__mjsMsg .ok { background: rgba(255,255,255,.18); color: #fff; }
+  #__mjsMsg.fill { background: #2f855a; }
+  #__mjsMsg.fill .go { color: #22543d; }
+  /* [바로 가기]로 지목된 칸을 잠깐 강조 */
+  .__mjsPulse { outline: 3px solid #f6ad55 !important; outline-offset: 2px !important;
+    border-radius: 4px; transition: outline-color .3s ease; animation: __mjsPulse 1.4s ease-out; }
+  @keyframes __mjsPulse { 0% { outline-color: #ed8936; } 100% { outline-color: rgba(246,173,85,0); } }
   /* 바가 문서 끝(푸터)을 가리지 않게 자리를 비운다 */
   body { padding-bottom: 96px !important; }
   @media (max-width: 520px) {
@@ -3271,6 +3358,7 @@ function renderSheetStudentPage(activity) {
 </style>`;
 
   const bodyExtra = `
+<div id="__mjsMsg"></div>
 <div id="__mjsNotice"></div>
 <div id="__mjsBar">
   <div class="g grow">
@@ -3304,6 +3392,7 @@ function renderSheetStudentPage(activity) {
   var saveEl = document.getElementById('__mjsSave');
   var submitEl = document.getElementById('__mjsSubmit');
   var noticeEl = document.getElementById('__mjsNotice');
+  var msgEl = document.getElementById('__mjsMsg');
 
   // ---- 저장한 것 되살리기 ----
   // 서버(live_sessions)에도 올리지만, 되살리기는 localStorage 로 한다. 새로고침·창 닫기에
@@ -3451,8 +3540,60 @@ function renderSheetStudentPage(activity) {
       saveEl.textContent = '저장됨'; saveEl.className = 'on';
       var n = (d.notices || [])[0];
       if (n) { noticeEl.style.display = 'block'; noticeEl.textContent = '📢 ' + n.text; }
+      handleMessages(d.messages || []);
       if (d.closed) onClosed();
     }).catch(function () { saveEl.textContent = '저장 실패(오프라인)'; saveEl.className = ''; });
+  }
+
+  // ---- 선생님이 나에게 보낸 개별 메시지 ----
+  // 활동지엔 '이동'이 없으니 goto 는 무시한다. text=그냥 메시지, fill=칸 지목(‘바로 가기’로 그 칸까지 데려다 준다).
+  // 본인 앞으로 온 것만 서버가 보내 준다 → 남의 메시지가 섞일 수 없다.
+  var shownMsgId = null;
+  function handleMessages(mine) {
+    // fill 을 우선(지목이 더 급하다), 없으면 일반 메시지. 가장 최근 것 하나만 배너로.
+    var fills = mine.filter(function (m) { return m.type === 'fill'; });
+    var texts = mine.filter(function (m) { return m.type === 'text'; });
+    var m = fills.length ? fills[fills.length - 1] : (texts.length ? texts[texts.length - 1] : null);
+    if (!m) { if (!shownMsgId) msgEl.style.display = 'none'; return; }
+    if (shownMsgId === m.id) return;                 // 같은 메시지를 다시 그리지 않는다(중첩 금지)
+    shownMsgId = m.id;
+    msgEl.style.display = 'block';
+    msgEl.className = (m.type === 'fill') ? 'fill' : '';
+    var isFill = m.type === 'fill';
+    var acts = isFill && m.fid
+      ? '<button type="button" class="go" id="__mjsGo">바로 가기</button><button type="button" class="ok" id="__mjsOk">확인</button>'
+      : '<button type="button" class="ok" id="__mjsOk">확인</button>';
+    msgEl.innerHTML = '<div class="ml">선생님이 나에게</div><div class="mt"></div><div class="ma">' + acts + '</div>';
+    msgEl.querySelector('.mt').textContent = m.text;   // 텍스트는 textContent 로만 넣는다(주입 방지)
+    var goBtn = document.getElementById('__mjsGo');
+    if (goBtn) goBtn.onclick = function () { gotoField(m.fid); ackMsg(m.id); };
+    document.getElementById('__mjsOk').onclick = function () { ackMsg(m.id); };
+  }
+  function ackMsg(id) {
+    msgEl.style.display = 'none';
+    shownMsgId = null;                                // 새 메시지가 오면 다시 뜬다
+    markSeen(id);
+  }
+  function markSeen(id) {
+    var nick = (nickEl.value || '').trim();
+    if (!nick) return;
+    fetch('/api/live/message/seen', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ activityId: ACTIVITY_ID, nickname: nick, messageId: id }),
+    }).catch(function () {});
+  }
+
+  // ---- 지목된 칸으로 데려다 주기: 스크롤 + 포커스 + 잠깐 강조 ----
+  // 체크박스 묶음은 첫 항목으로 간다. contenteditable/textarea/input 모두 focus 된다.
+  function gotoField(fid) {
+    var el = document.querySelector('[data-fid="' + fid + '"]');
+    if (!el) return;
+    el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    setTimeout(function () {
+      try { el.focus({ preventScroll: true }); } catch (e) { try { el.focus(); } catch (e2) {} }
+      el.classList.add('__mjsPulse');
+      setTimeout(function () { el.classList.remove('__mjsPulse'); }, 1500);
+    }, 320);
   }
 
   // ---- 묶기 ----
@@ -3585,6 +3726,13 @@ function renderSheetPresentPage(activity) {
   .gtab:hover { color: #e2e8f0; }
   .gtab.on { background: #3b82f6; color: #fff; border-color: #3b82f6; }
   .gtab .gc { font-size: 11px; opacity: .7; }
+  .gtab .gmega { margin-left: 6px; font-size: 12px; opacity: .55; cursor: pointer; }
+  .gtab .gmega:hover { opacity: 1; }
+  /* 전체 안내 전송 토스트 — 학생 화면 아닌 발표 화면에만 뜨는 확인 문구 */
+  #__present_toast { position: fixed; left: 50%; bottom: 80px; transform: translateX(-50%) translateY(12px);
+    background: #1e293b; color: #e2e8f0; border: 1px solid #3b82f6; border-radius: 10px; padding: 10px 18px;
+    font-size: 14px; font-weight: 800; z-index: 120; opacity: 0; pointer-events: none; transition: opacity .18s, transform .18s; }
+  #__present_toast.show { opacity: 1; transform: translateX(-50%) translateY(0); }
   .fieldtabs { display: flex; gap: 6px; overflow-x: auto; padding-top: 2px; }
   .tab { padding: 7px 14px; font-size: 14px; font-weight: 700; border: 1px solid #475569; background: #1e293b; color: #94a3b8; border-radius: 9px 9px 0 0; cursor: pointer; white-space: nowrap; max-width: 300px; overflow: hidden; text-overflow: ellipsis; }
   .tab:hover { color: #e2e8f0; }
@@ -3658,6 +3806,7 @@ function renderSheetPresentPage(activity) {
   </div>
 
   <div class="tabs" id="tabs"></div>
+  <div id="__present_toast"></div>
   <div class="stagewrap">
     <div class="stage" id="stage">
       <div id="sessbar" style="display:none"></div>
@@ -3828,7 +3977,8 @@ function renderSheetPresentPage(activity) {
     // 그룹이 하나뿐이면(적은 필드) 상단 줄은 숨기고 필드 탭만
     var gh = gs.length > 1 ? '<div class="grouptabs">' + gs.map(function (g) {
       var done = g.fields.length;
-      return '<button class="gtab' + (g.name === curGroup ? ' on' : '') + '" data-g="' + esc(g.name) + '">' + esc(g.name) + ' <span class="gc">' + done + '</span></button>';
+      return '<button class="gtab' + (g.name === curGroup ? ' on' : '') + '" data-g="' + esc(g.name) + '">' + esc(g.name) + ' <span class="gc">' + done + '</span>' +
+        '<span class="gmega" data-g="' + esc(g.name) + '" title="전체에게 「' + esc(g.name) + '」 안내 보내기">📣</span></button>';
     }).join('') + '</div>' : '';
     var fh = '<div class="fieldtabs">' + (curG ? curG.fields : []).map(function (f) {
       return '<button class="tab' + (f.id === curFid ? ' on' : '') + '" data-f="' + esc(f.id) + '" title="' + esc(f.label) + '">' + esc(f.label) + '</button>';
@@ -3845,6 +3995,10 @@ function renderSheetPresentPage(activity) {
         else paintTabs();
       };
     });
+    // 📣 = 전체 학생에게 "지금 이 그룹" 안내(전체 공지). 탭 전환과 갈리게 stopPropagation.
+    document.querySelectorAll('.gmega').forEach(function (b) {
+      b.onclick = function (e) { e.stopPropagation(); broadcastGroup(b.getAttribute('data-g')); };
+    });
     document.querySelectorAll('.fieldtabs .tab').forEach(function (b) {
       b.onclick = function () { selectField(b.getAttribute('data-f')); };
     });
@@ -3857,6 +4011,26 @@ function renderSheetPresentPage(activity) {
     document.getElementById('grid').innerHTML = '';
     drawing.onContextChange();
     paintTabs(); paint();
+  }
+
+  // ---- 전체에게 이 그룹 안내(활동지엔 '이동'이 없으니 전체 공지로 안내한다) ----
+  // 시험지 열 머리글 📣('전체를 N번으로')와 같은 자리·같은 몸짓의 활동지 버전.
+  function broadcastGroup(name) {
+    if (!confirm('전체 학생에게 「' + name + '」 안내를 보낼까요?')) return;
+    fetch('/api/live/notice', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ activityId: ACTIVITY_ID, text: '지금은 「' + name + '」 부분을 해봅시다 📌' }),
+    }).then(function (r) { return r.json(); }).then(function (d) {
+      showToast(d && d.ok ? '📣 「' + name + '」 안내를 전체에게 보냈어요' : '안내 전송 실패');
+    }).catch(function () { showToast('안내 전송 실패(오프라인)'); });
+  }
+  var toastTimer = null;
+  function showToast(text) {
+    var el = document.getElementById('__present_toast');
+    el.textContent = text;
+    el.classList.add('show');
+    clearTimeout(toastTimer);
+    toastTimer = setTimeout(function () { el.classList.remove('show'); }, 2200);
   }
 
   // 실시간 오버레이 — 현재 필드 작성 수. 새 답이 오면 부드럽게 숫자만 갱신.

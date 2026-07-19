@@ -163,6 +163,14 @@ async function write(page, idx, text) {
     ok('그룹 전환 시 그 필드 답만 나온다(1명)', (await pr.locator('.card').count()) === 1, await pr.locator('.card').count() + '개');
     ok('그룹 전환이 시각적으로 반영된다', (await pr.locator('.grouptabs .gtab', { hasText: '로그라인' }).first().getAttribute('class')).includes('on'));
 
+    // 그룹 탭 📣 = 전체에게 이 그룹 안내(활동지엔 '이동'이 없으니 전체 공지로). 확인 대화상자는 수락.
+    pr.once('dialog', (d) => d.accept());
+    await pr.locator('.grouptabs .gtab', { hasText: '로그라인' }).first().locator('.gmega').click();
+    await sleep(700);
+    ok('그룹 탭 📣 → 전체 안내가 공지로 나간다',
+      ((state.activities[0].notices) || []).some((n) => n.text.includes('로그라인')),
+      JSON.stringify(((state.activities[0].notices) || []).map((n) => n.text)));
+
     // 새 답 실시간 추가 — 나은이가 지금 로그라인을 쓴다
     await write(b, 2, '겁 많은 로봇이 친구를 찾아 우주로 떠나는 이야기');
     await pr.waitForFunction(() => document.querySelectorAll('.card').length === 2, null, { timeout: 8000 });
@@ -258,6 +266,33 @@ async function write(page, idx, text) {
     await sleep(600);
     const dm = state.live_sessions.find((s) => s.nickname === '가영');
     ok('개별 메시지가 그 학생에게 저장된다', (dm.messages || []).some((m) => m.text.includes('잘 쓰고 있어')), JSON.stringify((dm.messages || []).map((m) => m.text)));
+
+    // ── 채움 요청: 활동지 [여기로 보내기]의 지목 버전(빈 칸을 지목해 그 학생에게만) ──
+    // 가영은 f1·f4·f6 을 썼고 f3 만 비어 있다 → 패널에 채움 요청 버튼이 f3 앞에 하나 뜬다.
+    const fillCount = await lv.locator('#stuBody .fillbtn').count();
+    ok('빈 칸에 [채움 요청] 버튼이 붙는다', fillCount >= 1, fillCount + '개');
+    const targetFid = await lv.locator('#stuBody .fillbtn').first().getAttribute('data-fid');
+    await lv.locator('#stuBody .fillbtn').first().click();
+    await sleep(700);
+    const gyF = state.live_sessions.find((s) => s.nickname === '가영');
+    ok('채움 요청이 그 학생에게 fill 메시지로 저장', (gyF.messages || []).some((m) => m.type === 'fill' && m.fid === targetFid), targetFid);
+    const naF = state.live_sessions.find((s) => s.nickname === '나은');
+    ok('채움 요청은 지목 학생에게만 (나은엔 없음)', !((naF.messages) || []).some((m) => m.type === 'fill'));
+    // 학생 화면: 배너가 뜨고 [바로 가기] 를 누르면 그 칸에 포커스가 간다.
+    await a.waitForFunction(() => {
+      const el = document.getElementById('__mjsMsg');
+      const mt = el && el.querySelector('.mt');
+      return el && el.style.display !== 'none' && mt && /채워주세요/.test(mt.textContent);
+    }, null, { timeout: 9000 });
+    ok('학생 화면에 채움 요청 배너가 뜬다', true);
+    await a.click('#__mjsGo');
+    await sleep(500);
+    const focusedFid = await a.evaluate(() => {
+      var el = document.activeElement;
+      return el ? el.getAttribute('data-fid') : null;
+    });
+    ok('[바로 가기] → 지목된 칸에 포커스', focusedFid === targetFid, focusedFid + ' vs ' + targetFid);
+
     await lv.click('#stuClose');
 
     // 공지
@@ -303,7 +338,9 @@ async function write(page, idx, text) {
     await elv.goto(APP + '/live/' + EXAM_ID);
     await elv.waitForSelector('#matrix th');
     const eheads = await elv.locator('#matrix thead th').allTextContents();
-    ok('검증3) 시험지 현황은 문항 번호 열 그대로', eheads[1] === '1' && eheads[2] === '2', JSON.stringify(eheads));
+    // 머리글에 전체 이동 📣 가 붙었어도 번호는 그대로여야 한다(📣 만 걷어내고 비교).
+    const enum1 = (eheads[1] || '').replace(/📣/g, '').trim(), enum2 = (eheads[2] || '').replace(/📣/g, '').trim();
+    ok('검증3) 시험지 현황은 문항 번호 열 그대로', enum1 === '1' && enum2 === '2', JSON.stringify(eheads));
     ok('검증3) 시험지 범례도 그대로', /응답 분포/.test(await elv.locator('#mxHint').textContent()));
     ok('검증3) 시험지는 답한 칸 초록', (await elv.locator('#matrix tbody td.a').count()) === 1);
     ok('검증3) 시험지는 현재 문항 파랑(current_q)', (await elv.locator('#matrix tbody td.c').count()) === 1);
@@ -311,6 +348,21 @@ async function write(page, idx, text) {
     await elv.waitForSelector('#stuPanel.show');
     ok('검증3) 시험지 학생 패널에 문항 이동 요청 유지', (await elv.locator('#stuGoto').count()) === 1);
     ok('검증3) 시험지 패널은 문항별 답 표기', /문항별 답/.test(await elv.locator('#stuBody').textContent()));
+
+    // ── 전체 이동 가시화: 열 머리글 📣 클릭 = '전체를 이 문항으로'(롱프레스도 유지) ──
+    ok('검증2) 시험지 머리글에 전체 이동 📣', (await elv.locator('#matrix thead th.qh .mega').count()) === 2);
+    await elv.click('#stuClose');                 // 패널 닫아 팝오버 가림 방지
+    const th1 = elv.locator('#matrix thead th.qh').first();
+    await th1.hover();                            // 📣 는 hover 때만 보인다 → 먼저 hover
+    await th1.locator('.mega').click();
+    await elv.waitForSelector('#pop.show', { timeout: 4000 });
+    await elv.locator('#pop #popGo').click();
+    await sleep(700);
+    const daon = state.live_sessions.find((s) => s.nickname === '다온');
+    ok('검증2) 머리글 📣 → 전체에게 goto(1번)',
+      (daon.messages || []).some((m) => m.type === 'goto' && Number(m.q) === 1),
+      JSON.stringify((daon.messages || []).map((m) => m.type + ':' + m.q)));
+    ok('검증2) 시험지 힌트에 보내기 안내 추가', /전체 보내기/.test(await elv.locator('#mxHint').textContent()));
 
     const epr = await browser.newPage({ viewport: { width: 1280, height: 800 } });
     watch(epr, '시험지 발표');

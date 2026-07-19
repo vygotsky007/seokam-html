@@ -121,6 +121,27 @@ router.post('/live/goto', async (req, res) => {
   return res.json({ ok: true, sent: sent, q: num });
 });
 
+// ---- 채움 요청: 한 학생의 '비어 있는 특정 칸'을 지목해 채워 달라고 알린다 ----
+// 활동지에는 '이동'이 없다(한 장짜리). 그래서 [여기로 보내기]의 활동지 버전은 '이 칸을 채워라'다.
+// 기존 개별 메시지 채널을 그대로 쓰되 type='fill' + fid 를 실어, 학생 화면이 그 배너에서
+// [바로 가기]로 해당 필드까지 스크롤·포커스할 수 있게 한다. 강제는 없다 — 지목한 알림일 뿐.
+router.post('/live/fill', async (req, res) => {
+  const { activityId, nickname, fid, label } = req.body || {};
+  if (!activityId || !nickname || !fid) {
+    return res.status(400).json({ ok: false, error: 'activityId·nickname·fid 가 필요합니다.' });
+  }
+  const name = (label && String(label).trim()) || '이';
+  try {
+    const messages = await pushMessage(activityId, String(nickname), newMessage({
+      type: 'fill', fid: String(fid), label: label == null ? '' : String(label),
+      text: '‘' + name + '’ 칸을 채워주세요 ✏️',
+    }));
+    return res.json({ ok: true, messages });
+  } catch (e) {
+    return res.status(500).json({ ok: false, error: e.message });
+  }
+});
+
 // ---- 학생이 메시지를 확인함 ----
 router.post('/live/message/seen', async (req, res) => {
   const { activityId, nickname, messageId } = req.body || {};
