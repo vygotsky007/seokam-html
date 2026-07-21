@@ -64,6 +64,16 @@ function usedToday() { return todayKey() === dayKey ? dayCount : 0; }
 const cache = new Map();          // sha256(image) -> parsed 결과(문항당 1회 캐시)
 const reviewCache = new Map();    // sha256(image+text) -> 검수 결과(자가 검수 캐시)
 
+// 진단: 실 API 호출 1건의 토큰 사용량을 남긴다(비용 추적용). 키 값은 절대 로그에 넣지 않는다 —
+// data.usage 만 읽으며, 여기에 키는 포함되지 않는다. [ai] 접두사로 grep 하기 쉽게.
+function logUsage(tag, data) {
+  const u = (data && data.usage) || {};
+  console.log('[ai] usage', tag,
+    'in=' + (u.input_tokens || 0),
+    'out=' + (u.output_tokens || 0),
+    'cache_read=' + (u.cache_read_input_tokens || 0));
+}
+
 function teacherOk(req) {
   const need = process.env.TEACHER_TOKEN;
   if (!need) return true;                                   // 미설정이면 열림(앱 나머지와 동일)
@@ -151,6 +161,7 @@ router.post('/ai-convert', async (req, res) => {
     catch (e) { return res.status(502).json({ ok: false, error: 'parse', message: 'AI 응답 JSON 파싱 실패', raw: textBlock.text.slice(0, 500) }); }
 
     cache.set(hash, parsed);
+    logUsage('convert', data);
     res.json({ ok: true, cached: false, parsed: parsed, used: usedToday(), limit: DAILY_LIMIT });
   } catch (err) {
     console.error('[ai-convert]', err);
@@ -238,6 +249,7 @@ router.post('/ai-review', async (req, res) => {
     catch (e) { return res.status(502).json({ ok: false, error: 'parse', message: 'AI 응답 JSON 파싱 실패' }); }
 
     reviewCache.set(hash, parsed);
+    logUsage('review', data);
     res.json({ ok: true, cached: false, parsed: parsed, used: usedToday(), limit: DAILY_LIMIT });
   } catch (err) {
     console.error('[ai-review]', err);
@@ -307,6 +319,7 @@ router.post('/ai-answer', async (req, res) => {
     let parsed;
     try { parsed = JSON.parse(tb.text); } catch (e) { return res.status(502).json({ ok: false, error: 'parse', message: 'AI 응답 JSON 파싱 실패' }); }
     answerCache.set(hash, parsed);
+    logUsage('answer', data);
     res.json({ ok: true, cached: false, parsed: parsed, used: usedToday(), limit: DAILY_LIMIT });
   } catch (err) {
     console.error('[ai-answer]', err);
