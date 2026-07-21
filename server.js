@@ -3407,6 +3407,9 @@ function renderSheetStudentPage(activity) {
   var byId = {};
   FIELDS.forEach(function (f) { byId[f.id] = f; });
 
+  // 진단: ?debug=1 이면 하트비트 전송/응답을 콘솔에 남긴다(실기기에서 미표시 재발 시 캡처용).
+  var DEBUG = /[?&]debug=1(&|$)/.test(location.search);
+
   var LSKEY = 'mjs-sheet-' + ACTIVITY_ID;
   var answers = {};
   var closed = CLOSED0;
@@ -3557,10 +3560,12 @@ function renderSheetStudentPage(activity) {
     var nick = (nickEl.value || '').trim();
     if (!nick) { saveEl.textContent = '닉네임 먼저'; saveEl.className = ''; return; }
     joinedNicks[nick] = true;                           // 이 닉은 이 클라이언트 것(자기 세션 오인 방지)
+    if (DEBUG) console.log('[live] push →', { activityId: ACTIVITY_ID, nickname: nick, filled: filled() + '/' + COLLECT.length });
     fetch('/api/live/heartbeat', {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ activityId: ACTIVITY_ID, nickname: nick, currentQ: null, answers: answers }),
     }).then(function (r) { return r.json(); }).then(function (d) {
+      if (DEBUG) console.log('[live] push ←', d);
       if (!d || !d.ok) { saveEl.textContent = '저장 실패'; saveEl.className = ''; return; }
       saveEl.textContent = '저장됨'; saveEl.className = 'on';
       var n = (d.notices || [])[0];

@@ -33,6 +33,9 @@ router.post('/live/heartbeat', async (req, res) => {
     console.error('[live] heartbeat 실패:', error.message);
     return res.status(500).json({ ok: false, error: error.message });
   }
+  // 진단: 하트비트가 오류 없이 통과한 것을 남긴다 — upsert 가 조용히 0행이어도 여기까진 온다.
+  // '저장은 됐는데 조회에 안 걸린다'를 아래 /live/state 의 students 수와 대조해 가려낸다.
+  console.log('[live] hb', String(activityId).slice(0, 8), String(nickname).trim());
 
   // 학생 화면이 알아야 할 것만 되돌려준다 — 공지(최근 3개), 마감 여부, 그리고 '본인 앞으로 온' 메시지.
   // 개별 메시지는 그 학생의 세션 행에만 들어 있으므로, 폴링 응답에 남의 메시지가 섞일 수가 없다.
@@ -209,6 +212,10 @@ router.get('/live/state', async (req, res) => {
       messages: s.messages || [],          // 교사 화면 전용(학생 폴링에는 본인 것만 나간다)
     }))
     .sort((a, b) => a.nickname.localeCompare(b.nickname, 'ko'));
+
+  // 진단: 저장된 세션 행 수와 교사 화면에 나갈 학생 수를 함께 남긴다.
+  // 둘이 어긋나면 '저장은 됐는데 조회/매핑에서 빠졌다'는 뜻 — 미표시 재발 시 여기서 갈린다.
+  console.log('[live] state', String(activityId).slice(0, 8), 'sessions=' + (sessions || []).length, 'students=' + students.length);
 
   return res.json({
     ok: true,
